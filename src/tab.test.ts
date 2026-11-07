@@ -1,25 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { Actions } from "./actions.ts";
-import { Ponpoko } from "./core.ts";
-import { komuxLine } from "./komux.ts";
-import { Store } from "./store.ts";
 import { TabController } from "./tab.ts";
+import { harness, recordingActions } from "./test-harness.ts";
 
-function setup() {
-  const core = new Ponpoko(new Store(":memory:"), async () => ({ ok: true }), async () => undefined, () => 1_000_000);
-  core.heardKomux(
-    komuxLine.parse({
-      session: "main",
-      server: "s1",
-      type: "snapshot",
-      tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1" }],
-      agents: [{ paneId: 2, tabId: 1, state: "done" }],
-      jobs: [],
-    }),
-  );
-  const calls: unknown[][] = [];
-  const record = (name: string) => async (...args: unknown[]) => void calls.push([name, ...args]);
-  const actions = { go: record("go"), forget: record("forget"), snooze: record("snooze"), note: record("note"), point: record("point"), seen: record("seen") } as Actions;
+async function setup() {
+  const { core, hear } = harness();
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1" }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
+  const { actions, calls } = recordingActions();
   const tab = new TabController(actions, () => 1_000_000);
   tab.setSnapshot(core.snapshot());
   return { tab, calls };
@@ -29,18 +16,18 @@ const plain = (lines: string[]) => lines.map((line) => line.replace(/\x1b\[[0-9;
 
 describe("the command tab", () => {
   test("lists braids and strands, and goes to the selected strand", async () => {
-    const { tab, calls } = setup();
+    const { tab, calls } = await setup();
     const screen = plain(tab.view(100, 20)).join("\n");
     expect(screen).toContain("▾ SC-1");
     expect(screen).toContain("●*agent pane 2");
     expect(screen).toContain("heard");
     await tab.key({ name: "j" });
     await tab.key({ name: "return" });
-    expect(calls).toEqual([["go", "pane:s1:2"]]);
+    expect(calls).toEqual([["go", "pane:s1:2", "/w/stories/sc-1"]]);
   });
 
   test("snoozes, forgets after asking, notes and points", async () => {
-    const { tab, calls } = setup();
+    const { tab, calls } = await setup();
     await tab.key({ name: "j" });
     await tab.key({ name: "z" });
     expect(plain(tab.view(100, 20)).at(-1)).toContain("snooze for");

@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ask, state } from "./client.ts";
+import { komuxSelf } from "./komux/self.ts";
 import type { Snapshot } from "./core.ts";
 import type { Recorded } from "./events.ts";
 import { age, braidTitle, cause, clock, describe, holder } from "./render.ts";
@@ -17,11 +18,11 @@ const instructions = `ponpoko tracks whose move each piece of the user's work is
 
 When the user asks what needs them or what to do next, call moves. Keep reasons and status lines short, with no code, customer data or secrets.`;
 
-export type Caller = { session?: string; paneId?: number; dir: string };
+export type Caller = { self?: string; dir: string };
 
 export function callerFromEnv(env = process.env, cwd = process.cwd()): Caller {
-  const paneId = Number(env.KOMUX_PANE_ID);
-  return { dir: cwd, ...(env.KOMUX_SESSION ? { session: env.KOMUX_SESSION } : {}), ...(Number.isInteger(paneId) && env.KOMUX_PANE_ID ? { paneId } : {}) };
+  const self = komuxSelf(env);
+  return { dir: cwd, ...(self ? { self } : {}) };
 }
 
 type Send = (request: Request) => Promise<unknown>;
@@ -129,14 +130,14 @@ export function movesText(view: Snapshot): string {
   };
   return [
     `${view.moves.length} move${view.moves.length === 1 ? "" : "s"} waiting on the user, oldest first:`,
-    ...view.moves.map((strand) => `- ${name(strand.braid)}: ${strand.label}, ${cause(strand)}, ${age(view.now - strand.since)}${strand.live ? strand.tab ? ` (tab ${strand.tab.number} ${strand.tab.name})` : "" : " (its pane is gone)"}`),
+    ...view.moves.map((strand) => `- ${name(strand.braid)}: ${strand.label}, ${cause(strand)}, ${age(view.now - strand.since)}${strand.live ? (strand.space ? ` (${strand.space})` : "") : strand.kind === "report" ? "" : " (its pane is gone)"}`),
   ].join("\n");
 }
 
 export function braidText(view: Snapshot, wanted: string | undefined, caller: Caller): string {
   const braid = wanted
     ? view.braids.find((candidate) => candidate.id === wanted.toLowerCase() || candidate.id === wanted || candidate.name.toLowerCase() === wanted.toLowerCase())
-    : view.braids.find((candidate) => candidate.strands.some((strand) => strand.place?.paneId === caller.paneId && strand.place?.session === caller.session)) ??
+    : view.braids.find((candidate) => caller.self !== undefined && candidate.strands.some((strand) => strand.place?.handle === caller.self)) ??
       view.braids.find((candidate) => candidate.dir !== undefined && (caller.dir === candidate.dir || caller.dir.startsWith(`${candidate.dir}/`)));
   if (!braid) return wanted ? `ponpoko has no braid ${wanted}.` : "ponpoko can't tell which braid you're in; name it.";
   const labels = { braids: new Map(view.braids.map((entry) => [entry.id, entry.name])), strands: new Map(braid.strands.map((strand) => [strand.id, strand.label])) };

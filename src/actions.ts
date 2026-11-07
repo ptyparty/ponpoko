@@ -1,7 +1,9 @@
 import { ask } from "./client.ts";
+import type { StrandView } from "./core.ts";
+import { goInKomux } from "./komux/go.ts";
 
 export type Actions = {
-  go: (strand: string) => Promise<unknown>;
+  go: (strand: StrandView, braidDir: string | undefined) => Promise<unknown>;
   forget: (strand: string) => Promise<unknown>;
   snooze: (strand: string, until: number) => Promise<unknown>;
   note: (braid: string, text: string) => Promise<unknown>;
@@ -11,7 +13,11 @@ export type Actions = {
 };
 
 export const serviceActions: Actions = {
-  go: (strand) => ask({ method: "go", params: { strand } }),
+  go: async (strand, braidDir) => {
+    await goInKomux(strand, braidDir);
+    if (strand.kind === "job") await ask({ method: "end", params: { strand: strand.id, why: "you went to it" } });
+    else if (strand.whose === "you" && !strand.seen) await ask({ method: "seen-strand", params: { strand: strand.id } });
+  },
   forget: (strand) => ask({ method: "forget", params: { strand } }),
   snooze: (strand, until) => ask({ method: "snooze", params: { strand, until } }),
   note: (braid, text) => ask({ method: "note", params: { braid, text } }),

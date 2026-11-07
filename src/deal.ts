@@ -59,7 +59,7 @@ export class Dealer {
       case "return":
         if (!card) return this.finish();
         this.dealt.add(card.id);
-        if (await this.act(() => this.actions.go(card.id))) return this.finish();
+        if (await this.act(() => this.actions.go(card, this.snapshot?.braids.find((braid) => braid.id === card.braid)?.dir))) return this.finish();
         return undefined;
       case "s":
       case " ":
@@ -87,7 +87,7 @@ export class Dealer {
       return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is waiting on you"), "", style.dim(" esc close")];
     }
     const braid = this.snapshot.braids.find((candidate) => candidate.id === card.braid);
-    const where = card.live && card.tab ? `→ tab ${card.tab.number ?? "?"} ${card.tab.name}` : card.place?.dir || braid?.dir ? `→ reopen a tab at ${card.place?.dir ?? braid?.dir}` : "→ nowhere ponpoko knows of";
+    const where = card.live && card.space ? `→ ${card.space}` : card.place?.dir || braid?.dir ? `→ open a tab at ${card.place?.dir ?? braid?.dir}` : "→ nowhere ponpoko knows of";
     const lines = [
       style.dim(` ${hand} · 1 of ${this.hand.length}`),
       "",

@@ -58,9 +58,8 @@ export function braidTitle(braid: BraidView): string {
 }
 
 export function tabsText(braid: BraidView): string {
-  const numbers = braid.tabs.map((tab) => tab.number).filter((number) => number !== undefined);
-  if (numbers.length === 0) return braid.strands.some((strand) => strand.live) ? "" : "no tab";
-  return `tab ${numbers.join(", ")}`;
+  if (braid.spaces.length === 0) return braid.strands.some((strand) => strand.live) ? "" : "no tab";
+  return braid.spaces.map((space) => space.split(" ").slice(0, 2).join(" ")).join(", ");
 }
 
 export function countsLine(snapshot: Snapshot): string {

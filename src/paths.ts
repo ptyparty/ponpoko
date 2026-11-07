@@ -12,11 +12,6 @@ export function runtimeDir(): string {
   return join(process.env.XDG_RUNTIME_DIR ?? join(tmpdir(), `ponpoko-${process.getuid?.() ?? "user"}`), "ponpoko");
 }
 
-export function komuxSessionsDir(): string {
-  const base = process.env.KOMUX_STATE_DIR ?? join(process.env.XDG_RUNTIME_DIR ?? join(tmpdir(), `komux-${process.getuid?.() ?? "user"}`), "komux");
-  return join(base, "sessions");
-}
-
 export function socketPath(): string {
   return join(runtimeDir(), "ponpoko.sock");
 }

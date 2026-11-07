@@ -98,7 +98,7 @@ export class TabController {
         const row = this.current();
         const strand = row?.strand ?? row?.braid?.strands[0];
         if (!strand) this.message = "Nothing to go to here";
-        else await this.run(() => this.actions.go(strand.id));
+        else await this.run(() => this.actions.go(strand, row?.braid?.dir));
         return undefined;
       }
       case "o": {

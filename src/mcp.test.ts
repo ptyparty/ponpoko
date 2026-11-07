@@ -1,30 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Ponpoko } from "./core.ts";
-import { komuxLine } from "./komux.ts";
 import { createServer, parseSince } from "./mcp.ts";
 import { handle } from "./server.ts";
-import { Store } from "./store.ts";
+import { harness } from "./test-harness.ts";
 
 async function setup() {
-  const core = new Ponpoko(new Store(":memory:"), async () => ({ ok: true }), async () => undefined, () => 1_000_000);
-  core.heardKomux(
-    komuxLine.parse({
-      session: "main",
-      server: "s1",
-      type: "snapshot",
-      tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7" }],
-      agents: [{ paneId: 2, tabId: 1, state: "done" }],
-      jobs: [],
-    }),
-  );
+  const { core, hear } = harness();
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7" }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
   const send = async (request: Parameters<typeof handle>[1]) => {
     const response = await handle(core, request);
     if (!response.ok) throw new Error(response.error);
     return response.result;
   };
-  const server = createServer({ session: "main", paneId: 2, dir: "/w/stories/sc-7" }, send, async () => core.snapshot());
+  const server = createServer({ self: "komux:s1:2", dir: "/w/stories/sc-7" }, send, async () => core.snapshot());
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await server.connect(serverSide);
   const client = new Client({ name: "test", version: "0" });
@@ -42,7 +31,7 @@ describe("the ponpoko MCP", () => {
     expect(await call("report", { strand: "PR #821 review", whose: "machine", who: "Copilot", reason: "waiting on Copilot review of PR #821" })).toBe("Recorded on report:sc-7:pr-#821-review.");
     expect(await call("status", { text: "step 3 of 10: the command tab", page: "ponpoko/build-status.md" })).toBe("Status set on pane:s1:2.");
     expect(core.model.strands.get("pane:s1:2")!.doing).toMatchObject({ text: "step 3 of 10: the command tab", page: "ponpoko/build-status.md" });
-    expect(await call("moves")).toContain("SC-7: agent pane 2, turn ended");
+    expect(await call("moves")).toContain("SC-7  Widget CSV import: agent pane 2, turn ended");
     const braid = await call("braid");
     expect(braid).toContain("PR #821 review: waiting on Copilot");
     expect(braid).toContain("now: step 3 of 10");

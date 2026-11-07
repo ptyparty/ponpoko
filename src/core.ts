@@ -1,30 +1,28 @@
 import { braidForDir, storyNumber } from "./braids.ts";
 import type { Fact, Recorded, Source, Whose } from "./events.ts";
-import { agentStrandId, controlSocket, sendKomux, Translator, type KomuxLine } from "./komux.ts";
 import { apply, counts, recentHeard, replay, unseenMoves, yourMoves, type Braid, type Counts, type Model, type Strand } from "./model.ts";
-import { komuxSessionsDir } from "./paths.ts";
 import type { Store } from "./store.ts";
 
-export type StrandView = Strand & { live: boolean; tab?: { session: string; number?: number; name: string } };
-export type BraidView = Braid & { strands: StrandView[]; tabs: { session: string; number?: number; name: string }[] };
+export type Space = { dir: string; label: string };
+export type Presence = { adapter: string; scope: string; strands: string[]; spaces: Space[] };
+export type StrandView = Strand & { live: boolean; space?: string };
+export type BraidView = Braid & { strands: StrandView[]; spaces: string[] };
 export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
+export type Knowledge = { braids: string[]; pointed: [string, string][]; strands: Strand[] };
 
-export type Report = { braid?: string; dir?: string; session?: string; paneId?: number; strand?: string; whose: Whose | "done"; who?: string; reason: string };
+export type Report = { braid?: string; dir?: string; self?: string; strand?: string; whose: Whose | "done"; who?: string; reason: string };
+export type Status = { braid?: string; dir?: string; self?: string; strand?: string; text: string; page?: string };
 
-export type Status = { braid?: string; dir?: string; session?: string; paneId?: number; strand?: string; text: string; page?: string };
-
-export type KomuxSender = (session: string, request: unknown) => Promise<{ ok: boolean; error?: string }>;
+const presenceMs = 90_000;
 
 export class Ponpoko {
   readonly model: Model;
-  readonly translator = new Translator();
   private readonly listeners = new Set<() => void>();
   private readonly titleAsked = new Set<string>();
-  private readonly badgesSent = new Map<string, string>();
+  private readonly presences = new Map<string, Presence & { until: number }>();
 
   constructor(
     private readonly store: Store,
-    private readonly sendToKomux: KomuxSender = (session, request) => sendKomux(controlSocket(komuxSessionsDir(), session), request),
     private readonly lookupTitle: (braid: string) => Promise<{ kind: "story" | "epic"; title: string } | undefined> = shortcutTitle,
     private readonly now: () => number = Date.now,
   ) {
@@ -43,32 +41,40 @@ export class Ponpoko {
       apply(this.model, recorded);
       if (fact.type === "braid.made") this.askTitle(fact.braid);
     }
-    for (const listener of this.listeners) listener();
+    this.changed();
   }
 
-  heardKomux(line: KomuxLine): void {
-    this.record("komux", this.translator.facts(line, this.model));
+  present(presence: Presence): void {
+    const key = `${presence.adapter}:${presence.scope}`;
+    const before = this.presences.get(key);
+    this.presences.set(key, { ...presence, until: this.now() + presenceMs });
+    if (!before || JSON.stringify([before.strands, before.spaces]) !== JSON.stringify([presence.strands, presence.spaces])) this.changed();
   }
 
-  komuxGone(server: string): void {
-    this.translator.disconnected(server);
-    for (const listener of this.listeners) listener();
+  absent(adapter: string, scope: string): void {
+    if (this.presences.delete(`${adapter}:${scope}`)) this.changed();
+  }
+
+  knowledge(): Knowledge {
+    return { braids: [...this.model.braids.keys()], pointed: [...this.model.pointed], strands: [...this.model.strands.values()] };
   }
 
   snapshot(): Snapshot {
     const now = this.now();
-    const tabs = this.translator.liveTabs();
+    const present = [...this.presences.values()].filter((presence) => presence.until > now);
+    const live = new Set(present.flatMap((presence) => presence.strands));
+    const spaces = present.flatMap((presence) => presence.spaces);
     const view = (strand: Strand): StrandView => {
-      const live = this.translator.livePane(strand.place);
-      const tab = live ? tabs.find((entry) => entry.server === live.server && entry.tab.id === live.tabId) : undefined;
-      return { ...strand, live: live !== undefined, ...(tab ? { tab: { session: tab.session, number: tab.tab.number, name: tab.tab.name } } : {}) };
+      const dir = strand.place?.dir;
+      const space = live.has(strand.id) && dir ? spaces.find((candidate) => candidate.dir === dir)?.label : undefined;
+      return { ...strand, live: live.has(strand.id), ...(space ? { space } : {}) };
     };
     const braids = [...this.model.braids.values()].map((braid): BraidView => ({
       ...braid,
       strands: [...this.model.strands.values()].filter((strand) => strand.braid === braid.id).map(view).sort((a, b) => a.since - b.since),
-      tabs: tabs.filter((entry) => braidForDir(entry.tab.dir, this.model.pointed).id === braid.id).map((entry) => ({ session: entry.session, number: entry.tab.number, name: entry.tab.name })),
+      spaces: spaces.filter((space) => braidForDir(space.dir, this.model.pointed).id === braid.id).map((space) => space.label),
     }));
-    const shown = braids.filter((braid) => braid.strands.length > 0 || braid.tabs.length > 0 || braid.notes.length > 0);
+    const shown = braids.filter((braid) => braid.strands.length > 0 || braid.spaces.length > 0 || braid.notes.length > 0);
     shown.sort((a, b) => firstMove(a, now) - firstMove(b, now) || a.name.localeCompare(b.name));
     const heard = recentHeard(this.model, 30);
     return {
@@ -89,11 +95,11 @@ export class Ponpoko {
   }
 
   report(report: Report, source: Source = "agent"): string {
-    const braid = this.reportBraid(report);
     const own = report.strand === undefined || report.strand === "self";
-    const paneStrand = own && report.paneId !== undefined ? this.agentStrand(report.session, report.paneId) : undefined;
-    if (own && !paneStrand) throw new Error("name the strand this report is about, such as \"PR #821 review\"; this agent's own pane isn't known to ponpoko");
-    const id = paneStrand?.id ?? `report:${braid}:${slug(report.strand!)}`;
+    const mine = own ? this.ownStrand(report.self) : undefined;
+    if (own && !mine) throw new Error("name the strand this report is about, such as \"PR #821 review\"; ponpoko doesn't know this agent's own strand");
+    const braid = mine?.braid ?? this.reportBraid(report);
+    const id = mine?.id ?? `report:${braid}:${slug(report.strand!)}`;
     if (report.whose === "done") {
       if (this.model.strands.has(id)) this.record(source, [{ type: "strand.ended", strand: id, why: report.reason }]);
       return id;
@@ -105,10 +111,10 @@ export class Ponpoko {
     }
     facts.push({
       type: "strand.move",
-      braid: paneStrand?.braid ?? braid,
+      braid,
       strand: id,
-      label: paneStrand?.label ?? report.strand!,
-      kind: paneStrand ? "agent" : "report",
+      label: mine?.label ?? report.strand!,
+      kind: mine ? mine.kind : "report",
       whose: report.whose,
       ...(report.who ? { who: report.who } : {}),
       why: report.reason,
@@ -119,12 +125,21 @@ export class Ponpoko {
 
   status(status: Status): string {
     const own = status.strand === undefined || status.strand === "self";
-    const strand = own && status.paneId !== undefined ? this.agentStrand(status.session, status.paneId) : undefined;
-    if (own && !strand) throw new Error("this agent's own pane isn't known to ponpoko; name the strand instead");
-    const id = strand?.id ?? `report:${this.reportBraid(status)}:${slug(status.strand!)}`;
+    const mine = own ? this.ownStrand(status.self) : undefined;
+    if (own && !mine) throw new Error("ponpoko doesn't know this agent's own strand; name the strand instead");
+    const id = mine?.id ?? `report:${this.reportBraid(status)}:${slug(status.strand!)}`;
     if (!this.model.strands.has(id)) throw new Error(`no strand ${status.strand}; report it first`);
     this.record("agent", [{ type: "strand.status", strand: id, text: status.text, ...(status.page ? { page: status.page } : {}) }]);
     return id;
+  }
+
+  end(strand: string, why: string): void {
+    this.mustHave(strand);
+    this.record("you", [{ type: "strand.ended", strand, why }]);
+  }
+
+  seenStrand(strand: string): void {
+    if (this.mustHave(strand).whose === "you") this.record("you", [{ type: "strand.seen", strand }]);
   }
 
   forget(strand: string): void {
@@ -158,66 +173,19 @@ export class Ponpoko {
     return this.store.since(since);
   }
 
-  async go(id: string): Promise<string> {
-    const strand = this.mustHave(id);
-    const live = this.translator.livePane(strand.place);
-    let result: { ok: boolean; error?: string };
-    if (live) result = await this.sendToKomux(live.session, { method: "pane.focus", params: { paneId: live.paneId } });
-    else {
-      const dir = strand.place?.dir ?? this.model.braids.get(strand.braid)?.dir;
-      if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
-      const sessions = [...new Set(this.translator.liveTabs().map((entry) => entry.session))];
-      const tab = this.translator.liveTabs().find((entry) => entry.tab.dir === dir);
-      const session = tab?.session ?? (strand.place && sessions.includes(strand.place.session) ? strand.place.session : sessions[0]);
-      if (!session) throw new Error("komux isn't running, or ponpoko can't hear it");
-      result = await this.sendToKomux(session, { method: "project.open", params: { target: dir } });
-    }
-    if (!result.ok) throw new Error(result.error ?? "komux refused");
-    if (strand.kind === "job") this.record("you", [{ type: "strand.ended", strand: id, why: "you went to it" }]);
-    else if (strand.whose === "you" && !strand.seen) this.record("you", [{ type: "strand.seen", strand: id }]);
-    return live ? "focused" : "opened";
+  private changed(): void {
+    for (const listener of this.listeners) listener();
   }
 
-  tabBadges(): { session: string; server: string; tabId: number; text: string | null; color?: string }[] {
+  private ownStrand(self: string | undefined): Strand | undefined {
+    if (!self) return undefined;
     const now = this.now();
-    return this.translator.liveTabs().map(({ session, server, tab }) => {
-      const braid = braidForDir(tab.dir, this.model.pointed).id;
-      const strands = [...this.model.strands.values()].filter((strand) => strand.braid === braid);
-      const yours = strands.filter((strand) => strand.whose === "you" && !((strand.snoozedUntil ?? 0) > now)).length;
-      const waiting = strands.some((strand) => strand.whose === "machine" || strand.whose === "person");
-      const snoozed = strands.some((strand) => strand.whose === "you" && (strand.snoozedUntil ?? 0) > now);
-      if (yours > 0) return { session, server, tabId: tab.id, text: yours > 1 ? `●${yours}` : "●", color: "warning" };
-      if (waiting) return { session, server, tabId: tab.id, text: "⊘", color: "muted" };
-      if (snoozed) return { session, server, tabId: tab.id, text: "◷", color: "muted" };
-      return { session, server, tabId: tab.id, text: null };
-    });
+    const live = new Set([...this.presences.values()].filter((presence) => presence.until > now).flatMap((presence) => presence.strands));
+    return [...this.model.strands.values()].find((strand) => strand.place?.handle === self && live.has(strand.id));
   }
 
-  async syncBadges(): Promise<void> {
-    const live = new Set<string>();
-    for (const badge of this.tabBadges()) {
-      const key = `${badge.server}:${badge.tabId}`;
-      live.add(key);
-      const look = badge.text === null ? "" : `${badge.text}:${badge.color}`;
-      if ((this.badgesSent.get(key) ?? "") === look) continue;
-      this.badgesSent.set(key, look);
-      const { session, tabId, text, color } = badge;
-      const sent = await this.sendToKomux(session, { method: "tab.badge", params: { tabId, owner: "ponpoko", text, ...(color ? { color } : {}) } }).catch(() => ({ ok: false }));
-      if (!sent.ok) this.badgesSent.delete(key);
-    }
-    for (const key of this.badgesSent.keys()) if (!live.has(key)) this.badgesSent.delete(key);
-  }
-
-  private agentStrand(session: string | undefined, paneId: number): Strand | undefined {
-    return [...this.model.strands.values()].find((strand) => strand.kind === "agent" && strand.place?.paneId === paneId && (session === undefined || strand.place.session === session) && this.translator.livePane(strand.place));
-  }
-
-  private reportBraid(report: { braid?: string; dir?: string; session?: string; paneId?: number }): string {
+  private reportBraid(report: { braid?: string; dir?: string }): string {
     if (report.braid) return report.braid.toLowerCase().startsWith("sc-") ? report.braid.toLowerCase() : report.braid;
-    if (report.paneId !== undefined) {
-      const strand = this.agentStrand(report.session, report.paneId);
-      if (strand) return strand.braid;
-    }
     if (report.dir) return braidForDir(report.dir, this.model.pointed).id;
     throw new Error("say which braid this is about");
   }

@@ -4,9 +4,9 @@ export const whoseValues = ["you", "agent", "machine", "person", "nobody"] as co
 export type Whose = (typeof whoseValues)[number];
 export type BraidKind = "story" | "epic" | "side" | "idea";
 export type StrandKind = "agent" | "job" | "report";
-export type Source = "komux" | "agent" | "you" | "ponpoko";
+export type Source = string;
 
-const place = z.object({ session: z.string(), server: z.string(), tabId: z.number(), paneId: z.number().optional(), dir: z.string(), sessionId: z.string().optional(), state: z.string().optional() });
+export const place = z.looseObject({ adapter: z.string(), handle: z.string().optional(), dir: z.string().optional() });
 export type Place = z.infer<typeof place>;
 
 export const fact = z.discriminatedUnion("type", [

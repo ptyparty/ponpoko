@@ -11,6 +11,7 @@ const usage = `Usage:
   ponpoko serve           Run the service (ponpoko.service runs this)
   ponpoko setup [--yes]   Install the service, komux plugin, skill and MCP
   ponpoko mcp             The MCP server Claude Code talks to
+  ponpoko komux           The komux bridge, run by the komux plugin in each session
 `;
 
 async function main(args: string[]): Promise<number> {
@@ -26,6 +27,8 @@ async function main(args: string[]): Promise<number> {
       return list();
     case "deal":
       return (await import("./deal.ts")).runDeal(args.slice(1));
+    case "komux":
+      return (await import("./komux/bridge.ts")).runBridge();
     case "mcp":
       await (await import("./mcp.ts")).runMcp();
       return -1;
