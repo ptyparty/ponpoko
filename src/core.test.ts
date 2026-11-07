@@ -153,4 +153,26 @@ describe("strands", () => {
     core.add(undefined, "ptyparty › ponpoko");
     expect(new Ponpoko(store, async () => undefined).snapshot().strands.map((strand) => strand.name)).toEqual(["ptyparty", "ponpoko"]);
   });
+
+  test("a rogue naming a strand it split off its own loose strand keeps the tree whole, and survives a restart", () => {
+    const { core, store, shown } = setup();
+    core.record("tool", [
+      { type: "strand.made", strand: "loose1", name: "claude in side", kind: "loose" },
+      { type: "move.opened", move: "m-a", strand: "loose1", player: "a1", what: "working" },
+    ]);
+    core.split({ self: "tool:1" }, ["c"]);
+    core.status({ self: "tool:1", strand: "c", text: "on c" });
+    expect(shown()).toBe("c agent on c");
+    expect(new Ponpoko(store, async () => undefined).snapshot().strands.map((strand) => strand.name)).toEqual(["c"]);
+  });
+
+  test("marking a parent done finishes everything under it, so nothing hidden still counts as yours", () => {
+    const { core } = setup();
+    core.add(undefined, "p › a");
+    core.add(undefined, "p › b");
+    core.status({ self: "tool:1", strand: "p › a", text: "working on a" });
+    core.done(strandNamed(core, "p").id);
+    expect(core.snapshot().counts).toMatchObject({ yours: 0, agents: 0 });
+    expect(() => core.status({ self: "tool:1", text: "next step" })).toThrow("name the strand");
+  });
 });

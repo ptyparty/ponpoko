@@ -6,9 +6,9 @@ import { clock, rows, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
 type Purpose = "note" | "point" | "add" | "move";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
-const keysLine = " ⏎ go   ␣ moves   a add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
+const keysLine = " ⏎ go   ␣ moves   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
 
 const help = [
   " Keys",
@@ -16,7 +16,8 @@ const help = [
   "   j k ↑ ↓   move between strands",
   "   ⏎         go to the strand: focus the pane it waits on, or open a tab at its directory",
   "   ␣         show or hide the strand's moves",
-  "   a         add a strand under this one (or at the top, with nothing picked)",
+  "   a         add a strand under this one",
+  "   A         add a strand at the top",
   "   m         move the strand under another, named by its path, such as ptyparty › ponpoko; a rogue's loose strand merges into it",
   "   d         mark the strand done",
   "   o         open what the strand's latest move links to, such as a notebook page (📓) in quoll",
@@ -125,13 +126,19 @@ export class TabController {
         if (strand && !this.expanded.delete(strand.id)) this.expanded.add(strand.id);
         return undefined;
       case "o": {
-        const link = strand ? [...strand.recent.flatMap((move) => move.links), ...strand.links].filter((candidate) => candidate.adapter !== "dir").at(-1) : undefined;
+        const link = strand
+          ? [...strand.recent.flatMap((move) => move.links), ...strand.links]
+              .filter((candidate) => candidate.adapter !== "dir")
+              .sort((a, b) => a.at - b.at)
+              .at(-1)
+          : undefined;
         if (!link) this.message = "Nothing on this strand links anywhere";
         else await this.run(() => this.actions.open(link), `Opened ${link.ref}`);
         return undefined;
       }
       case "a":
-        this.mode = { kind: "text", purpose: "add", text: "" };
+      case "A":
+        this.mode = { kind: "text", purpose: "add", text: "", top: key.name === "A" || !strand };
         return undefined;
       case "m":
       case "n":
@@ -181,7 +188,7 @@ export class TabController {
     if (mode.kind === "snooze") return [style.amber(` ${snoozeLine()}`)];
     if (mode.kind === "pickup") return [style.amber(` no one is on it · ${pickupLine(mode.options, this.now())}`)];
     if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.name}?  y yes   any other key no`)];
-    if (mode.kind === "text") return [style.amber(` ${prompts[mode.purpose]}: ${mode.text}▏`)];
+    if (mode.kind === "text") return [style.amber(` ${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`)];
     return [this.message ? style.amber(` ${this.message}`) : style.dim(keysLine)];
   }
 
@@ -193,7 +200,7 @@ export class TabController {
       const strand = this.current()?.strand;
       const text = mode.text.trim();
       if (text === "" && mode.purpose !== "move") return undefined;
-      if (mode.purpose === "add") await this.run(() => this.actions.add(strand?.id, text), `Added ${text}`);
+      if (mode.purpose === "add") await this.run(() => this.actions.add(mode.top ? undefined : strand?.id, text), `Added ${text}`);
       else if (!strand) return undefined;
       else if (mode.purpose === "note") await this.run(() => this.actions.note(strand.id, text), "Note added");
       else if (mode.purpose === "move") await this.run(() => this.actions.reparent(strand.id, text), text === "" ? `${strand.name} is at the top` : `${strand.name} is under ${text}`);

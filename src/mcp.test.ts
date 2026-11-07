@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer, parseSince } from "./mcp.ts";
+import { createServer, parseSince, strandText } from "./mcp.ts";
 import { handle } from "./server.ts";
 import { harness } from "./test-harness.ts";
 
@@ -42,6 +42,13 @@ describe("the ponpoko MCP", () => {
     expect(await call("moves")).toMatch(/^1 strand waiting on the user, oldest first:\n- sc-7 › review findings › 2: no one on it, now$/);
     expect(await call("done", { strand: "review findings › 2" })).toBe("sc-7 › review findings › 2 is done.");
     expect(core.snapshot().strands.map((entry) => entry.name)).toEqual(["sc-7", "review findings", "1"]);
+  });
+
+  test("outside komux, the strand tool finds the strand by directory, not by an unrelated wait", async () => {
+    const { core } = await setup();
+    core.wait({ strand: "elsewhere", who: "Copilot", kind: "machine", what: "review" });
+    core.point("/w/stories/sc-7", "sc-7");
+    expect(strandText(core.snapshot(), undefined, { dir: "/w/stories/sc-7/app" }).split("\n")[0]).toBe("sc-7  Widget CSV import");
   });
 
   test("errors come back as tool errors", async () => {

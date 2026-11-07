@@ -4,6 +4,8 @@ import {
   apply,
   children,
   counts,
+  descendants,
+  isLive,
   isUnseen,
   openMoves,
   own,
@@ -104,7 +106,7 @@ export class Ponpoko {
     const on: Record<string, string> = {};
     for (const move of [...moves].sort((a, b) => a.from - b.from)) on[move.with ?? move.player] = move.strand;
     return {
-      strands: [...this.model.strands.values()].filter((strand) => strand.done === undefined),
+      strands: [...this.model.strands.values()].filter((strand) => isLive(this.model, strand)),
       players: [...this.model.players.values()].filter((player) => player.gone === undefined),
       open: moves.filter((move) => move.until === undefined),
       links: [...this.model.links.values()].filter((link) => link.adapter === "dir"),
@@ -325,12 +327,9 @@ export class Ponpoko {
   }
 
   private finish(strand: string, why: string, facts: Fact[]): void {
-    for (const id of [strand, ...this.descendantsOf(strand)]) for (const move of openMoves(this.model, id)) facts.push({ type: "move.closed", move: move.id });
-    facts.push({ type: "strand.done", strand, why });
-  }
-
-  private descendantsOf(strand: string): string[] {
-    return children(this.model, strand).flatMap((child) => [child.id, ...this.descendantsOf(child.id)]);
+    const all = [strand, ...descendants(this.model, strand)].filter((id) => this.model.strands.get(id)?.done === undefined);
+    for (const id of all) for (const move of openMoves(this.model, id)) facts.push({ type: "move.closed", move: move.id });
+    for (const id of all.reverse()) facts.push({ type: "strand.done", strand: id, why });
   }
 
   private changed(): void {
@@ -369,7 +368,7 @@ export class Ponpoko {
   }
 
   private strandOf(player: string): string | undefined {
-    const moves = [...this.model.moves.values()].filter((move) => (move.with ?? move.player) === player && this.model.strands.has(move.strand)).sort((a, b) => a.from - b.from);
+    const moves = [...this.model.moves.values()].filter((move) => (move.with ?? move.player) === player && this.model.strands.has(move.strand) && isLive(this.model, this.model.strands.get(move.strand)!)).sort((a, b) => a.from - b.from);
     return moves.at(-1)?.strand;
   }
 

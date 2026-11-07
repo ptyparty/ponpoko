@@ -24,6 +24,7 @@ export type Model = {
   names: Map<string, string>;
   heard: Recorded[];
   lastAt: number;
+  version: number;
 };
 
 export const you = "you";
@@ -38,6 +39,7 @@ export function emptyModel(): Model {
     names: new Map(),
     heard: [],
     lastAt: 0,
+    version: 0,
   };
 }
 
@@ -48,6 +50,12 @@ export function replay(events: Recorded[]): Model {
 }
 
 export function apply(model: Model, event: Recorded): void {
+  model.version++;
+  applyFact(model, event);
+  model.version++;
+}
+
+function applyFact(model: Model, event: Recorded): void {
   model.heard.push(event);
   if (model.heard.length > heardKept * 2) model.heard.splice(0, model.heard.length - heardKept);
   model.lastAt = Math.max(model.lastAt, event.at);
@@ -76,9 +84,13 @@ export function apply(model: Model, event: Recorded): void {
     case "strand.forgotten":
       remove(model, event.strand, undefined);
       return;
-    case "strand.merged":
-      if (model.strands.has(event.into) && event.into !== event.strand) remove(model, event.strand, event.into);
+    case "strand.merged": {
+      const into = model.strands.get(event.into);
+      if (!into || event.into === event.strand || !model.strands.has(event.strand)) return;
+      if (ancestors(model, event.into).includes(event.strand)) into.parent = model.strands.get(event.strand)!.parent;
+      remove(model, event.strand, event.into);
       return;
+    }
     case "strand.note":
       withStrand(model, event.strand, (strand) => void strand.notes.push({ at: event.at, text: event.text }));
       return;
@@ -158,12 +170,12 @@ function remove(model: Model, id: string, into: string | undefined): void {
   model.strands.delete(id);
 }
 
-export function children(model: Model, id: string | undefined): Strand[] {
-  return [...model.strands.values()].filter((strand) => strand.parent === id);
-}
-
-export function descendants(model: Model, id: string): string[] {
-  return children(model, id).flatMap((child) => [child.id, ...descendants(model, child.id)]);
+export function descendants(model: Model, id: string, seen = new Set<string>([id])): string[] {
+  return children(model, id).flatMap((child) => {
+    if (seen.has(child.id)) return [];
+    seen.add(child.id);
+    return [child.id, ...descendants(model, child.id, seen)];
+  });
 }
 
 export function ancestors(model: Model, id: string): string[] {
@@ -188,8 +200,36 @@ const rank: Record<Whose, number> = { you: 0, agent: 1, person: 2, machine: 2 };
 
 export type Standing = { whose?: Whose; since: number; why: string; moves: Move[] };
 
+export function pickWhose(whoses: Whose[]): Whose | undefined {
+  return [...whoses].sort((a, b) => rank[a] - rank[b])[0];
+}
+
+type Index = { version: number; open: Map<string, Move[]>; last: Map<string, number>; kids: Map<string | undefined, Strand[]>; own: Map<string, Standing>; rolled: Map<string, Standing> };
+const indexes = new WeakMap<Model, Index>();
+
+function indexOf(model: Model): Index {
+  const cached = indexes.get(model);
+  if (cached?.version === model.version) return cached;
+  const index: Index = { version: model.version, open: new Map(), last: new Map(), kids: new Map(), own: new Map(), rolled: new Map() };
+  for (const move of [...model.moves.values()].sort((a, b) => a.from - b.from)) {
+    if (move.until === undefined) index.open.set(move.strand, [...(index.open.get(move.strand) ?? []), move]);
+    index.last.set(move.strand, Math.max(index.last.get(move.strand) ?? 0, move.until ?? move.from));
+  }
+  for (const strand of model.strands.values()) index.kids.set(strand.parent, [...(index.kids.get(strand.parent) ?? []), strand]);
+  indexes.set(model, index);
+  return index;
+}
+
+export function children(model: Model, id: string | undefined): Strand[] {
+  return indexOf(model).kids.get(id) ?? [];
+}
+
+export function isLive(model: Model, strand: Strand): boolean {
+  return strand.done === undefined && ancestors(model, strand.id).every((id) => model.strands.get(id)?.done === undefined);
+}
+
 export function openMoves(model: Model, strand: string): Move[] {
-  return [...model.moves.values()].filter((move) => move.strand === strand && move.until === undefined).sort((a, b) => a.from - b.from);
+  return indexOf(model).open.get(strand) ?? [];
 }
 
 export function moveWhose(model: Model, move: Move): Whose {
@@ -197,22 +237,30 @@ export function moveWhose(model: Model, move: Move): Whose {
 }
 
 export function own(model: Model, strand: Strand): Standing {
+  const index = indexOf(model);
+  const cached = index.own.get(strand.id);
+  if (cached) return cached;
   const open = openMoves(model, strand.id);
-  if (open.length > 0) {
-    const whose = open.map((move) => moveWhose(model, move)).sort((a, b) => rank[a] - rank[b])[0]!;
+  const whose = pickWhose(open.map((move) => moveWhose(model, move)));
+  let standing: Standing;
+  if (whose) {
     const moves = open.filter((move) => moveWhose(model, move) === whose);
-    return { whose, since: moves[0]!.from, why: moves[0]!.what, moves };
-  }
-  if (children(model, strand.id).some((child) => child.done === undefined)) return { since: strand.made, why: "", moves: [] };
-  const last = Math.max(strand.made, ...[...model.moves.values()].filter((move) => move.strand === strand.id).map((move) => move.until ?? move.from));
-  return { whose: "you", since: last, why: "no one on it", moves: [] };
+    standing = { whose, since: moves[0]!.from, why: moves[0]!.what, moves };
+  } else if (children(model, strand.id).some((child) => child.done === undefined)) standing = { since: strand.made, why: "", moves: [] };
+  else standing = { whose: "you", since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "no one on it", moves: [] };
+  index.own.set(strand.id, standing);
+  return standing;
 }
 
 export function rolled(model: Model, strand: Strand): Standing {
+  const index = indexOf(model);
+  const cached = index.rolled.get(strand.id);
+  if (cached) return cached;
+  index.rolled.set(strand.id, { since: strand.made, why: "", moves: [] });
   const all = [own(model, strand), ...children(model, strand.id).filter((child) => child.done === undefined).map((child) => rolled(model, child))].filter((standing) => standing.whose !== undefined);
-  if (all.length === 0) return { since: strand.made, why: "", moves: [] };
-  const best = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0]!;
-  return best;
+  const standing = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0] ?? { since: strand.made, why: "", moves: [] };
+  index.rolled.set(strand.id, standing);
+  return standing;
 }
 
 export function snoozed(strand: Strand, now: number): boolean {
@@ -221,7 +269,7 @@ export function snoozed(strand: Strand, now: number): boolean {
 
 export function yourStrands(model: Model, now: number): Strand[] {
   return [...model.strands.values()]
-    .filter((strand) => strand.done === undefined && own(model, strand).whose === "you" && !snoozed(strand, now))
+    .filter((strand) => isLive(model, strand) && own(model, strand).whose === "you" && !snoozed(strand, now))
     .sort((a, b) => own(model, a).since - own(model, b).since);
 }
 
@@ -237,9 +285,9 @@ export function recentHeard(model: Model, count: number): Recorded[] {
 export type Counts = { yours: number; agents: number; snoozed: number; waiting: number; oldest?: number };
 
 export function counts(model: Model, now: number): Counts {
-  const live = [...model.strands.values()].filter((strand) => strand.done === undefined);
+  const live = [...model.strands.values()].filter((strand) => isLive(model, strand));
   const yours = yourStrands(model, now);
-  const open = [...model.moves.values()].filter((move) => move.until === undefined && model.strands.get(move.strand)?.done === undefined);
+  const open = [...model.moves.values()].filter((move) => move.until === undefined && model.strands.has(move.strand) && isLive(model, model.strands.get(move.strand)!));
   return {
     yours: yours.length,
     agents: open.filter((move) => moveWhose(model, move) === "agent").length,

@@ -73,7 +73,7 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
       inputSchema: { strand: strandParam, why: z.string().max(200).optional() },
       annotations: write,
     },
-    async (input) => attempt(async () => (await send({ method: "done-by", params: { ...caller, ...(input.strand ? { strand: input.strand } : {}), why: input.why ?? "done" } })) as { strand: string }, (result) => `${result.strand} is done.`),
+    async (input) => attempt(async () => (await send({ method: "done-by", params: { ...caller, ...(input.strand ? { strand: input.strand } : {}), why: input.why || "done" } })) as { strand: string }, (result) => `${result.strand} is done.`),
   );
 
   server.registerTool(
@@ -155,7 +155,7 @@ export function movesText(view: Snapshot): string {
 }
 
 export function strandText(view: Snapshot, wanted: string | undefined, caller: Caller): string {
-  const found = wanted ? findStrand(view, wanted) : (view.strands.find((strand) => strand.open.some((move) => move.player !== "you" && move.by.place?.handle === caller.self)) ?? view.strands.filter((strand) => strand.dir && (caller.dir === strand.dir || caller.dir.startsWith(`${strand.dir}/`))).at(-1));
+  const found = wanted ? findStrand(view, wanted) : ((caller.self === undefined ? undefined : view.strands.find((strand) => strand.open.some((move) => move.player !== "you" && move.by.place?.handle === caller.self))) ?? view.strands.filter((strand) => strand.dir && (caller.dir === strand.dir || caller.dir.startsWith(`${strand.dir}/`))).at(-1));
   if (!found) return wanted ? `ponpoko has no strand ${wanted}.` : "ponpoko can't tell which strand you're on; name it.";
   const at = view.strands.indexOf(found);
   const below = [];

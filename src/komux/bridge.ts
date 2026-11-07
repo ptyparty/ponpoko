@@ -1,6 +1,7 @@
 import { ask, watch } from "../client.ts";
 import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
+import { pickWhose, whoseOf } from "../model.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
 import { known, komuxPlace, tabStrand, Translator, type Known } from "./translate.ts";
 
@@ -176,10 +177,7 @@ export async function runBridge(env = process.env): Promise<number> {
 }
 
 function whoseNow(model: Known, strand: Knowledge["strands"][number]): "you" | "agent" | "waiting" | undefined {
-  const open = model.open.filter((move) => move.strand === strand.id);
-  if (open.some((move) => move.player === "you")) return "you";
-  if (open.some((move) => model.players.get(move.player)?.kind === "agent")) return "agent";
-  if (open.length > 0) return "waiting";
-  if ([...model.strands.values()].some((child) => child.parent === strand.id)) return undefined;
-  return "you";
+  const whose = pickWhose(model.open.filter((move) => move.strand === strand.id).map((move) => (move.player === "you" ? "you" : whoseOf(model.players.get(move.player)?.kind ?? "machine"))));
+  if (whose) return whose === "person" || whose === "machine" ? "waiting" : whose;
+  return [...model.strands.values()].some((child) => child.parent === strand.id) ? undefined : "you";
 }

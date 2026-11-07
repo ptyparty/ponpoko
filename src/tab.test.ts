@@ -39,6 +39,8 @@ describe("the command tab", () => {
     const tests = strandNamed(core, "sc-1 › tests").id;
     await tab.key({ name: "a" });
     await type(tab, "docs");
+    await tab.key({ name: "A" });
+    await type(tab, "sc-2");
     await tab.key({ name: "j" });
     await tab.key({ name: "m" });
     await type(tab, "epic 9");
@@ -57,6 +59,7 @@ describe("the command tab", () => {
     await type(tab, "SC-9");
     expect(calls).toEqual([
       ["add", sc1, "docs"],
+      ["add", undefined, "sc-2"],
       ["reparent", tests, "epic 9"],
       ["done", tests],
       ["snooze", tests, 1_000_000 + 60 * 60_000],
