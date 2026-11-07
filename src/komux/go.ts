@@ -11,7 +11,7 @@ export async function goInKomux(strand: StrandView, env = process.env, control?:
   const target = goTarget(strand);
   const place = target ? komuxPlace(target.player) : undefined;
   if (target && place && target.player.live && place.session === env.KOMUX_SESSION && place.server === env.KOMUX_SERVER_ID) {
-    const tab = target.player.kind === "agent" && !needsYou(strand, target.move) ? await send({ method: "tab.focus", params: { tabId: place.tabId } }) : undefined;
+    const tab = target.player.kind === "agent" ? await send({ method: "tab.focus", params: { tabId: place.tabId } }) : undefined;
     if (tab?.ok) return "focused";
     const focused = await send({ method: "pane.focus", params: { paneId: place.paneId } });
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
@@ -49,10 +49,6 @@ function lastDir(strand: StrandView): string | undefined {
     if (dir) return dir;
   }
   return undefined;
-}
-
-function needsYou(strand: StrandView, move: MoveView): boolean {
-  return move.player === "you" && (move.what === "asking you" || move.what === "waiting on you" || strand.unseen);
 }
 
 export type Pickup = { resume?: { session: string; dir: string; who: string; at: number }; dir?: string };

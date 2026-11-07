@@ -240,19 +240,19 @@ describe("go in komux", () => {
     return { sent, control: async (request: unknown) => (sent.push(request), { ok: true }) };
   };
 
-  test("focuses the pane a strand waits on in this session, and opens a tab here for anything else", async () => {
+  test("focuses the tab a strand waits on in this session, and opens a tab here for anything else", async () => {
     const { core, hear } = harness();
     await hear(snapshot);
     const { sent, control } = recorder();
     expect(await goInKomux(strandNamed(core, "claude in ptyparty"), env, control)).toBe("focused");
     expect(await goInKomux(strandNamed(core, "claude in ptyparty"), { ...env, KOMUX_SESSION: "other", KOMUX_SERVER_ID: "s9" }, control)).toBe("opened");
     expect(sent).toEqual([
-      { method: "pane.focus", params: { paneId: 5 } },
+      { method: "tab.focus", params: { tabId: 2 } },
       { method: "project.open", params: { target: side } },
     ]);
   });
 
-  test("goes to a working agent's tab without showing the agent, but shows one asking you", async () => {
+  test("goes to an agent's tab without showing the agent, even when it waits on you", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });
     const { sent, control } = recorder();
@@ -261,7 +261,7 @@ describe("go in komux", () => {
     await goInKomux(strandNamed(core, "sc-1234"), env, control);
     expect(sent).toEqual([
       { method: "tab.focus", params: { tabId: 1 } },
-      { method: "pane.focus", params: { paneId: 2 } },
+      { method: "tab.focus", params: { tabId: 1 } },
     ]);
   });
 
