@@ -18,6 +18,7 @@ export class Ponpoko {
   readonly translator = new Translator();
   private readonly listeners = new Set<() => void>();
   private readonly titleAsked = new Set<string>();
+  private readonly badgesSent = new Map<string, string>();
 
   constructor(
     private readonly store: Store,
@@ -155,6 +156,36 @@ export class Ponpoko {
     if (strand.kind === "job") this.record("you", [{ type: "strand.ended", strand: id, why: "you went to it" }]);
     else if (strand.whose === "you" && !strand.seen) this.record("you", [{ type: "strand.seen", strand: id }]);
     return live ? "focused" : "opened";
+  }
+
+  tabBadges(): { session: string; server: string; tabId: number; text: string | null; color?: string }[] {
+    const now = this.now();
+    return this.translator.liveTabs().map(({ session, server, tab }) => {
+      const braid = braidForDir(tab.dir, this.model.pointed).id;
+      const strands = [...this.model.strands.values()].filter((strand) => strand.braid === braid);
+      const yours = strands.filter((strand) => strand.whose === "you" && !((strand.snoozedUntil ?? 0) > now)).length;
+      const waiting = strands.some((strand) => strand.whose === "machine" || strand.whose === "person");
+      const snoozed = strands.some((strand) => strand.whose === "you" && (strand.snoozedUntil ?? 0) > now);
+      if (yours > 0) return { session, server, tabId: tab.id, text: yours > 1 ? `●${yours}` : "●", color: "warning" };
+      if (waiting) return { session, server, tabId: tab.id, text: "⊘", color: "muted" };
+      if (snoozed) return { session, server, tabId: tab.id, text: "◷", color: "muted" };
+      return { session, server, tabId: tab.id, text: null };
+    });
+  }
+
+  async syncBadges(): Promise<void> {
+    const live = new Set<string>();
+    for (const badge of this.tabBadges()) {
+      const key = `${badge.server}:${badge.tabId}`;
+      live.add(key);
+      const look = badge.text === null ? "" : `${badge.text}:${badge.color}`;
+      if ((this.badgesSent.get(key) ?? "") === look) continue;
+      this.badgesSent.set(key, look);
+      const { session, tabId, text, color } = badge;
+      const sent = await this.sendToKomux(session, { method: "tab.badge", params: { tabId, owner: "ponpoko", text, ...(color ? { color } : {}) } }).catch(() => ({ ok: false }));
+      if (!sent.ok) this.badgesSent.delete(key);
+    }
+    for (const key of this.badgesSent.keys()) if (!live.has(key)) this.badgesSent.delete(key);
   }
 
   private agentStrand(session: string | undefined, paneId: number): Strand | undefined {

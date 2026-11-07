@@ -50,9 +50,15 @@ export async function serve(): Promise<void> {
   }
   const core = new Ponpoko(new Store());
   const watchers = new Set<Socket<{ buffer: string }>>();
+  let badging = Promise.resolve();
+  const syncBadges = () => {
+    badging = badging.then(() => core.syncBadges()).catch(() => undefined);
+  };
   core.onChange(() => {
     for (const socket of watchers) socket.write('{"changed":true}\n');
+    syncBadges();
   });
+  const badgeClock = setInterval(syncBadges, 30_000);
 
   const server = Bun.listen<{ buffer: string }>({
     unix: path,
@@ -109,6 +115,7 @@ export async function serve(): Promise<void> {
 
   const stop = () => {
     clearInterval(scanner);
+    clearInterval(badgeClock);
     for (const connection of connected.values()) connection.close();
     server.stop(true);
     rmSync(path, { force: true });

@@ -141,3 +141,20 @@ describe("ponpoko", () => {
     expect(core.snapshot().moves.map((strand) => strand.id)).toEqual(["pane:s1:5", "job:s1:7"]);
   });
 });
+
+describe("tab glyphs", () => {
+  test("each live tab shows whose move its braid holds, and only changes are sent", async () => {
+    const { core, hear, sent } = setup();
+    hear(snapshot);
+    await core.syncBadges();
+    expect(sent.map((entry) => entry.request)).toEqual([
+      { method: "tab.badge", params: { tabId: 1, owner: "ponpoko", text: "●", color: "warning" } },
+      { method: "tab.badge", params: { tabId: 2, owner: "ponpoko", text: "●", color: "warning" } },
+    ]);
+    sent.length = 0;
+    core.report({ dir: story, strand: "PR #1 review", whose: "machine", who: "Copilot", reason: "review" });
+    core.forget("job:s1:7");
+    await core.syncBadges();
+    expect(sent.map((entry) => entry.request)).toEqual([{ method: "tab.badge", params: { tabId: 1, owner: "ponpoko", text: "⊘", color: "muted" } }]);
+  });
+});
