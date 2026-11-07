@@ -24,7 +24,7 @@ describe("the deck", () => {
     const hand = plain(dealer.view());
     expect(hand).toContain("your move · 2");
     expect(hand).toContain("▸ 1  claude in side");
-    expect(hand).toContain("  2  sc-1");
+    expect(hand).toContain("  2  sc-1  Widget CSV import");
     await dealer.key({ name: "j" });
     const card = plain(dealer.view());
     expect(card).toContain("● sc-1");

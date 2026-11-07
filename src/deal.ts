@@ -199,7 +199,8 @@ export class Dealer {
     let index = 0;
     const row = (into: Listed[], strand: StrandView, what: string, yours: boolean) => {
       const at = index++;
-      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${fit(strand.name, this.wide ? 18 : 24)}  ${what}`, column - 2).trimEnd();
+      const label = strand.title ? `${strand.name}  ${strand.title}` : strand.name;
+      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${fit(label, Math.max(24, Math.floor(column * 0.5)))}  ${what}`, column - 2).trimEnd();
       into.push({ row: at, line: yours && urgency(strand) === 0 ? style.amber(` ${text}`) : at === this.selected ? ` ${text}` : style.dim(` ${text}`) });
     };
     for (const strand of this.hand) row(mine, strand, `${cause(strand)} · ${age(now - strand.own.since)}`, true);
