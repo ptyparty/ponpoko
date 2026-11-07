@@ -1,7 +1,7 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { goPlace } from "./komux/go.ts";
+import { goPlace, goTarget, pickupOffer, startsAt } from "./komux/go.ts";
 import { age, cause, clock, fit, holder } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
@@ -34,8 +34,8 @@ export class Dealer {
     this.hand = [...fresh, ...back];
   }
 
-  private above(strand: StrandView): StrandView[] {
-    return this.snapshot ? aboveOf(this.snapshot.strands, strand) : [];
+  private strands(): StrandView[] {
+    return this.snapshot?.strands ?? [];
   }
 
   card(): StrandView | undefined {
@@ -73,12 +73,17 @@ export class Dealer {
         return this.finish();
       case "return":
         if (!card) return this.finish();
-        if (pickup(card)) {
+        if (pickupOffer(card, this.strands())) {
           this.mode = "pickup";
           return undefined;
         }
         this.dealt.add(card.id);
-        if (await this.act(() => this.actions.go(card, this.above(card)))) return this.finish();
+        if (await this.act(() => this.actions.go(card, this.strands()))) return this.finish();
+        return undefined;
+      case "f":
+        if (!card || !startsAt(card)) return undefined;
+        this.dealt.add(card.id);
+        if (await this.act(() => this.actions.pickUp(card, "fresh"))) return this.finish();
         return undefined;
       case "s":
       case " ":
@@ -108,10 +113,10 @@ export class Dealer {
     if (!card) {
       return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is waiting on you"), "", style.dim(" esc close")];
     }
-    const target = card.open.map((move) => move.answers ?? move.by).find((player) => player.live && player.space);
-    const options = pickup(card);
-    const place = goPlace(card, this.above(card));
-    const where = target ? `→ ${target.space}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
+    const target = goTarget(card, this.strands())?.player;
+    const options = pickupOffer(card, this.strands());
+    const place = goPlace(card, aboveOf(this.strands(), card));
+    const where = target ? `→ ${target.who} in ${target.space ?? "its tab"}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
     const lines = [
       style.dim(` ${hand} · 1 of ${this.hand.length}`),
       "",
@@ -131,7 +136,7 @@ export class Dealer {
           ? style.amber(` forget ${card.name}?  y yes   any other key no`)
           : this.mode === "pickup" && options
             ? style.amber(` ${pickupLine(options, this.snapshot.now)}`)
-            : style.dim(" ⏎ go   s skip   d done   z snooze   x forget   esc close");
+            : style.dim(` ⏎ go   s skip${startsAt(card) ? "   f fresh Claude" : ""}   d done   z snooze   x forget   esc close`);
     if (this.message) lines.push(style.amber(` ${this.message}`));
     lines.push(footer);
     return lines;

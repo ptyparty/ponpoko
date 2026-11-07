@@ -25,9 +25,16 @@ describe("the deck", () => {
     expect(card).toContain("your move · 1 of 2");
     expect(card).toContain("● sc-1");
     expect(card).toContain("claude · turn ended · 2m");
-    expect(card).toContain("→ tab 1 widgets");
+    expect(card).toContain("→ claude in tab 1 widgets");
     expect(await dealer.key({ name: "return" })).toBe("close");
     expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
+  });
+
+  test("f starts a fresh Claude on the card even when one is in its tab", async () => {
+    const { core, dealer, calls } = await setup();
+    expect(plain(dealer.view())).toContain("f fresh Claude");
+    expect(await dealer.key({ name: "f" })).toBe("close");
+    expect(calls).toEqual([["pickUp", strandNamed(core, "sc-1").id, "fresh"]]);
   });
 
   test("skip puts the card at the back, and d marks it done", async () => {

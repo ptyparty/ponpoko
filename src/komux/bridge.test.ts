@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { aboveOf } from "../core.ts";
 import { harness, strandNamed } from "../test-harness.ts";
-import { brief, goInKomux, pickup, pickUpInKomux } from "./go.ts";
+import { brief, goInKomux, goTarget, pickup, pickupOffer, pickUpInKomux } from "./go.ts";
 
 const story = "/home/me/work/stories/sc-1234/widgets";
 const side = "/home/me/work/ptyparty";
@@ -331,9 +330,23 @@ describe("go in komux", () => {
     const strands = core.snapshot().strands;
     const rename = strandNamed(core, "sc-1235 › fixups › rename");
     const { sent, control } = recorder();
-    await goInKomux(rename, aboveOf(strands, rename), env, control);
+    await goInKomux(rename, strands, env, control);
     await expect(goInKomux(rename, [], env, control)).rejects.toThrow("doesn't know where this strand lives");
     expect(sent).toEqual([{ method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" } } }]);
+  });
+
+  test("a strand no one is on goes to a Claude already in the tab it lives in, rather than offering a new one", async () => {
+    const { core, hear } = harness();
+    await hear(snapshot);
+    core.add(strandNamed(core, "sc-1234").id, "fixups");
+    const strands = core.snapshot().strands;
+    const fixups = strandNamed(core, "sc-1234 › fixups");
+    expect(goTarget(fixups, strands, env)?.player.id).toBe("pane:s1:2");
+    expect(pickupOffer(fixups, strands, env)).toBeUndefined();
+    expect(goTarget(fixups, strands, { ...env, KOMUX_SESSION: "other" })).toBeUndefined();
+    const { sent, control } = recorder();
+    await goInKomux(fixups, strands, env, control);
+    expect(sent).toEqual([{ method: "tab.focus", params: { tabId: 1 } }]);
   });
 
   test("picking up falls back to a new pane when the tab's docked Claude is busy or missing", async () => {

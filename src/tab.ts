@@ -1,5 +1,5 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
-import { goPlace, goTarget, type Pickup } from "./komux/go.ts";
+import { goPlace, goTarget, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { clock, rows, type Row, type Tone } from "./render.ts";
@@ -8,13 +8,14 @@ import { openScreen, style, type Key } from "./screen.ts";
 type Purpose = "note" | "point" | "add" | "move";
 type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
-const keysLine = "␣ moves   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
+const keysLine = "␣ moves   f fresh   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
 
 const help = [
   " Keys",
   "",
   "   j k ↑ ↓   move between strands",
-  "   ⏎         go to the strand: focus the pane it waits on, or open a tab at its directory",
+  "   ⏎         go to the strand: its agent's tab, a Claude already in the tab it lives in, or a tab opened at its directory",
+  "   f         start a fresh Claude on the strand, even when one is already in its tab",
   "   ␣         show or hide the strand's moves",
   "   a         add a strand under this one",
   "   A         add a strand at the top",
@@ -64,8 +65,8 @@ export class TabController {
     this.selected = Math.min(this.selected, Math.max(0, this.selectable().length - 1));
   }
 
-  private above(strand: StrandView): StrandView[] {
-    return this.snapshot ? aboveOf(this.snapshot.strands, strand) : [];
+  private strands(): StrandView[] {
+    return this.snapshot?.strands ?? [];
   }
 
   current(): Row | undefined {
@@ -119,12 +120,16 @@ export class TabController {
         this.mode = { kind: "help" };
         return undefined;
       case "return": {
-        const options = strand ? pickup(strand) : undefined;
+        const options = strand ? pickupOffer(strand, this.strands()) : undefined;
         if (!strand) this.message = "Nothing to go to here";
         else if (options) this.mode = { kind: "pickup", options };
-        else await this.run(() => this.actions.go(strand, this.above(strand)));
+        else await this.run(() => this.actions.go(strand, this.strands()));
         return undefined;
       }
+      case "f":
+        if (strand && startsAt(strand)) await this.run(() => this.actions.pickUp(strand, "fresh"), "Starting a fresh Claude on it");
+        else this.message = "ponpoko doesn't know where to start a Claude for this strand";
+        return undefined;
       case "space":
       case " ":
         if (strand && !this.expanded.delete(strand.id)) this.expanded.add(strand.id);
@@ -195,7 +200,7 @@ export class TabController {
     if (mode.kind === "text") return [style.amber(` ${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`)];
     if (this.message) return [style.amber(` ${this.message}`)];
     const strand = this.current()?.strand;
-    return [`${style.bold(` ⏎ ${strand ? enterDoes(strand, this.above(strand)) : "nothing to go to"}`)}`, style.dim(` ${keysLine}`)];
+    return [`${style.bold(` ⏎ ${strand ? enterDoes(strand, this.strands()) : "nothing to go to"}`)}`, style.dim(` ${keysLine}`)];
   }
 
   private async textKey(mode: Extract<Mode, { kind: "text" }>, key: Key): Promise<undefined> {
@@ -300,13 +305,13 @@ export async function runTab(): Promise<number> {
   return 0;
 }
 
-function enterDoes(strand: StrandView, above: StrandView[]): string {
-  const target = goTarget(strand);
+function enterDoes(strand: StrandView, strands: StrandView[]): string {
+  const target = goTarget(strand, strands);
   if (target) return `go to ${target.player.who} in ${target.player.space ?? "its tab"}`;
-  const options = pickup(strand);
+  const options = pickupOffer(strand, strands);
   if (options?.resume) return `resume ${options.resume.who} on ${strand.name}, or start a fresh Claude`;
   if (options) return `start a Claude on ${strand.name}`;
-  const place = goPlace(strand, above);
+  const place = goPlace(strand, aboveOf(strands, strand));
   if (strand.own.whose === undefined) return place ? `open a tab at ${place.dir}; its work is in the strands under it` : "nothing here; its work is in the strands under it";
   return place ? `open a tab at ${place.dir}` : "nothing: no one is on it, and ponpoko doesn't know where it lives (p points a directory at it)";
 }

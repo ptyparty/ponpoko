@@ -82,6 +82,12 @@ describe("the command tab", () => {
     expect(footer()).toBe("⏎ nothing here; its work is in the strands under it");
   });
 
+  test("f starts a fresh Claude on the picked strand", async () => {
+    const { core, tab, calls } = await setup();
+    await tab.key({ name: "f" });
+    expect(calls).toEqual([["pickUp", strandNamed(core, "sc-1").id, "fresh"]]);
+  });
+
   test("says when the service is down", () => {
     const tab = new TabController({} as Actions);
     tab.setSnapshot(undefined);

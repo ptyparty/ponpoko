@@ -47,6 +47,8 @@ Enter on a strand no one is on offers to resume the last Claude that worked on i
 
 A strand ponpoko has no tab or directory for goes to the place of the nearest strand above it that has one, opened with that strand's layout.
 
+When the tab a strand lives in already has a Claude in it, such as a story's Claude when you pick one of the story's smaller strands, Enter goes to that Claude instead of offering a new one. `f` starts a fresh Claude on a strand whenever you want one anyway, in the deck or the command tab.
+
 Glyphs: ● yours, ◐ an agent's, ⊘ waiting on someone or something, ◷ snoozed, ○ nothing to do.
 
 ## Where things live

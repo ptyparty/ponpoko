@@ -5,7 +5,7 @@ import { age } from "./render.ts";
 import type { Link } from "./model.ts";
 
 export type Actions = {
-  go: (strand: StrandView, above: StrandView[]) => Promise<unknown>;
+  go: (strand: StrandView, strands: StrandView[]) => Promise<unknown>;
   pickUp: (strand: StrandView, how: "resume" | "fresh") => Promise<unknown>;
   forget: (strand: string) => Promise<unknown>;
   snooze: (strand: string, until: number) => Promise<unknown>;
@@ -19,9 +19,9 @@ export type Actions = {
 };
 
 export const serviceActions: Actions = {
-  go: async (strand, above) => {
-    await goInKomux(strand, above);
-    const target = goTarget(strand);
+  go: async (strand, strands) => {
+    await goInKomux(strand, strands);
+    const target = goTarget(strand, strands);
     if (target?.player.kind === "job") await ask({ method: "close-move", params: { move: target.move.id } });
     else if (strand.unseen) await ask({ method: "seen", params: { strand: strand.id } });
   },
