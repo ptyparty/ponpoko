@@ -55,7 +55,7 @@ export type PonpokoOptions = { deal?: string; catchUp?: string };
 export default function ponpoko(options: PonpokoOptions = {}) {
   return {
     name: "ponpoko",
-    tray: [{ name: "ponpoko", command: [...command, "tray"], every: 2000, open: command }],
+    tray: [{ name: "ponpoko", stream: [...command, "tray", "--stream"], open: command }],
     keys: [
       { key: options.deal ?? "alt+m", popup: [...command, "deal"], name: "your move", width: 70, height: 40 },
       { key: options.catchUp ?? "alt+shift+m", popup: [...command, "deal", "--unseen"], name: "catch up", width: 70, height: 40 },

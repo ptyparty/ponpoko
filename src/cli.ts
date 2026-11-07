@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
-import { Down, state } from "./client.ts";
+import { Down, state, watch } from "./client.ts";
 import { age, braidTitle, cause, holder, rows } from "./render.ts";
 import { serve } from "./server.ts";
 
 const usage = `Usage:
   ponpoko                 The command tab: every braid, its strands, and what ponpoko heard
   ponpoko list            Your moves, then everything else, printed once
-  ponpoko tray            One line for komux's tray
+  ponpoko tray [--stream] One line for komux's tray; --stream prints a new one as it changes
   ponpoko deal [--unseen] Deal your oldest move as a card, for a komux popup
   ponpoko serve           Run the service (ponpoko.service runs this)
   ponpoko setup [--yes]   Install the service, komux plugin, skill and MCP
@@ -32,7 +32,7 @@ async function main(args: string[]): Promise<number> {
     case "setup":
       return (await import("./setup.ts")).setupCommand(args.slice(1));
     case "tray":
-      return tray();
+      return tray(args.slice(1));
     case "-h":
     case "--help":
     case "help":
@@ -67,15 +67,46 @@ async function list(): Promise<number> {
   }
 }
 
-async function tray(): Promise<number> {
+async function tray(args: string[]): Promise<number> {
+  if (!args.includes("--stream")) {
+    console.log((await trayLine()).text);
+    return 0;
+  }
+  let last = "";
+  const print = async () => {
+    const line = JSON.stringify(await trayLine());
+    if (line === last) return;
+    last = line;
+    console.log(line);
+  };
+  let connection: { close: () => void } | undefined;
+  const connect = async () => {
+    connection = await watch(
+      () => void print(),
+      () => {
+        connection = undefined;
+        void print();
+      },
+    ).catch(() => undefined);
+  };
+  await print();
+  await connect();
+  setInterval(() => {
+    if (!connection) void connect();
+    void print();
+  }, 15_000);
+  return -1;
+}
+
+export async function trayLine(): Promise<{ text: string; color: string }> {
   try {
     const snapshot = await state();
     const { yours, oldest } = snapshot.counts;
-    console.log(yours === 0 ? "○ 0 yours" : `● ${yours} yours ${age(snapshot.now - oldest!)}`);
+    if (yours === 0) return { text: "○ 0 yours", color: "muted" };
+    return { text: `● ${yours} yours ${age(snapshot.now - oldest!)}`, color: "warning" };
   } catch {
-    console.log("ponpoko ✗");
+    return { text: "ponpoko ✗", color: "muted" };
   }
-  return 0;
 }
 
 const code = await main(Bun.argv.slice(2));
