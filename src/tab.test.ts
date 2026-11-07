@@ -84,10 +84,15 @@ describe("the command tab", () => {
     await tab.key({ name: "return" });
     await tab.key({ name: "return" });
     await tab.key({ name: "f" });
+    core.add(strandNamed(core, "sc-1").id, "docs");
+    tab.setSnapshot(core.snapshot());
+    await tab.key({ name: "return" });
+    expect(tab.mode.kind).toBe("list");
     const id = strandNamed(core, "sc-1").id;
     expect(calls).toEqual([
       ["pickUp", id, "resume"],
       ["pickUp", id, "fresh"],
+      ["go", id],
     ]);
   });
 });

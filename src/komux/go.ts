@@ -47,7 +47,7 @@ function needsYou(strand: StrandView, move: MoveView): boolean {
 export type Pickup = { resume?: { session: string; dir: string; who: string; at: number }; dir?: string };
 
 export function pickup(strand: StrandView): Pickup | undefined {
-  if (goTarget(strand)) return undefined;
+  if (goTarget(strand) || strand.own.whose === undefined) return undefined;
   const last = [...strand.recent].reverse().find((move) => {
     const player = move.answers ?? move.by;
     return player.kind === "agent" && player.resume && komuxPlace(player)?.dir;
