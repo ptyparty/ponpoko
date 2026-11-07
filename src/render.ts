@@ -87,7 +87,10 @@ export function rows(snapshot: Snapshot, width: number, heardCount = 8): Row[] {
     const head = ` ▾ ${braidTitle(braid)}`;
     const where = tabsText(braid);
     out.push({ text: `${fit(head, Math.max(20, width - where.length - 2))}  ${where}`, braid, tone: "heading" });
-    for (const strand of braid.strands) out.push({ text: strandLine(strand, now, unseen.has(strand.id)), strand, braid, tone: tone(strand, now) });
+    for (const strand of braid.strands) {
+      out.push({ text: strandLine(strand, now, unseen.has(strand.id)), strand, braid, tone: tone(strand, now) });
+      if (strand.doing) out.push({ text: `         ↳ ${strand.doing.text}${strand.doing.page ? `  📓 ${strand.doing.page}` : ""}  ${clock(strand.doing.at)}`, braid, tone: "dim" });
+    }
     for (const note of braid.notes.slice(-2)) out.push({ text: `     ✎ ${note.text}  ${clock(note.at)}`, braid, tone: "dim" });
   }
   if (heardCount > 0 && snapshot.heard.length > 0) {
@@ -127,6 +130,8 @@ export function describe(event: Recorded, labels: { braids: Map<string, string>;
     }
     case "strand.ended":
       return `${strand(event.strand)} ended: ${event.why}`;
+    case "strand.status":
+      return event.text === "" ? `${strand(event.strand)} status cleared` : `${strand(event.strand)} now: ${event.text}`;
     case "strand.dismissed":
       return `${strand(event.strand)} toast dismissed`;
     case "strand.seen":

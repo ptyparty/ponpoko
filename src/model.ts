@@ -16,6 +16,7 @@ export type Strand = {
   seen: boolean;
   dismissed: boolean;
   snoozedUntil?: number;
+  doing?: { text: string; page?: string; at: number };
 };
 export type Model = { braids: Map<string, Braid>; strands: Map<string, Strand>; pointed: Map<string, string>; heard: Recorded[]; lastAt: number };
 
@@ -74,6 +75,7 @@ export function apply(model: Model, event: Recorded): void {
         seen: changed ? event.whose !== "you" : old.seen,
         dismissed: changed ? false : old.dismissed,
         snoozedUntil: changed ? undefined : old.snoozedUntil,
+        doing: old?.doing,
       });
       return;
     }
@@ -81,6 +83,11 @@ export function apply(model: Model, event: Recorded): void {
     case "strand.forgotten":
       model.strands.delete(event.strand);
       return;
+    case "strand.status": {
+      const strand = model.strands.get(event.strand);
+      if (strand) strand.doing = event.text === "" ? undefined : { text: event.text, page: event.page, at: event.at };
+      return;
+    }
     case "strand.dismissed": {
       const strand = model.strands.get(event.strand);
       if (strand) strand.dismissed = true;

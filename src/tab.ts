@@ -6,13 +6,14 @@ import { openScreen, style, type Key } from "./screen.ts";
 
 type Mode = { kind: "list" } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: "note" | "point"; text: string };
 
-const keysLine = " ⏎ go   z snooze   n note   x forget   p point at a braid   c caught up   ? keys   q quit";
+const keysLine = " ⏎ go   o open page   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
 
 const help = [
   " Keys",
   "",
   "   j k ↑ ↓   move between braids and strands",
   "   ⏎         go to the strand: focus its pane, or reopen its tab",
+  "   o         open the notebook page an agent's status points at (📓), in quoll",
   "   z         snooze the strand, then pick how long",
   "   n         add a note to the braid",
   "   x         forget a strand ponpoko has wrong, such as a pane long gone",
@@ -98,6 +99,12 @@ export class TabController {
         const strand = row?.strand ?? row?.braid?.strands[0];
         if (!strand) this.message = "Nothing to go to here";
         else await this.run(() => this.actions.go(strand.id));
+        return undefined;
+      }
+      case "o": {
+        const doing = this.current()?.strand?.doing;
+        if (!doing?.page) this.message = "This strand's status points at no page";
+        else await this.run(() => this.actions.showPage(doing.page!), `Showing ${doing.page} in quoll`);
         return undefined;
       }
       case "z":

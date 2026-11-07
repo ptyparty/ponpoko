@@ -10,6 +10,7 @@ const usage = `Usage:
   ponpoko deal [--unseen] Deal your oldest move as a card, for a komux popup
   ponpoko serve           Run the service (ponpoko.service runs this)
   ponpoko setup [--yes]   Install the service, komux plugin, skill and MCP
+  ponpoko mcp             The MCP server Claude Code talks to
 `;
 
 async function main(args: string[]): Promise<number> {
@@ -25,6 +26,9 @@ async function main(args: string[]): Promise<number> {
       return list();
     case "deal":
       return (await import("./deal.ts")).runDeal(args.slice(1));
+    case "mcp":
+      await (await import("./mcp.ts")).runMcp();
+      return -1;
     case "setup":
       return (await import("./setup.ts")).setupCommand(args.slice(1));
     case "tray":

@@ -11,6 +11,8 @@ export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; moves
 
 export type Report = { braid?: string; dir?: string; session?: string; paneId?: number; strand?: string; whose: Whose | "done"; who?: string; reason: string };
 
+export type Status = { braid?: string; dir?: string; session?: string; paneId?: number; strand?: string; text: string; page?: string };
+
 export type KomuxSender = (session: string, request: unknown) => Promise<{ ok: boolean; error?: string }>;
 
 export class Ponpoko {
@@ -107,6 +109,16 @@ export class Ponpoko {
     return id;
   }
 
+  status(status: Status): string {
+    const own = status.strand === undefined || status.strand === "self";
+    const strand = own && status.paneId !== undefined ? this.agentStrand(status.session, status.paneId) : undefined;
+    if (own && !strand) throw new Error("this agent's own pane isn't known to ponpoko; name the strand instead");
+    const id = strand?.id ?? `report:${this.reportBraid(status)}:${slug(status.strand!)}`;
+    if (!this.model.strands.has(id)) throw new Error(`no strand ${status.strand}; report it first`);
+    this.record("agent", [{ type: "strand.status", strand: id, text: status.text, ...(status.page ? { page: status.page } : {}) }]);
+    return id;
+  }
+
   forget(strand: string): void {
     this.mustHave(strand);
     this.record("you", [{ type: "strand.forgotten", strand }]);
@@ -192,7 +204,7 @@ export class Ponpoko {
     return [...this.model.strands.values()].find((strand) => strand.kind === "agent" && strand.place?.paneId === paneId && (session === undefined || strand.place.session === session) && this.translator.livePane(strand.place));
   }
 
-  private reportBraid(report: Report): string {
+  private reportBraid(report: { braid?: string; dir?: string; session?: string; paneId?: number }): string {
     if (report.braid) return report.braid.toLowerCase().startsWith("sc-") ? report.braid.toLowerCase() : report.braid;
     if (report.paneId !== undefined) {
       const strand = this.agentStrand(report.session, report.paneId);

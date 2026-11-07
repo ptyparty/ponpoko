@@ -27,6 +27,7 @@ export const fact = z.discriminatedUnion("type", [
     place: place.optional(),
   }),
   z.object({ type: z.literal("strand.ended"), strand: z.string(), why: z.string() }),
+  z.object({ type: z.literal("strand.status"), strand: z.string(), text: z.string(), page: z.string().optional() }),
   z.object({ type: z.literal("strand.dismissed"), strand: z.string() }),
   z.object({ type: z.literal("strand.seen"), strand: z.string() }),
   z.object({ type: z.literal("strand.snoozed"), strand: z.string(), until: z.number() }),

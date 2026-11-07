@@ -7,6 +7,7 @@ export type Actions = {
   note: (braid: string, text: string) => Promise<unknown>;
   point: (dir: string, braid: string) => Promise<unknown>;
   seen: (braid: string) => Promise<unknown>;
+  showPage: (page: string) => Promise<unknown>;
 };
 
 export const serviceActions: Actions = {
@@ -16,6 +17,10 @@ export const serviceActions: Actions = {
   note: (braid, text) => ask({ method: "note", params: { braid, text } }),
   point: (dir, braid) => ask({ method: "point", params: { dir, braid } }),
   seen: (braid) => ask({ method: "seen", params: { braid } }),
+  showPage: async (page) => {
+    const shown = Bun.spawnSync(["quoll", "show", page], { stdout: "pipe", stderr: "pipe" });
+    if (shown.exitCode !== 0) throw new Error(`quoll show: ${shown.stderr.toString().trim() || shown.stdout.toString().trim()}`);
+  },
 };
 
 export type SnoozeChoice = { key: string; label: string; until: (now: number) => number };

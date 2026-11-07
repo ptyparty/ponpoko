@@ -23,6 +23,18 @@ export const request = z.discriminatedUnion("method", [
       reason: z.string().min(1).max(200),
     }),
   }),
+  z.object({
+    method: z.literal("status"),
+    params: z.object({
+      braid: z.string().optional(),
+      dir: z.string().optional(),
+      session: z.string().optional(),
+      paneId: z.number().int().optional(),
+      strand: z.string().optional(),
+      text: z.string().max(120),
+      page: z.string().max(200).optional(),
+    }),
+  }),
   z.object({ method: z.literal("forget"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("snooze"), params: z.object({ strand: z.string(), until: z.number() }) }),
   z.object({ method: z.literal("note"), params: z.object({ braid: z.string(), text: z.string().min(1).max(500) }) }),
@@ -145,6 +157,8 @@ export async function handle(core: Ponpoko, request: Request): Promise<Response>
         return { ok: true };
       case "report":
         return { ok: true, result: { strand: core.report(request.params) } };
+      case "status":
+        return { ok: true, result: { strand: core.status(request.params) } };
       case "forget":
         core.forget(request.params.strand);
         return { ok: true };
