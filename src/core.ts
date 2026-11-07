@@ -32,6 +32,7 @@ export type MoveView = Move & { by: PlayerView; answers?: PlayerView; links: Lin
 export type StandingView = Omit<Standing, "moves">;
 export type StrandView = Strand & {
   path: string[];
+  above: { name: string; title?: string; kind?: string }[];
   depth: number;
   own: StandingView;
   rolled: StandingView;
@@ -155,6 +156,10 @@ export class Ponpoko {
       return {
         ...strand,
         path: path(this.model, strand.id),
+        above: ancestors(this.model, strand.id).flatMap((id) => {
+          const above = this.model.strands.get(id);
+          return above ? [{ name: above.name, ...(above.title ? { title: above.title } : {}), ...(above.kind ? { kind: above.kind } : {}) }] : [];
+        }),
         depth,
         own: ownStanding,
         rolled: rolledStanding,

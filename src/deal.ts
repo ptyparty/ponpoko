@@ -1,7 +1,7 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import type { Snapshot, StrandView } from "./core.ts";
-import { age, cause, clock, holder, pathText } from "./render.ts";
+import { age, cause, clock, fit, holder } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
 type Mode = "card" | "pickup" | "snooze" | "forget";
@@ -96,7 +96,7 @@ export class Dealer {
     return undefined;
   }
 
-  view(): string[] {
+  view(width = 80): string[] {
     const hand = this.unseen ? "since you last caught up" : "your move";
     if (!this.snapshot) return ["", style.red(" ponpoko ✗  the service isn't running"), "", style.dim(" esc close")];
     const card = this.card();
@@ -109,10 +109,12 @@ export class Dealer {
     const lines = [
       style.dim(` ${hand} · 1 of ${this.hand.length}`),
       "",
-      style.amber(style.bold(` ● ${pathText(card)}`)),
-      ...(card.depth === 0 && card.title ? [style.dim(`   ${card.title}`)] : []),
+      style.amber(style.bold(fit(` ● ${card.name}${card.title ? `  ${card.title}` : ""}`, width - 1).trimEnd())),
+      ...(card.above ?? []).map((above) => style.dim(fit(`   in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, width - 1).trimEnd())),
+      "",
       `   ${cause(card)} · ${age(this.snapshot.now - card.own.since)}`,
       style.dim(`   ${holder(card, this.snapshot.now)}, since ${clock(card.own.since)}`),
+      ...(card.notes.length > 0 ? wrap(`✎ ${card.notes.at(-1)!.text}`, width - 6).map((text) => style.dim(`   ${text}`)) : []),
       `   ${where}`,
       "",
     ];
@@ -151,7 +153,7 @@ export class Dealer {
 export async function runDeal(args: string[]): Promise<number> {
   const dealer = new Dealer(serviceActions, args.includes("--unseen"));
   const done = Promise.withResolvers<void>();
-  const draw = () => screen.draw(dealer.view());
+  const draw = () => screen.draw(dealer.view(screen.width));
   const reload = async () => {
     dealer.setSnapshot(await state().catch(() => undefined));
     draw();
@@ -170,4 +172,17 @@ export async function runDeal(args: string[]): Promise<number> {
   clearInterval(ticker);
   screen.close();
   return 0;
+}
+
+function wrap(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    if (line && line.length + word.length + 1 > width) {
+      lines.push(line);
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  return lines.length > 4 ? [...lines.slice(0, 3), `${lines[3]!.slice(0, width - 1)}…`] : lines;
 }

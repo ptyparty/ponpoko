@@ -48,6 +48,23 @@ describe("the deck", () => {
     expect(calls).toEqual([["seen", strandNamed(core, "sc-1").id]]);
   });
 
+  test("a card says what the strand is: its title, the strands above it, and its latest note", async () => {
+    const { core } = harness();
+    const id = core.add(undefined, "sc-100 › sc-101");
+    const epic = strandNamed(core, "sc-100").id;
+    core.record("you", [
+      { type: "strand.titled", strand: epic, kind: "epic", title: "Smarter widget pricing" },
+      { type: "strand.titled", strand: id, kind: "story", title: "Gadgets: tools for import and export widgets" },
+      { type: "strand.note", strand: id, text: "No PR yet; 15 uncommitted changes in gadgets." },
+    ]);
+    const dealer = new Dealer(recordingActions().actions, false, () => 1_000_000);
+    dealer.setSnapshot(core.snapshot());
+    const card = plain(dealer.view(100));
+    expect(card).toContain("● sc-101  Gadgets: tools for import and export widgets");
+    expect(card).toContain("in epic sc-100  Smarter widget pricing");
+    expect(card).toContain("✎ No PR yet; 15 uncommitted changes in gadgets.");
+  });
+
   test("an empty hand says so", () => {
     const dealer = new Dealer({} as Actions, false);
     dealer.setSnapshot({ now: 0, counts: { yours: 0, agents: 0, snoozed: 0, waiting: 0 }, strands: [], moves: [], unseen: [], heard: [], labels: {} });
