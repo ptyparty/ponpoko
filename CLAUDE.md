@@ -13,6 +13,7 @@ Default to using Bun instead of Node.js.
 - `src/komux.ts`: reads komux's event streams and turns what it sees into facts.
 - `src/core.ts`: the service's logic, testable without sockets; `src/server.ts` puts it on `$XDG_RUNTIME_DIR/ponpoko/ponpoko.sock`, and `src/client.ts` talks to it.
 - `src/render.ts`: the rows `ponpoko list` prints and the command tab draws.
+- `src/tab.ts`: the command tab. `TabController` holds its keys and state, so it tests without a terminal; `src/screen.ts` is the small raw-terminal layer it draws through.
 
 ## Testing
 

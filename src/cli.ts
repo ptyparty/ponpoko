@@ -4,6 +4,7 @@ import { age, braidTitle, cause, holder, rows } from "./render.ts";
 import { serve } from "./server.ts";
 
 const usage = `Usage:
+  ponpoko                 The command tab: every braid, its strands, and what ponpoko heard
   ponpoko list            Your moves, then everything else, printed once
   ponpoko tray            One line for komux's tray
   ponpoko serve           Run the service (ponpoko.service runs this)
@@ -15,6 +16,9 @@ async function main(args: string[]): Promise<number> {
     case "serve":
       await serve();
       return -1;
+    case undefined:
+    case "tab":
+      return (await import("./tab.ts")).runTab();
     case "list":
       return list();
     case "tray":

@@ -121,7 +121,10 @@ export function describe(event: Recorded, labels: { braids: Map<string, string>;
     case "dir.pointed":
       return `${event.dir} → ${braid(event.braid)}`;
     case "strand.move":
-      return `${braid(event.braid)} ${event.label} ${event.whose === "you" ? "→ you" : event.whose === "agent" ? "working" : event.who ? `waiting on ${event.who}` : `→ ${event.whose}`}: ${event.why}`;
+    {
+      const to = event.whose === "you" ? "→ you" : event.whose === "agent" ? "working" : event.whose === "nobody" ? "idle" : event.who ? `waiting on ${event.who}` : `→ ${event.whose}`;
+      return `${braid(event.braid)} ${event.label} ${to}${event.why === to ? "" : `: ${event.why}`}`;
+    }
     case "strand.ended":
       return `${strand(event.strand)} ended: ${event.why}`;
     case "strand.dismissed":
