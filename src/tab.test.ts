@@ -69,6 +69,18 @@ describe("the command tab", () => {
     ]);
   });
 
+  test("the footer says what Enter will do on the picked strand", async () => {
+    const { core, tab } = await setup();
+    core.add(undefined, "epic 9 › sc-2");
+    tab.setSnapshot(core.snapshot());
+    const footer = () => plain(tab.view(140, 30)).at(-2)!.trim();
+    expect(footer()).toBe("⏎ go to claude in tab 1 widgets");
+    await tab.key({ name: "j" });
+    expect(footer()).toBe("⏎ nothing: no one is on it, and ponpoko doesn't know where it lives (p points a directory at it)");
+    await tab.key({ name: "j" });
+    expect(footer()).toBe("⏎ nothing here; its work is in the strands under it");
+  });
+
   test("says when the service is down", () => {
     const tab = new TabController({} as Actions);
     tab.setSnapshot(undefined);

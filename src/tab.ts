@@ -1,14 +1,14 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
-import type { Pickup } from "./komux/go.ts";
+import { goTarget, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
-import type { Snapshot } from "./core.ts";
+import type { Snapshot, StrandView } from "./core.ts";
 import { clock, rows, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
 type Purpose = "note" | "point" | "add" | "move";
 type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
-const keysLine = " ⏎ go   ␣ moves   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
+const keysLine = "␣ moves   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
 
 const help = [
   " Keys",
@@ -189,7 +189,9 @@ export class TabController {
     if (mode.kind === "pickup") return [style.amber(` no one is on it · ${pickupLine(mode.options, this.now())}`)];
     if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.name}?  y yes   any other key no`)];
     if (mode.kind === "text") return [style.amber(` ${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`)];
-    return [this.message ? style.amber(` ${this.message}`) : style.dim(keysLine)];
+    if (this.message) return [style.amber(` ${this.message}`)];
+    const strand = this.current()?.strand;
+    return [`${style.bold(` ⏎ ${strand ? enterDoes(strand) : "nothing to go to"}`)}`, style.dim(` ${keysLine}`)];
   }
 
   private async textKey(mode: Extract<Mode, { kind: "text" }>, key: Key): Promise<undefined> {
@@ -292,4 +294,14 @@ export async function runTab(): Promise<number> {
   connection?.close();
   screen.close();
   return 0;
+}
+
+function enterDoes(strand: StrandView): string {
+  const target = goTarget(strand);
+  if (target) return `go to ${target.player.who} in ${target.player.space ?? "its tab"}`;
+  const options = pickup(strand);
+  if (options?.resume) return `resume ${options.resume.who} on ${strand.name}, or start a fresh Claude`;
+  if (options) return `start a Claude on ${strand.name}`;
+  if (strand.own.whose === undefined) return strand.dir ? `open a tab at ${strand.dir}; its work is in the strands under it` : "nothing here; its work is in the strands under it";
+  return strand.dir ? `open a tab at ${strand.dir}` : "nothing: no one is on it, and ponpoko doesn't know where it lives (p points a directory at it)";
 }
