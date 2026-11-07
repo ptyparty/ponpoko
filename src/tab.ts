@@ -1,7 +1,7 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
-import { goTarget, type Pickup } from "./komux/go.ts";
+import { goPlace, goTarget, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
-import type { Snapshot, StrandView } from "./core.ts";
+import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { clock, rows, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
@@ -64,6 +64,10 @@ export class TabController {
     this.selected = Math.min(this.selected, Math.max(0, this.selectable().length - 1));
   }
 
+  private above(strand: StrandView): StrandView[] {
+    return this.snapshot ? aboveOf(this.snapshot.strands, strand) : [];
+  }
+
   current(): Row | undefined {
     return this.selectable()[this.selected];
   }
@@ -118,7 +122,7 @@ export class TabController {
         const options = strand ? pickup(strand) : undefined;
         if (!strand) this.message = "Nothing to go to here";
         else if (options) this.mode = { kind: "pickup", options };
-        else await this.run(() => this.actions.go(strand));
+        else await this.run(() => this.actions.go(strand, this.above(strand)));
         return undefined;
       }
       case "space":
@@ -191,7 +195,7 @@ export class TabController {
     if (mode.kind === "text") return [style.amber(` ${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`)];
     if (this.message) return [style.amber(` ${this.message}`)];
     const strand = this.current()?.strand;
-    return [`${style.bold(` ⏎ ${strand ? enterDoes(strand) : "nothing to go to"}`)}`, style.dim(` ${keysLine}`)];
+    return [`${style.bold(` ⏎ ${strand ? enterDoes(strand, this.above(strand)) : "nothing to go to"}`)}`, style.dim(` ${keysLine}`)];
   }
 
   private async textKey(mode: Extract<Mode, { kind: "text" }>, key: Key): Promise<undefined> {
@@ -296,12 +300,13 @@ export async function runTab(): Promise<number> {
   return 0;
 }
 
-function enterDoes(strand: StrandView): string {
+function enterDoes(strand: StrandView, above: StrandView[]): string {
   const target = goTarget(strand);
   if (target) return `go to ${target.player.who} in ${target.player.space ?? "its tab"}`;
   const options = pickup(strand);
   if (options?.resume) return `resume ${options.resume.who} on ${strand.name}, or start a fresh Claude`;
   if (options) return `start a Claude on ${strand.name}`;
-  if (strand.own.whose === undefined) return strand.dir ? `open a tab at ${strand.dir}; its work is in the strands under it` : "nothing here; its work is in the strands under it";
-  return strand.dir ? `open a tab at ${strand.dir}` : "nothing: no one is on it, and ponpoko doesn't know where it lives (p points a directory at it)";
+  const place = goPlace(strand, above);
+  if (strand.own.whose === undefined) return place ? `open a tab at ${place.dir}; its work is in the strands under it` : "nothing here; its work is in the strands under it";
+  return place ? `open a tab at ${place.dir}` : "nothing: no one is on it, and ponpoko doesn't know where it lives (p points a directory at it)";
 }

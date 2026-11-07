@@ -1,6 +1,7 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
-import type { Snapshot, StrandView } from "./core.ts";
+import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
+import { goPlace } from "./komux/go.ts";
 import { age, cause, clock, fit, holder } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
@@ -31,6 +32,10 @@ export class Dealer {
     const fresh = moves.filter((strand) => !this.skipped.includes(strand.id));
     const back = this.skipped.flatMap((id) => moves.filter((strand) => strand.id === id));
     this.hand = [...fresh, ...back];
+  }
+
+  private above(strand: StrandView): StrandView[] {
+    return this.snapshot ? aboveOf(this.snapshot.strands, strand) : [];
   }
 
   card(): StrandView | undefined {
@@ -73,7 +78,7 @@ export class Dealer {
           return undefined;
         }
         this.dealt.add(card.id);
-        if (await this.act(() => this.actions.go(card))) return this.finish();
+        if (await this.act(() => this.actions.go(card, this.above(card)))) return this.finish();
         return undefined;
       case "s":
       case " ":
@@ -105,7 +110,8 @@ export class Dealer {
     }
     const target = card.open.map((move) => move.answers ?? move.by).find((player) => player.live && player.space);
     const options = pickup(card);
-    const where = target ? `→ ${target.space}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : card.dir ? `→ open a tab at ${card.dir}` : "→ nowhere ponpoko knows of";
+    const place = goPlace(card, this.above(card));
+    const where = target ? `→ ${target.space}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
     const lines = [
       style.dim(` ${hand} · 1 of ${this.hand.length}`),
       "",

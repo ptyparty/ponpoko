@@ -76,7 +76,7 @@ describe("the command tab", () => {
     const footer = () => plain(tab.view(140, 30)).at(-2)!.trim();
     expect(footer()).toBe("⏎ go to claude in tab 1 widgets");
     await tab.key({ name: "j" });
-    expect(footer()).toBe("⏎ nothing: no one is on it, and ponpoko doesn't know where it lives (p points a directory at it)");
+    expect(footer()).toBe("⏎ open a tab at /w/stories/sc-1");
     for (const _ of [1, 2, 3]) await tab.key({ name: "k" });
     expect(tab.current()?.strand?.name).toBe("epic 9");
     expect(footer()).toBe("⏎ nothing here; its work is in the strands under it");

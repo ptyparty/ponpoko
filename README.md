@@ -45,6 +45,8 @@ In the command tab, `j`/`k` move between strands, Enter goes to a strand, space 
 
 Enter on a strand no one is on offers to resume the last Claude that worked on it, or to start a fresh one briefed with the strand's moves and links. Either way it opens the strand's project with its layout and wakes the Claude docked there. Only when that Claude is busy, or the layout has none, does it open a pane running `komux claude`; set `PONPOKO_CLAUDE` in komux's `env`, such as `komux claude --mode auto`, to run something else.
 
+A strand ponpoko has no tab or directory for goes to the place of the nearest strand above it that has one, opened with that strand's layout.
+
 Glyphs: ● yours, ◐ an agent's, ⊘ waiting on someone or something, ◷ snoozed, ○ nothing to do.
 
 ## Where things live

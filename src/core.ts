@@ -485,6 +485,13 @@ function topOrder(model: Model, strand: Strand, now: number): number {
   return standing.whose === "you" && !((strand.snoozedUntil ?? 0) > now) ? standing.since : Number.MAX_SAFE_INTEGER;
 }
 
+export function aboveOf(strands: StrandView[], strand: StrandView): StrandView[] {
+  const byId = new Map(strands.map((candidate) => [candidate.id, candidate]));
+  const out: StrandView[] = [];
+  for (let at = strand.parent ? byId.get(strand.parent) : undefined; at && !out.includes(at); at = at.parent ? byId.get(at.parent) : undefined) out.push(at);
+  return out;
+}
+
 export function splitPath(text: string): string[] {
   return text
     .split(/\s*[›>]\s*/)

@@ -4,7 +4,7 @@ import { komuxPlace, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
 export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string }>;
 
-export async function goInKomux(strand: StrandView, env = process.env, control?: Control): Promise<"focused" | "opened"> {
+export async function goInKomux(strand: StrandView, above: StrandView[], env = process.env, control?: Control): Promise<"focused" | "opened"> {
   const socket = env.KOMUX_SOCKET;
   if (!socket) throw new Error("go works from inside komux");
   const send = control ?? ((request: unknown) => sendKomux(socket, request));
@@ -17,10 +17,9 @@ export async function goInKomux(strand: StrandView, env = process.env, control?:
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
     return "focused";
   }
-  const tab = tabOf(strand);
-  const dir = tab?.dir ?? strand.dir ?? lastDir(strand);
-  if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
-  const opened = await send({ method: "project.open", params: { target: dir, ...layoutAt(tab, dir) } });
+  const where = goPlace(strand, above);
+  if (!where) throw new Error("ponpoko doesn't know where this strand lives");
+  const opened = await send({ method: "project.open", params: { target: where.dir, ...layoutAt(where.tab, where.dir) } });
   if (!opened.ok) throw new Error(opened.error ?? "komux refused");
   return "opened";
 }
@@ -31,6 +30,15 @@ export function goTarget(strand: StrandView): { player: PlayerView; move: MoveVi
     if (player.live && komuxPlace(player)) return { player, move };
   }
   return undefined;
+}
+
+export function goPlace(strand: StrandView, above: StrandView[]): { dir: string; tab?: KomuxTabRef } | undefined {
+  for (const at of [strand, ...above]) {
+    const tab = tabOf(at);
+    const dir = tab?.dir ?? at.links.find((link) => link.adapter === "dir")?.ref ?? lastDir(at);
+    if (dir) return { dir, ...(tab ? { tab } : {}) };
+  }
+  return strand.dir ? { dir: strand.dir } : undefined;
 }
 
 export function tabOf(strand: StrandView): KomuxTabRef | undefined {

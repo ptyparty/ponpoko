@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { aboveOf } from "../core.ts";
 import { harness, strandNamed } from "../test-harness.ts";
 import { brief, goInKomux, pickup, pickUpInKomux } from "./go.ts";
 
@@ -244,8 +245,8 @@ describe("go in komux", () => {
     const { core, hear } = harness();
     await hear(snapshot);
     const { sent, control } = recorder();
-    expect(await goInKomux(strandNamed(core, "claude in ptyparty"), env, control)).toBe("focused");
-    expect(await goInKomux(strandNamed(core, "claude in ptyparty"), { ...env, KOMUX_SESSION: "other", KOMUX_SERVER_ID: "s9" }, control)).toBe("opened");
+    expect(await goInKomux(strandNamed(core, "claude in ptyparty"), [], env, control)).toBe("focused");
+    expect(await goInKomux(strandNamed(core, "claude in ptyparty"), [], { ...env, KOMUX_SESSION: "other", KOMUX_SERVER_ID: "s9" }, control)).toBe("opened");
     expect(sent).toEqual([
       { method: "tab.focus", params: { tabId: 2 } },
       { method: "project.open", params: { target: side } },
@@ -256,9 +257,9 @@ describe("go in komux", () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });
     const { sent, control } = recorder();
-    await goInKomux(strandNamed(core, "sc-1234"), env, control);
+    await goInKomux(strandNamed(core, "sc-1234"), [], env, control);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "waiting", sessionId: "c1" } });
-    await goInKomux(strandNamed(core, "sc-1234"), env, control);
+    await goInKomux(strandNamed(core, "sc-1234"), [], env, control);
     expect(sent).toEqual([
       { method: "tab.focus", params: { tabId: 1 } },
       { method: "tab.focus", params: { tabId: 1 } },
@@ -268,7 +269,7 @@ describe("go in komux", () => {
   test("needs komux", async () => {
     const { core, hear } = harness();
     await hear(snapshot);
-    await expect(goInKomux(strandNamed(core, "sc-1234"), {})).rejects.toThrow("go works from inside komux");
+    await expect(goInKomux(strandNamed(core, "sc-1234"), [], {})).rejects.toThrow("go works from inside komux");
   });
 
   test("a strand no one is on offers its last Claude to resume, or a fresh one briefed with its moves", async () => {
@@ -314,12 +315,25 @@ describe("go in komux", () => {
     expect(store.all().length).toBe(facts);
     await hear({ server: "s2", type: "snapshot", tabs: snapshot.tabs, agents: [], jobs: [] });
     const { sent, control } = recorder();
-    await goInKomux(strandNamed(core, "sc-1235"), { ...env, KOMUX_SERVER_ID: "s2" }, control);
+    await goInKomux(strandNamed(core, "sc-1235"), [], { ...env, KOMUX_SERVER_ID: "s2" }, control);
     await pickUpInKomux(strandNamed(core, "sc-1235"), "fresh", { ...env, KOMUX_SERVER_ID: "s2" }, control);
     expect(sent).toEqual([
       { method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" } } },
       { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" }, prompt: brief(strandNamed(core, "sc-1235")) } },
     ]);
+  });
+
+  test("a strand with no place of its own goes to its nearest ancestor's tab", async () => {
+    const { core, hear } = harness();
+    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", braid: "sc-1235" } };
+    await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [], jobs: [] });
+    core.add(strandNamed(core, "sc-1235").id, "fixups › rename");
+    const strands = core.snapshot().strands;
+    const rename = strandNamed(core, "sc-1235 › fixups › rename");
+    const { sent, control } = recorder();
+    await goInKomux(rename, aboveOf(strands, rename), env, control);
+    await expect(goInKomux(rename, [], env, control)).rejects.toThrow("doesn't know where this strand lives");
+    expect(sent).toEqual([{ method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" } } }]);
   });
 
   test("picking up falls back to a new pane when the tab's docked Claude is busy or missing", async () => {
