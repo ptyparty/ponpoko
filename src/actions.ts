@@ -1,30 +1,39 @@
 import { ask } from "./client.ts";
 import type { StrandView } from "./core.ts";
-import { goInKomux } from "./komux/go.ts";
+import { goInKomux, goTarget } from "./komux/go.ts";
+import type { Link } from "./model.ts";
 
 export type Actions = {
-  go: (strand: StrandView, braidDir: string | undefined) => Promise<unknown>;
+  go: (strand: StrandView) => Promise<unknown>;
   forget: (strand: string) => Promise<unknown>;
   snooze: (strand: string, until: number) => Promise<unknown>;
-  note: (braid: string, text: string) => Promise<unknown>;
-  point: (dir: string, braid: string) => Promise<unknown>;
-  seen: (braid: string) => Promise<unknown>;
-  showPage: (page: string) => Promise<unknown>;
+  note: (strand: string, text: string) => Promise<unknown>;
+  point: (dir: string, to: string) => Promise<unknown>;
+  seen: (strand: string) => Promise<unknown>;
+  add: (parent: string | undefined, name: string) => Promise<unknown>;
+  reparent: (strand: string, to: string) => Promise<unknown>;
+  done: (strand: string) => Promise<unknown>;
+  open: (link: Link) => Promise<unknown>;
 };
 
 export const serviceActions: Actions = {
-  go: async (strand, braidDir) => {
-    await goInKomux(strand, braidDir);
-    if (strand.kind === "job") await ask({ method: "end", params: { strand: strand.id, why: "you went to it" } });
-    else if (strand.whose === "you" && !strand.seen) await ask({ method: "seen-strand", params: { strand: strand.id } });
+  go: async (strand) => {
+    await goInKomux(strand);
+    const target = goTarget(strand);
+    if (target?.player.kind === "job") await ask({ method: "close-move", params: { move: target.move.id } });
+    else if (strand.unseen) await ask({ method: "seen", params: { strand: strand.id } });
   },
   forget: (strand) => ask({ method: "forget", params: { strand } }),
   snooze: (strand, until) => ask({ method: "snooze", params: { strand, until } }),
-  note: (braid, text) => ask({ method: "note", params: { braid, text } }),
-  point: (dir, braid) => ask({ method: "point", params: { dir, braid } }),
-  seen: (braid) => ask({ method: "seen", params: { braid } }),
-  showPage: async (page) => {
-    const shown = Bun.spawnSync(["quoll", "show", page], { stdout: "pipe", stderr: "pipe" });
+  note: (strand, text) => ask({ method: "note", params: { strand, text } }),
+  point: (dir, to) => ask({ method: "point", params: { dir, to } }),
+  seen: (strand) => ask({ method: "seen", params: { strand } }),
+  add: (parent, name) => ask({ method: "add", params: { ...(parent ? { parent } : {}), name } }),
+  reparent: (strand, to) => ask({ method: "reparent", params: { strand, to } }),
+  done: (strand) => ask({ method: "done", params: { strand } }),
+  open: async (link) => {
+    if (link.adapter !== "quoll") throw new Error(`ponpoko can't open ${link.adapter} links yet`);
+    const shown = Bun.spawnSync(["quoll", "show", link.ref], { stdout: "pipe", stderr: "pipe" });
     if (shown.exitCode !== 0) throw new Error(`quoll show: ${shown.stderr.toString().trim() || shown.stdout.toString().trim()}`);
   },
 };

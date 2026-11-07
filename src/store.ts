@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { fact, type Fact, type Recorded, type Source } from "./events.ts";
 import { ensurePrivateDir, stateDir } from "./paths.ts";
@@ -8,7 +9,7 @@ type Row = { id: number; at: number; source: Source; body: string };
 export class Store {
   private readonly db: Database;
 
-  constructor(path = join(ensurePrivateDir(stateDir()), "events.sqlite")) {
+  constructor(path = defaultPath()) {
     this.db = new Database(path, { create: true, strict: true });
     this.db.run("pragma journal_mode = wal");
     this.db.run("create table if not exists events (id integer primary key, at integer not null, source text not null, type text not null, body text not null)");
@@ -37,4 +38,14 @@ export class Store {
     const parsed = fact.safeParse(JSON.parse(row.body));
     return parsed.success ? [{ ...parsed.data, id: row.id, at: row.at, source: row.source }] : [];
   }
+}
+
+function defaultPath(): string {
+  const dir = ensurePrivateDir(stateDir());
+  const path = join(dir, "facts.sqlite");
+  const old = join(dir, "events.sqlite");
+  if (!existsSync(path) && existsSync(old)) {
+    for (const suffix of ["", "-wal", "-shm"]) if (existsSync(old + suffix)) renameSync(old + suffix, join(dir, `events-v1.sqlite${suffix}`));
+  }
+  return path;
 }

@@ -158,8 +158,8 @@ export function komuxConfigHint(places: Places): string {
 Alt m deals your oldest move, Alt shift m deals what changed since you last caught up,
 and the tray shows your count. Ctrl Space m opens ponpoko's mode: m and M deal the same
 way, and o opens the overview the tray opens.
-Give a layout labels: { braid: "sc-{story}" } so its tabs land in a braid; agents in
-other tabs are listed as loose until you point their directory at one. Alt n is komux's focus key, so ponpoko doesn't take it.`;
+Give a layout labels: { strand: "sc-{story}" } so agents in its tabs work on that strand;
+agents elsewhere get a loose strand of their own until you point their directory at one. Alt n is komux's focus key, so ponpoko doesn't take it.`;
 }
 
 const marks = { installed: "✓", missing: "✗", different: "!" };

@@ -1,11 +1,11 @@
 # ponpoko
 
-Keeps track of whose move each piece of your work is: yours, an agent's, or someone else's, such as a reviewer, CI, or another story.
+Keeps track of whose move each line of your work is: yours, an agent's, or someone else's, such as a reviewer or CI.
 
-Work is grouped into braids, usually one per story, and each braid holds strands: an agent's pane, a PR review, a question for a colleague. ponpoko hears komux, so while an agent works the move is the agent's, and when its turn ends the move is yours. Agents report the rest through ponpoko's MCP: what they're waiting on, when the wait ends, and what they're doing now.
+Work is a tree of **strands**. A project holds stories, a story holds smaller strands, and any strand can split further. **Players** make **moves** on strands: you, Claude agents, failed jobs, and the people and machines you wait on. ponpoko hears komux, so while an agent works the move is the agent's, and when its turn ends a move opens for you. Agents report the rest through ponpoko's MCP: which strand they're on and what they're doing, what they're waiting on, and when a strand is done. A strand's moves stay as its record, so whoever picks it up next sees what was done.
 
 ```
-ponpoko                  the command tab: every braid, its strands, and what ponpoko heard
+ponpoko                  the command tab: every strand, whose move it is, and what ponpoko heard
 ponpoko list             your moves, then everything else, printed once
 ponpoko tray [--stream]  one line for komux's tray; --stream prints a new one as it changes
 ponpoko deal [--unseen]  deal your oldest move as a card, for a komux popup
@@ -30,20 +30,20 @@ import ponpoko from "./plugins/ponpoko.ts";
 plugins: [ponpoko()],
 ```
 
-Give a komux layout `labels: { braid: "sc-{story}" }` so its tabs land in a braid. Agents in other tabs are listed as loose until you point their directory at a braid.
+Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs work on that strand. An agent elsewhere gets a loose strand of its own once it takes a turn, until it names a strand or you point its directory at one. A Claude you never prompt doesn't show up.
 
 ## In komux
 
 - The tray shows how many moves are yours and how long the oldest has waited. Click it to open the command tab.
-- **Alt m** deals your oldest move as a card. Enter goes to it, `s` or space skips to the next, `z` snoozes it, `x` forgets it.
+- **Alt m** deals your oldest move as a card. Enter goes to it, `s` or space skips to the next, `d` marks it done, `z` snoozes it, `x` forgets it. A card shows the strand's whole path.
 - **Alt shift m** deals what changed since you last caught up.
 - **Ctrl Space m** opens ponpoko's mode: `m` and `M` deal the same way, and `o` opens the command tab.
 
 Pass `ponpoko({ deal, catchUp, leader })` to pick other keys.
 
-In the command tab, `j`/`k` move between braids and strands, Enter goes to a strand, `o` opens the notebook page an agent's status points at in quoll, `z` snoozes, `n` adds a note to the braid, `x` forgets a strand, `p` points a directory at a braid, `c` marks a braid caught up, `?` lists the keys and glyphs, and `q` quits.
+In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens what its latest move links to (a notebook page in quoll), `z` snoozes, `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
 
-Glyphs: ● yours, ◐ an agent's, ⊘ waiting on someone or something, ◷ snoozed, ○ idle.
+Glyphs: ● yours, ◐ an agent's, ⊘ waiting on someone or something, ◷ snoozed, ○ nothing to do.
 
 ## Where things live
 

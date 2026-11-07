@@ -1,38 +1,40 @@
 import { z } from "zod";
 
-export const whoseValues = ["you", "agent", "machine", "person", "nobody"] as const;
-export type Whose = (typeof whoseValues)[number];
-export type BraidKind = "story" | "epic" | "side" | "idea";
-export type StrandKind = "agent" | "job" | "report";
+export const playerKinds = ["you", "agent", "job", "person", "machine"] as const;
+export type PlayerKind = (typeof playerKinds)[number];
+export type Whose = "you" | "agent" | "person" | "machine";
 export type Source = string;
 
-export const place = z.looseObject({ adapter: z.string(), handle: z.string().optional(), dir: z.string().optional() });
-export type Place = z.infer<typeof place>;
+const id = z.string().min(1);
 
 export const fact = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("braid.made"), braid: z.string(), name: z.string(), kind: z.enum(["story", "epic", "side", "idea"]).optional(), dir: z.string().optional() }),
-  z.object({ type: z.literal("braid.titled"), braid: z.string(), kind: z.enum(["story", "epic"]), title: z.string() }),
-  z.object({ type: z.literal("braid.note"), braid: z.string(), text: z.string() }),
-  z.object({ type: z.literal("braid.seen"), braid: z.string() }),
-  z.object({ type: z.literal("dir.pointed"), dir: z.string(), braid: z.string() }),
+  z.object({ type: z.literal("strand.made"), strand: id, name: z.string().min(1), parent: id.optional(), kind: z.string().optional() }),
+  z.object({ type: z.literal("strand.titled"), strand: id, kind: z.string().optional(), title: z.string() }),
+  z.object({ type: z.literal("strand.parented"), strand: id, parent: id.optional() }),
+  z.object({ type: z.literal("strand.done"), strand: id, why: z.string() }),
+  z.object({ type: z.literal("strand.forgotten"), strand: id }),
+  z.object({ type: z.literal("strand.merged"), strand: id, into: id }),
+  z.object({ type: z.literal("strand.note"), strand: id, text: z.string() }),
+  z.object({ type: z.literal("strand.seen"), strand: id }),
+  z.object({ type: z.literal("strand.dismissed"), strand: id }),
+  z.object({ type: z.literal("strand.snoozed"), strand: id, until: z.number() }),
   z.object({
-    type: z.literal("strand.move"),
-    braid: z.string().optional(),
-    strand: z.string(),
-    label: z.string(),
-    kind: z.enum(["agent", "job", "report"]),
-    whose: z.enum(whoseValues),
-    who: z.string().optional(),
-    why: z.string(),
-    place: place.optional(),
+    type: z.literal("player.joined"),
+    player: id,
+    kind: z.enum(playerKinds),
+    who: z.string(),
+    adapter: z.string().optional(),
+    place: z.looseObject({ handle: z.string().optional(), dir: z.string().optional() }).optional(),
+    resume: z.string().optional(),
   }),
-  z.object({ type: z.literal("strand.ended"), strand: z.string(), why: z.string() }),
-  z.object({ type: z.literal("strand.status"), strand: z.string(), text: z.string(), page: z.string().optional() }),
-  z.object({ type: z.literal("strand.dismissed"), strand: z.string() }),
-  z.object({ type: z.literal("strand.seen"), strand: z.string() }),
-  z.object({ type: z.literal("strand.snoozed"), strand: z.string(), until: z.number() }),
-  z.object({ type: z.literal("strand.forgotten"), strand: z.string() }),
+  z.object({ type: z.literal("player.gone"), player: id, why: z.string() }),
+  z.object({ type: z.literal("move.opened"), move: id, strand: id, player: id, with: id.optional(), what: z.string() }),
+  z.object({ type: z.literal("move.described"), move: id, what: z.string() }),
+  z.object({ type: z.literal("move.closed"), move: id }),
+  z.object({ type: z.literal("link.added"), link: id, strand: id.optional(), move: id.optional(), adapter: z.string().min(1), ref: z.string().min(1), label: z.string().optional() }),
+  z.object({ type: z.literal("link.removed"), link: id }),
 ]);
 
 export type Fact = z.infer<typeof fact>;
 export type Recorded = Fact & { id: number; at: number; source: Source };
+export type Place = NonNullable<Extract<Fact, { type: "player.joined" }>["place"]>;

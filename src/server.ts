@@ -1,16 +1,15 @@
 import type { Socket } from "bun";
 import { existsSync, rmSync } from "node:fs";
 import { z } from "zod";
-import { fact, whoseValues } from "./events.ts";
+import { fact } from "./events.ts";
 import { Ponpoko } from "./core.ts";
 import { ensurePrivateDir, runtimeDir, socketPath } from "./paths.ts";
 import { Store } from "./store.ts";
 
 const where = {
-  braid: z.string().optional(),
   dir: z.string().optional(),
   self: z.string().optional().describe("The reporting agent's own place handle"),
-  strand: z.string().optional(),
+  strand: z.string().max(200).optional(),
 };
 
 export const request = z.discriminatedUnion("method", [
@@ -23,20 +22,24 @@ export const request = z.discriminatedUnion("method", [
     params: z.object({
       adapter: z.string().min(1),
       scope: z.string().min(1),
-      strands: z.array(z.string()),
-      spaces: z.array(z.object({ dir: z.string(), label: z.string(), short: z.string(), strands: z.array(z.string()) })),
+      players: z.array(z.string()),
+      spaces: z.array(z.object({ dir: z.string(), strand: z.string().optional(), label: z.string(), short: z.string(), players: z.array(z.string()) })),
     }),
   }),
   z.object({ method: z.literal("absent"), params: z.object({ adapter: z.string(), scope: z.string() }) }),
-  z.object({ method: z.literal("report"), params: z.object({ ...where, whose: z.enum([...whoseValues, "done"]), who: z.string().max(80).optional(), reason: z.string().min(1).max(200) }) }),
-  z.object({ method: z.literal("status"), params: z.object({ ...where, text: z.string().max(120), page: z.string().max(200).optional() }) }),
-  z.object({ method: z.literal("end"), params: z.object({ strand: z.string(), why: z.string().min(1).max(200) }) }),
-  z.object({ method: z.literal("seen-strand"), params: z.object({ strand: z.string() }) }),
+  z.object({ method: z.literal("status"), params: z.object({ ...where, text: z.string().min(1).max(120), page: z.string().max(200).optional() }) }),
+  z.object({ method: z.literal("wait"), params: z.object({ ...where, who: z.string().min(1).max(80), kind: z.enum(["you", "person", "machine"]), what: z.string().min(1).max(200), over: z.boolean().optional() }) }),
+  z.object({ method: z.literal("done-by"), params: z.object({ ...where, why: z.string().min(1).max(200) }) }),
+  z.object({ method: z.literal("split"), params: z.object({ ...where, names: z.array(z.string().min(1).max(120)).min(1).max(50) }) }),
+  z.object({ method: z.literal("add"), params: z.object({ parent: z.string().optional(), name: z.string().min(1).max(200) }) }),
+  z.object({ method: z.literal("reparent"), params: z.object({ strand: z.string(), to: z.string().max(200) }) }),
+  z.object({ method: z.literal("done"), params: z.object({ strand: z.string() }) }),
+  z.object({ method: z.literal("close-move"), params: z.object({ move: z.string() }) }),
+  z.object({ method: z.literal("seen"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("forget"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("snooze"), params: z.object({ strand: z.string(), until: z.number() }) }),
-  z.object({ method: z.literal("note"), params: z.object({ braid: z.string(), text: z.string().min(1).max(500) }) }),
-  z.object({ method: z.literal("seen"), params: z.object({ braid: z.string() }) }),
-  z.object({ method: z.literal("point"), params: z.object({ dir: z.string(), braid: z.string().min(1) }) }),
+  z.object({ method: z.literal("note"), params: z.object({ strand: z.string(), text: z.string().min(1).max(500) }) }),
+  z.object({ method: z.literal("point"), params: z.object({ dir: z.string(), to: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("changes"), params: z.object({ since: z.number() }) }),
 ]);
 
@@ -124,15 +127,26 @@ export function handle(core: Ponpoko, request: Request): Response {
       case "absent":
         core.absent(request.params.adapter, request.params.scope);
         return { ok: true };
-      case "report":
-        return { ok: true, result: { strand: core.report(request.params) } };
       case "status":
         return { ok: true, result: { strand: core.status(request.params) } };
-      case "end":
-        core.end(request.params.strand, request.params.why);
+      case "wait":
+        return { ok: true, result: { strand: core.wait(request.params) } };
+      case "done-by":
+        return { ok: true, result: { strand: core.doneBy(request.params, request.params.why) } };
+      case "split":
+        return { ok: true, result: { strands: core.split(request.params, request.params.names) } };
+      case "add":
+        return { ok: true, result: { strand: core.add(request.params.parent, request.params.name) } };
+      case "reparent":
+        return { ok: true, result: { strand: core.reparent(request.params.strand, request.params.to) } };
+      case "done":
+        core.done(request.params.strand);
         return { ok: true };
-      case "seen-strand":
-        core.seenStrand(request.params.strand);
+      case "close-move":
+        core.closeMove(request.params.move);
+        return { ok: true };
+      case "seen":
+        core.seen(request.params.strand);
         return { ok: true };
       case "forget":
         core.forget(request.params.strand);
@@ -141,14 +155,10 @@ export function handle(core: Ponpoko, request: Request): Response {
         core.snooze(request.params.strand, request.params.until);
         return { ok: true };
       case "note":
-        core.note(request.params.braid, request.params.text);
-        return { ok: true };
-      case "seen":
-        core.seen(request.params.braid);
+        core.note(request.params.strand, request.params.text);
         return { ok: true };
       case "point":
-        core.point(request.params.dir, request.params.braid);
-        return { ok: true };
+        return { ok: true, result: { strand: core.point(request.params.dir, request.params.to) } };
       case "changes":
         return { ok: true, result: core.changes(request.params.since) };
     }

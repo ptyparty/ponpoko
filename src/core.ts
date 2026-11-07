@@ -1,19 +1,54 @@
-import { braidRef, pointedBraid, storyNumber } from "./braids.ts";
-import type { Fact, Recorded, Source, Whose } from "./events.ts";
-import { apply, counts, recentHeard, replay, unseenMoves, yourMoves, type Braid, type Counts, type Model, type Strand } from "./model.ts";
+import type { Fact, PlayerKind, Recorded, Source } from "./events.ts";
+import {
+  ancestors,
+  apply,
+  children,
+  counts,
+  isUnseen,
+  openMoves,
+  own,
+  path,
+  recentHeard,
+  replay,
+  rolled,
+  you,
+  yourStrands,
+  type Counts,
+  type Link,
+  type Model,
+  type Move,
+  type Player,
+  type Standing,
+  type Strand,
+} from "./model.ts";
 import type { Store } from "./store.ts";
 
-export type Space = { dir: string; braid?: string; label: string; short: string; strands: string[] };
-export type Presence = { adapter: string; scope: string; strands: string[]; spaces: Space[] };
-export type StrandView = Strand & { live: boolean; space?: string };
-export type BraidView = Braid & { strands: StrandView[]; spaces: { label: string; short: string }[] };
-export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; loose: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
-export type Knowledge = { braids: string[]; pointed: [string, string][]; strands: Strand[] };
+export type Space = { dir: string; strand?: string; label: string; short: string; players: string[] };
+export type Presence = { adapter: string; scope: string; players: string[]; spaces: Space[] };
+export type PlayerView = Player & { live: boolean; space?: string };
+export type MoveView = Move & { by: PlayerView; answers?: PlayerView; links: Link[] };
+export type StandingView = Omit<Standing, "moves">;
+export type StrandView = Strand & {
+  path: string[];
+  depth: number;
+  own: StandingView;
+  rolled: StandingView;
+  open: MoveView[];
+  recent: MoveView[];
+  links: Link[];
+  unseen: boolean;
+  spaces: { label: string; short: string }[];
+  dir?: string;
+};
+export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
+export type Knowledge = { strands: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; spoke: string[] };
 
-export type Report = { braid?: string; dir?: string; self?: string; strand?: string; whose: Whose | "done"; who?: string; reason: string };
-export type Status = { braid?: string; dir?: string; self?: string; strand?: string; text: string; page?: string };
+export type Where = { self?: string; dir?: string; strand?: string };
+export type StatusReport = Where & { text: string; page?: string };
+export type WaitReport = Where & { who: string; kind: "you" | "person" | "machine"; what: string; over?: boolean };
 
 const presenceMs = 90_000;
+const recentMoves = 12;
 
 export class Ponpoko {
   readonly model: Model;
@@ -23,8 +58,9 @@ export class Ponpoko {
 
   constructor(
     private readonly store: Store,
-    private readonly lookupTitle: (braid: string) => Promise<{ kind: "story" | "epic"; title: string } | undefined> = shortcutTitle,
+    private readonly lookupTitle: (name: string) => Promise<{ kind: "story" | "epic"; title: string } | undefined> = shortcutTitle,
     private readonly now: () => number = Date.now,
+    private readonly newId: (prefix: string) => string = (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`,
   ) {
     this.model = replay(store.all());
   }
@@ -39,7 +75,7 @@ export class Ponpoko {
     for (const fact of facts) {
       const recorded = this.store.append(source, fact, this.now());
       apply(this.model, recorded);
-      if (fact.type === "braid.made") this.askTitle(fact.braid);
+      if (fact.type === "strand.made" && fact.parent === undefined) this.askTitle(fact.strand);
     }
     this.changed();
   }
@@ -49,7 +85,7 @@ export class Ponpoko {
     const before = this.presences.get(key);
     this.presences.set(key, { ...presence, until: this.now() + presenceMs });
     const lapsed = before !== undefined && before.until <= this.now();
-    if (!before || lapsed || JSON.stringify([before.strands, before.spaces]) !== JSON.stringify([presence.strands, presence.spaces])) this.changed();
+    if (!before || lapsed || JSON.stringify([before.players, before.spaces]) !== JSON.stringify([presence.players, presence.spaces])) this.changed();
   }
 
   expire(): void {
@@ -64,87 +100,193 @@ export class Ponpoko {
   }
 
   knowledge(): Knowledge {
-    return { braids: [...this.model.braids.keys()], pointed: [...this.model.pointed], strands: [...this.model.strands.values()] };
+    const moves = [...this.model.moves.values()];
+    const on: Record<string, string> = {};
+    for (const move of [...moves].sort((a, b) => a.from - b.from)) on[move.with ?? move.player] = move.strand;
+    return {
+      strands: [...this.model.strands.values()].filter((strand) => strand.done === undefined),
+      players: [...this.model.players.values()].filter((player) => player.gone === undefined),
+      open: moves.filter((move) => move.until === undefined),
+      links: [...this.model.links.values()].filter((link) => link.adapter === "dir"),
+      on,
+      spoke: [...new Set(moves.filter((move) => move.source === "agent" || (move.described !== undefined && move.player !== you)).map((move) => move.strand))],
+    };
   }
 
   snapshot(): Snapshot {
     const now = this.now();
     const present = [...this.presences.values()].filter((presence) => presence.until > now);
-    const live = new Set(present.flatMap((presence) => presence.strands));
+    const live = new Set(present.flatMap((presence) => presence.players));
     const spaces = present.flatMap((presence) => presence.spaces);
-    const view = (strand: Strand): StrandView => {
-      const space = spaces.find((candidate) => candidate.strands.includes(strand.id))?.label;
-      return { ...strand, live: live.has(strand.id), ...(space ? { space } : {}) };
+    const players = new Map<string, PlayerView>();
+    const playerView = (id: string): PlayerView => {
+      let view = players.get(id);
+      if (!view) {
+        const player = this.model.players.get(id) ?? { id, kind: "machine" as PlayerKind, who: id, joined: 0 };
+        const space = spaces.find((candidate) => candidate.players.includes(id))?.label;
+        view = { ...player, live: id === you || live.has(id), ...(space ? { space } : {}) };
+        players.set(id, view);
+      }
+      return view;
     };
-    const braids = [...this.model.braids.values()].map((braid): BraidView => ({
-      ...braid,
-      strands: [...this.model.strands.values()].filter((strand) => strand.braid === braid.id).map(view).sort((a, b) => a.since - b.since),
-      spaces: spaces.filter((space) => space.braid === braid.id).map(({ label, short }) => ({ label, short })),
-    }));
-    const shown = braids.filter((braid) => braid.strands.length > 0 || braid.spaces.length > 0 || braid.notes.length > 0);
-    shown.sort((a, b) => firstMove(a, now) - firstMove(b, now) || a.name.localeCompare(b.name));
+    const links = [...this.model.links.values()];
+    const moveView = (move: Move): MoveView => ({
+      ...move,
+      by: playerView(move.player),
+      ...(move.with ? { answers: playerView(move.with) } : {}),
+      links: links.filter((link) => link.move === move.id),
+    });
+    const allMoves = [...this.model.moves.values()];
+    const view = (strand: Strand, depth: number): StrandView => {
+      const { moves: _own, ...ownStanding } = own(this.model, strand);
+      const { moves: _rolled, ...rolledStanding } = rolled(this.model, strand);
+      const strandLinks = links.filter((link) => link.strand === strand.id);
+      const dirs = [strand.id, ...ancestors(this.model, strand.id)].flatMap((id) => links.filter((link) => link.strand === id && link.adapter === "dir").map((link) => link.ref));
+      return {
+        ...strand,
+        path: path(this.model, strand.id),
+        depth,
+        own: ownStanding,
+        rolled: rolledStanding,
+        open: openMoves(this.model, strand.id).map(moveView),
+        recent: allMoves.filter((move) => move.strand === strand.id).sort((a, b) => a.from - b.from).slice(-recentMoves).map(moveView),
+        links: strandLinks,
+        unseen: ownStanding.whose === "you" && isUnseen(this.model, strand),
+        spaces: spaces.filter((space) => space.strand === strand.id).map(({ label, short }) => ({ label, short })),
+        ...(dirs[0] ? { dir: dirs[0] } : {}),
+      };
+    };
+    const tree: StrandView[] = [];
+    const walk = (strand: Strand, depth: number) => {
+      tree.push(view(strand, depth));
+      for (const child of children(this.model, strand.id).filter((candidate) => candidate.done === undefined).sort((a, b) => a.made - b.made)) walk(child, depth + 1);
+    };
+    const top = children(this.model, undefined).filter((strand) => strand.done === undefined);
+    top.sort((a, b) => topOrder(this.model, a, now) - topOrder(this.model, b, now) || a.name.localeCompare(b.name));
+    for (const strand of top) walk(strand, 0);
+    const byId = new Map(tree.map((strand) => [strand.id, strand]));
+    const moves = yourStrands(this.model, now).flatMap((strand) => byId.get(strand.id) ?? []);
     const heard = recentHeard(this.model, 30);
     return {
       now,
       counts: counts(this.model, now),
-      braids: shown,
-      loose: [...this.model.strands.values()].filter((strand) => strand.braid === undefined).map(view).sort((a, b) => a.since - b.since),
-      moves: yourMoves(this.model, now).map(view),
-      unseen: unseenMoves(this.model, now).map((strand) => strand.id),
+      strands: tree,
+      moves,
+      unseen: moves.filter((strand) => strand.unseen).map((strand) => strand.id),
       heard,
-      labels: Object.fromEntries(
-        heard.flatMap((event) => {
-          if (!("strand" in event)) return [];
-          const known = this.model.labels.get(event.strand);
-          return known ? [[event.strand, `${(known.braid && this.model.braids.get(known.braid)?.name) || known.braid || "loose"} ${known.label}`]] : [];
-        }),
-      ),
+      labels: this.labelsFor(heard),
     };
   }
 
-  report(report: Report, source: Source = "agent"): string {
-    const own = report.strand === undefined || report.strand === "self";
-    const mine = own ? this.ownStrand(report.self) : undefined;
-    if (own && !mine) throw new Error("name the strand this report is about, such as \"PR #821 review\"; ponpoko doesn't know this agent's own strand");
-    const braid = report.braid ? braidRef(report.braid).id : mine ? mine.braid : this.reportBraid(report);
-    const id = mine?.id ?? `report:${braid ?? "loose"}:${slug(report.strand!)}`;
-    if (report.whose === "done") {
-      if (this.model.strands.has(id)) this.record(source, [{ type: "strand.ended", strand: id, why: report.reason }]);
-      return id;
-    }
+  status(report: StatusReport, source: Source = "agent"): string {
+    const agent = this.agentOf(report.self);
+    if (!agent) throw new Error("ponpoko doesn't see this agent in komux yet; try again once your turn is under way");
+    const current = this.openMovesBy(agent.id).at(-1);
     const facts: Fact[] = [];
-    if (braid && !this.model.braids.has(braid)) facts.push({ type: "braid.made", braid, name: braidRef(braid).name, ...(report.dir ? { dir: report.dir } : {}) });
-    facts.push({
-      type: "strand.move",
-      ...(braid ? { braid } : {}),
-      strand: id,
-      label: mine?.label ?? report.strand!,
-      kind: mine ? mine.kind : "report",
-      whose: report.whose,
-      ...(report.who ? { who: report.who } : {}),
-      why: report.reason,
-    });
+    const target = report.strand ? this.resolve(report.strand, facts, this.strandOf(agent.id)) : this.strandOf(agent.id);
+    if (!target) throw new Error("name the strand you're working on, such as \"ponpoko review findings › 4\"");
+    const loose = current ? this.model.strands.get(current.strand) : undefined;
+    const merging = loose?.kind === "loose" && loose.id !== target;
+    if (merging) facts.push({ type: "strand.merged", strand: loose!.id, into: target });
+    let move: string;
+    if (current && (current.strand === target || merging) && current.described === undefined && current.source !== "agent") {
+      move = current.id;
+      facts.push({ type: "move.described", move, what: report.text });
+    } else {
+      if (current) facts.push({ type: "move.closed", move: current.id });
+      move = this.newId("m");
+      facts.push({ type: "move.opened", move, strand: target, player: agent.id, what: report.text });
+    }
+    if (report.page) facts.push({ type: "link.added", link: this.newId("l"), move, adapter: "quoll", ref: report.page });
     this.record(source, facts);
+    return path(this.model, target).join(" › ");
+  }
+
+  wait(report: WaitReport, source: Source = "agent"): string {
+    const agent = this.agentOf(report.self);
+    const facts: Fact[] = [];
+    const strand = report.strand ? this.resolve(report.strand, facts, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(report, agent);
+    if (!strand) throw new Error("name the strand this wait is on, such as \"sc-1234\"");
+    const player = report.kind === "you" ? you : `${report.kind}:${slug(report.who)}`;
+    const open = [...this.model.moves.values()].filter((move) => move.player === player && move.strand === strand && move.until === undefined && (player !== you || move.with === agent?.id));
+    if (report.over) {
+      for (const move of open) facts.push({ type: "move.closed", move: move.id });
+      const elsewhere = [...this.model.moves.values()].some((move) => move.player === player && move.strand !== strand && move.until === undefined);
+      if (player !== you && !elsewhere) facts.push({ type: "player.gone", player, why: "wait over" });
+    } else {
+      if (player !== you && (!this.model.players.has(player) || this.model.players.get(player)!.gone !== undefined)) facts.push({ type: "player.joined", player, kind: report.kind, who: report.who });
+      for (const move of open) facts.push({ type: "move.closed", move: move.id });
+      facts.push({ type: "move.opened", move: this.newId("m"), strand, player, ...(agent ? { with: agent.id } : {}), what: report.what });
+    }
+    this.record(source, facts);
+    return path(this.model, strand).join(" › ");
+  }
+
+  doneBy(where: Where, why: string, source: Source = "agent"): string {
+    const agent = this.agentOf(where.self);
+    const facts: Fact[] = [];
+    const strand = where.strand ? this.find(where.strand, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(where, agent);
+    if (!strand) throw new Error(where.strand ? `no strand ${where.strand}` : "name the strand that's done");
+    this.finish(strand, why, facts);
+    const name = path(this.model, strand).join(" › ");
+    this.record(source, facts);
+    return name;
+  }
+
+  split(where: Where, names: string[], source: Source = "agent"): string[] {
+    const agent = this.agentOf(where.self);
+    const facts: Fact[] = [];
+    const parent = where.strand ? this.resolve(where.strand, facts, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(where, agent);
+    if (!parent) throw new Error("name the strand to split, such as \"ponpoko review findings\"");
+    const made = names.map((name) => this.resolveUnder(parent, [name.trim()], facts));
+    this.record(source, facts);
+    return made.map((id) => path(this.model, id).join(" › "));
+  }
+
+  add(parent: string | undefined, name: string): string {
+    const facts: Fact[] = [];
+    const id = parent ? this.resolveUnder(this.mustHave(parent).id, splitPath(name), facts) : this.resolve(name, facts, undefined);
+    this.record("you", facts);
     return id;
   }
 
-  status(status: Status): string {
-    const own = status.strand === undefined || status.strand === "self";
-    const mine = own ? this.ownStrand(status.self) : undefined;
-    if (own && !mine) throw new Error("ponpoko doesn't know this agent's own strand; name the strand instead");
-    const id = mine?.id ?? `report:${this.reportBraid(status) ?? "loose"}:${slug(status.strand!)}`;
-    if (!this.model.strands.has(id)) throw new Error(`no strand ${status.strand}; report it first`);
-    this.record("agent", [{ type: "strand.status", strand: id, text: status.text, ...(status.page ? { page: status.page } : {}) }]);
-    return id;
+  reparent(strand: string, to: string): string {
+    const moving = this.mustHave(strand);
+    const facts: Fact[] = [];
+    if (to.trim() === "") {
+      facts.push({ type: "strand.parented", strand });
+      this.record("you", facts);
+      return strand;
+    }
+    const target = this.resolve(to, facts, undefined);
+    if (target === strand || ancestors(this.model, target).includes(strand)) throw new Error("a strand can't go under itself");
+    facts.push(moving.kind === "loose" ? { type: "strand.merged", strand, into: target } : { type: "strand.parented", strand, parent: target });
+    this.record("you", facts);
+    return target;
   }
 
-  end(strand: string, why: string): void {
+  done(strand: string, why = "you marked it done"): void {
     this.mustHave(strand);
-    this.record("you", [{ type: "strand.ended", strand, why }]);
+    const facts: Fact[] = [];
+    this.finish(strand, why, facts);
+    this.record("you", facts);
   }
 
-  seenStrand(strand: string): void {
-    if (this.mustHave(strand).whose === "you") this.record("you", [{ type: "strand.seen", strand }]);
+  closeMove(move: string): void {
+    const found = this.model.moves.get(move);
+    if (!found) throw new Error(`no move ${move}`);
+    const facts: Fact[] = [];
+    if (found.until === undefined) facts.push({ type: "move.closed", move });
+    const answers = found.with ? this.model.players.get(found.with) : undefined;
+    if (answers?.kind === "job" && answers.gone === undefined) facts.push({ type: "player.gone", player: answers.id, why: "you went to it" });
+    const strand = this.model.strands.get(found.strand);
+    if (answers?.kind === "job" && strand?.kind === "loose") facts.push({ type: "strand.forgotten", strand: strand.id });
+    this.record("you", facts);
+  }
+
+  seen(strand: string): void {
+    this.mustHave(strand);
+    this.record("you", [{ type: "strand.seen", strand }]);
   }
 
   forget(strand: string): void {
@@ -157,50 +299,152 @@ export class Ponpoko {
     this.record("you", [{ type: "strand.snoozed", strand, until }]);
   }
 
-  note(braid: string, text: string): void {
-    if (!this.model.braids.has(braid)) throw new Error(`no braid ${braid}`);
-    this.record("you", [{ type: "braid.note", braid, text }]);
+  note(strand: string, text: string): void {
+    this.mustHave(strand);
+    this.record("you", [{ type: "strand.note", strand, text }]);
   }
 
-  seen(braid: string): void {
-    if (!this.model.braids.has(braid)) throw new Error(`no braid ${braid}`);
-    this.record("you", [{ type: "braid.seen", braid }]);
-  }
-
-  point(dir: string, wanted: string): void {
-    const braid = braidRef(wanted).id;
+  point(dir: string, to: string): string {
     const facts: Fact[] = [];
-    if (!this.model.braids.has(braid)) facts.push({ type: "braid.made", braid, name: braidRef(braid).name });
-    facts.push({ type: "dir.pointed", dir, braid });
-    for (const strand of this.model.strands.values()) {
-      const at = strand.place?.dir;
-      if (strand.braid !== undefined || typeof at !== "string" || (at !== dir && !at.startsWith(`${dir}/`))) continue;
-      facts.push({ type: "strand.move", braid, strand: strand.id, label: strand.label, kind: strand.kind, whose: strand.whose, ...(strand.who ? { who: strand.who } : {}), why: strand.why });
+    const target = this.resolve(to, facts, undefined);
+    facts.push({ type: "link.added", link: this.newId("l"), strand: target, adapter: "dir", ref: dir });
+    const on = this.knowledge().on;
+    for (const player of this.model.players.values()) {
+      const at = player.place?.dir;
+      const strand = on[player.id] ? this.model.strands.get(on[player.id]!) : undefined;
+      if (!strand || strand.kind !== "loose" || typeof at !== "string" || (at !== dir && !at.startsWith(`${dir}/`))) continue;
+      if (!facts.some((fact) => fact.type === "strand.merged" && fact.strand === strand.id)) facts.push({ type: "strand.merged", strand: strand.id, into: target });
     }
     this.record("you", facts);
+    return target;
   }
 
-  changes(since: number): Recorded[] {
-    return this.store.since(since);
+  changes(since: number): { events: Recorded[]; labels: Record<string, string> } {
+    const events = this.store.since(since);
+    return { events, labels: this.labelsFor(events) };
+  }
+
+  private finish(strand: string, why: string, facts: Fact[]): void {
+    for (const id of [strand, ...this.descendantsOf(strand)]) for (const move of openMoves(this.model, id)) facts.push({ type: "move.closed", move: move.id });
+    facts.push({ type: "strand.done", strand, why });
+  }
+
+  private descendantsOf(strand: string): string[] {
+    return children(this.model, strand).flatMap((child) => [child.id, ...this.descendantsOf(child.id)]);
   }
 
   private changed(): void {
     for (const listener of this.listeners) listener();
   }
 
-  private ownStrand(self: string | undefined): Strand | undefined {
-    if (!self) return undefined;
-    const now = this.now();
-    const live = new Set([...this.presences.values()].filter((presence) => presence.until > now).flatMap((presence) => presence.strands));
-    return [...this.model.strands.values()].find((strand) => strand.kind === "agent" && strand.place?.handle === self && live.has(strand.id));
+  labelsFor(heard: Recorded[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const event of heard) {
+      for (const key of ["strand", "into", "parent"] as const) {
+        const id = (event as Record<string, unknown>)[key];
+        if (typeof id === "string") out[id] = this.model.names.get(id) ?? id;
+      }
+      for (const key of ["player", "with"] as const) {
+        const id = (event as Record<string, unknown>)[key];
+        if (typeof id === "string") out[id] = this.model.players.get(id)?.who ?? id;
+      }
+      if ("move" in event && typeof event.move === "string") {
+        const move = this.model.moves.get(event.move);
+        if (move) out[event.move] = `${this.model.players.get(move.player)?.who ?? move.player} on ${this.model.names.get(move.strand) ?? move.strand}`;
+      }
+    }
+    return out;
   }
 
-  private reportBraid(report: { braid?: string; dir?: string; self?: string }): string | undefined {
-    if (report.braid) return braidRef(report.braid).id;
-    if (this.ownStrand(report.self)?.braid) return this.ownStrand(report.self)!.braid;
-    if (!report.dir) return undefined;
-    const braidDirs = new Map([...this.model.braids.values()].flatMap((braid) => (braid.dir && braid.kind !== "side" ? [[braid.dir, braid.id] as const] : [])));
-    return pointedBraid(report.dir, this.model.pointed) ?? pointedBraid(report.dir, braidDirs);
+  private agentOf(self: string | undefined): Player | undefined {
+    if (!self) return undefined;
+    const now = this.now();
+    const live = new Set([...this.presences.values()].filter((presence) => presence.until > now).flatMap((presence) => presence.players));
+    const candidates = [...this.model.players.values()].filter((player) => player.kind === "agent" && player.gone === undefined && player.place?.handle === self);
+    return candidates.find((player) => live.has(player.id)) ?? candidates[0];
+  }
+
+  private openMovesBy(player: string): Move[] {
+    return [...this.model.moves.values()].filter((move) => move.player === player && move.until === undefined && this.model.strands.has(move.strand)).sort((a, b) => a.from - b.from);
+  }
+
+  private strandOf(player: string): string | undefined {
+    const moves = [...this.model.moves.values()].filter((move) => (move.with ?? move.player) === player && this.model.strands.has(move.strand)).sort((a, b) => a.from - b.from);
+    return moves.at(-1)?.strand;
+  }
+
+  private whereIs(where: Where, agent: Player | undefined): string | undefined {
+    const on = agent ? this.strandOf(agent.id) : undefined;
+    if (on) return on;
+    if (!where.dir) return undefined;
+    let best: { length: number; strand: string } | undefined;
+    for (const link of this.model.links.values()) {
+      if (link.adapter !== "dir" || !link.strand || !this.model.strands.has(link.strand)) continue;
+      if ((where.dir === link.ref || where.dir.startsWith(`${link.ref}/`)) && (!best || link.ref.length > best.length)) best = { length: link.ref.length, strand: link.strand };
+    }
+    return best?.strand;
+  }
+
+  private find(text: string, near: string | undefined): string | undefined {
+    const segments = splitPath(text);
+    for (const root of this.roots(near)) {
+      const found = this.walk(root, segments);
+      if (found.matched === segments.length) return found.at;
+    }
+    return undefined;
+  }
+
+  private resolve(text: string, facts: Fact[], near: string | undefined): string {
+    const segments = splitPath(text);
+    if (segments.length === 0) throw new Error("name a strand");
+    let best: { root: string | undefined; matched: number; at: string | undefined } = { root: undefined, matched: 0, at: undefined };
+    for (const root of this.roots(near)) {
+      const found = this.walk(root, segments);
+      if (found.matched === segments.length) return found.at!;
+      if (found.matched > best.matched) best = { root, ...found };
+    }
+    const base = best.matched > 0 ? best.at : undefined;
+    return this.resolveUnder(base, segments.slice(best.matched), facts);
+  }
+
+  private resolveUnder(parent: string | undefined, segments: string[], facts: Fact[]): string {
+    let at = parent;
+    for (const name of segments) {
+      const existing = this.childNamed(at, name, facts);
+      if (existing) {
+        at = existing;
+        continue;
+      }
+      const id = this.newId("s");
+      facts.push({ type: "strand.made", strand: id, name, ...(at ? { parent: at } : {}) });
+      at = id;
+    }
+    return at!;
+  }
+
+  private childNamed(parent: string | undefined, name: string, pending: Fact[] = []): string | undefined {
+    const wanted = name.toLowerCase();
+    const found = children(this.model, parent).find((strand) => strand.done === undefined && strand.name.toLowerCase() === wanted);
+    if (found) return found.id;
+    const made = pending.find((fact) => fact.type === "strand.made" && fact.parent === parent && fact.name.toLowerCase() === wanted);
+    return made?.type === "strand.made" ? made.strand : undefined;
+  }
+
+  private roots(near: string | undefined): (string | undefined)[] {
+    const chain = near && this.model.strands.has(near) ? [near, ...ancestors(this.model, near)] : [];
+    return [...chain, undefined];
+  }
+
+  private walk(root: string | undefined, segments: string[]): { matched: number; at: string | undefined } {
+    let at = root;
+    let matched = 0;
+    for (const name of segments) {
+      const next = this.childNamed(at, name);
+      if (!next) break;
+      at = next;
+      matched++;
+    }
+    return { matched, at };
   }
 
   private mustHave(id: string): Strand {
@@ -209,28 +453,41 @@ export class Ponpoko {
     return strand;
   }
 
-  private askTitle(braid: string): void {
-    if (storyNumber(braid) === undefined || this.titleAsked.has(braid) || this.model.braids.get(braid)?.title) return;
-    this.titleAsked.add(braid);
-    void this.lookupTitle(braid)
+  private askTitle(strand: string): void {
+    const name = this.model.strands.get(strand)?.name;
+    if (!name || storyNumber(name) === undefined || this.titleAsked.has(strand) || this.model.strands.get(strand)?.title) return;
+    this.titleAsked.add(strand);
+    void this.lookupTitle(name)
       .then((found) => {
-        if (found) this.record("ponpoko", [{ type: "braid.titled", braid, ...found }]);
+        if (found && this.model.strands.has(strand)) this.record("ponpoko", [{ type: "strand.titled", strand, ...found }]);
       })
       .catch(() => undefined);
   }
 }
 
-function firstMove(braid: BraidView, now: number): number {
-  const yours = braid.strands.filter((strand) => strand.whose === "you" && !((strand.snoozedUntil ?? 0) > now));
-  return yours.length > 0 ? yours[0]!.since : Number.MAX_SAFE_INTEGER;
+function topOrder(model: Model, strand: Strand, now: number): number {
+  const standing = rolled(model, strand);
+  return standing.whose === "you" && !((strand.snoozedUntil ?? 0) > now) ? standing.since : Number.MAX_SAFE_INTEGER;
 }
 
-function slug(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9#]+/g, "-").replace(/^-|-$/g, "") || "strand";
+export function splitPath(text: string): string[] {
+  return text
+    .split(/\s*[›>]\s*/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== "");
 }
 
-export async function shortcutTitle(braid: string): Promise<{ kind: "story" | "epic"; title: string } | undefined> {
-  const number = storyNumber(braid);
+export function slug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9#]+/g, "-").replace(/^-|-$/g, "") || "someone";
+}
+
+export function storyNumber(name: string): number | undefined {
+  const match = /^sc-(\d+)$/i.exec(name);
+  return match ? Number(match[1]) : undefined;
+}
+
+export async function shortcutTitle(name: string): Promise<{ kind: "story" | "epic"; title: string } | undefined> {
+  const number = storyNumber(name);
   const token = process.env.SHORTCUT_API_TOKEN;
   if (number === undefined || !token) return undefined;
   const headers = { "Shortcut-Token": token, "Content-Type": "application/json" };

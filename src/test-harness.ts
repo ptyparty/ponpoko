@@ -6,7 +6,8 @@ import { Store } from "./store.ts";
 
 export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko) {
   let now = start;
-  const core = shared ?? new Ponpoko(store, async () => ({ kind: "story", title: "Widget CSV import" }), () => now);
+  let ids = 0;
+  const core = shared ?? new Ponpoko(store, async () => ({ kind: "story", title: "Widget CSV import" }), () => now, (prefix) => `${prefix}${++ids}`);
   const sent: unknown[] = [];
   const service = { down: false };
   const up = () => {
@@ -34,13 +35,22 @@ export function recordingActions() {
   const calls: unknown[][] = [];
   const record = (name: string) => async (...args: unknown[]) => void calls.push([name, ...args]);
   const actions = {
-    go: async (strand: { id: string }, dir: string | undefined) => void calls.push(["go", strand.id, dir]),
+    go: async (strand: { id: string }) => void calls.push(["go", strand.id]),
     forget: record("forget"),
     snooze: record("snooze"),
     note: record("note"),
     point: record("point"),
     seen: record("seen"),
-    showPage: record("showPage"),
+    add: record("add"),
+    reparent: record("reparent"),
+    done: record("done"),
+    open: async (link: { ref: string }) => void calls.push(["open", link.ref]),
   } as Actions;
   return { actions, calls };
+}
+
+export function strandNamed(core: Ponpoko, path: string) {
+  const found = core.snapshot().strands.find((strand) => strand.path.join(" › ") === path);
+  if (!found) throw new Error(`no strand ${path}: ${core.snapshot().strands.map((strand) => strand.path.join(" › ")).join(", ")}`);
+  return found;
 }

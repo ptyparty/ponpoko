@@ -1,7 +1,7 @@
 import { serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import type { Snapshot, StrandView } from "./core.ts";
-import { age, braidTitle, clock, glyph, holder } from "./render.ts";
+import { age, cause, clock, holder, pathText } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
 type Mode = "card" | "snooze" | "forget";
@@ -48,7 +48,7 @@ export class Dealer {
     }
     if (this.mode === "forget") {
       this.mode = "card";
-      if (key.name === "y" && card) await this.act(() => this.actions.forget(card.id), `Forgot ${card.label}`);
+      if (key.name === "y" && card) await this.act(() => this.actions.forget(card.id), `Forgot ${card.name}`);
       return undefined;
     }
     switch (key.name) {
@@ -59,7 +59,7 @@ export class Dealer {
       case "return":
         if (!card) return this.finish();
         this.dealt.add(card.id);
-        if (await this.act(() => this.actions.go(card, this.snapshot?.braids.find((braid) => braid.id === card.braid)?.dir))) return this.finish();
+        if (await this.act(() => this.actions.go(card))) return this.finish();
         return undefined;
       case "s":
       case " ":
@@ -75,6 +75,9 @@ export class Dealer {
       case "x":
         if (card) this.mode = "forget";
         return undefined;
+      case "d":
+        if (card) await this.act(() => this.actions.done(card.id), `${card.name} is done`);
+        return undefined;
     }
     return undefined;
   }
@@ -86,19 +89,20 @@ export class Dealer {
     if (!card) {
       return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is waiting on you"), "", style.dim(" esc close")];
     }
-    const braid = this.snapshot.braids.find((candidate) => candidate.id === card.braid);
-    const where = card.live && card.space ? `→ ${card.space}` : card.place?.dir || braid?.dir ? `→ open a tab at ${card.place?.dir ?? braid?.dir}` : "→ nowhere ponpoko knows of";
+    const target = card.open.map((move) => move.answers ?? move.by).find((player) => player.live && player.space);
+    const where = target ? `→ ${target.space}` : card.dir ? `→ open a tab at ${card.dir}` : "→ nowhere ponpoko knows of";
     const lines = [
       style.dim(` ${hand} · 1 of ${this.hand.length}`),
       "",
-      style.amber(style.bold(` ${glyph(card, this.snapshot.now)} ${braid ? braidTitle(braid) : (card.braid ?? "loose")}`)),
-      `   ${card.label} · ${card.why}${card.who ? ` (${card.who})` : ""} · ${age(this.snapshot.now - card.since)}`,
-      style.dim(`   ${holder(card, this.snapshot.now)}, since ${clock(card.since)}${card.source === "agent" ? " · reported by the agent" : ""}`),
+      style.amber(style.bold(` ● ${pathText(card)}`)),
+      ...(card.depth === 0 && card.title ? [style.dim(`   ${card.title}`)] : []),
+      `   ${cause(card)} · ${age(this.snapshot.now - card.own.since)}`,
+      style.dim(`   ${holder(card, this.snapshot.now)}, since ${clock(card.own.since)}`),
       `   ${where}`,
       "",
     ];
     const footer =
-      this.mode === "snooze" ? style.amber(` ${snoozeLine()}`) : this.mode === "forget" ? style.amber(` forget ${card.label}?  y yes   any other key no`) : style.dim(" ⏎ go   s skip   z snooze   x forget   esc close");
+      this.mode === "snooze" ? style.amber(` ${snoozeLine()}`) : this.mode === "forget" ? style.amber(` forget ${card.name}?  y yes   any other key no`) : style.dim(" ⏎ go   s skip   d done   z snooze   x forget   esc close");
     if (this.message) lines.push(style.amber(` ${this.message}`));
     lines.push(footer);
     return lines;
@@ -106,12 +110,7 @@ export class Dealer {
 
   private async finish(): Promise<"close"> {
     if (this.unseen && this.snapshot) {
-      const unseen = new Set(this.snapshot.unseen);
-      const braids = new Set(this.snapshot.moves.filter((strand) => this.dealt.has(strand.id)).flatMap((strand) => (strand.braid ? [strand.braid] : [])));
-      for (const braid of braids) {
-        const left = this.snapshot.moves.some((strand) => strand.braid === braid && unseen.has(strand.id) && !this.dealt.has(strand.id));
-        if (!left) await this.actions.seen(braid).catch(() => undefined);
-      }
+      for (const strand of this.snapshot.moves) if (this.dealt.has(strand.id) && strand.unseen) await this.actions.seen(strand.id).catch(() => undefined);
     }
     return "close";
   }

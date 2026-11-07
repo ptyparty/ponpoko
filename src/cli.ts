@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import { Down, state, watch } from "./client.ts";
-import { age, braidTitle, cause, holder, rows } from "./render.ts";
+import { age, cause, pathText, rows } from "./render.ts";
 import { serve } from "./server.ts";
 
 const usage = `Usage:
-  ponpoko                 The command tab: every braid, its strands, and what ponpoko heard
+  ponpoko                 The command tab: every strand, whose move it is, and what ponpoko heard
   ponpoko list            Your moves, then everything else, printed once
   ponpoko tray [--stream] One line for komux's tray; --stream prints a new one as it changes
   ponpoko deal [--unseen] Deal your oldest move as a card, for a komux popup
@@ -53,10 +53,7 @@ async function list(): Promise<number> {
     const width = process.stdout.columns ?? 100;
     if (snapshot.moves.length > 0) {
       console.log(" Your moves, oldest first\n");
-      for (const strand of snapshot.moves) {
-        const braid = snapshot.braids.find((candidate) => candidate.id === strand.braid);
-        console.log(`   ● ${age(snapshot.now - strand.since).padStart(6)}  ${braid ? braidTitle(braid) : (strand.braid ?? "loose")} · ${strand.label} · ${holder(strand, snapshot.now)} · ${cause(strand)}`);
-      }
+      for (const strand of snapshot.moves) console.log(`   ● ${age(snapshot.now - strand.own.since).padStart(6)}  ${pathText(strand)} · ${cause(strand)}`);
       console.log("");
     }
     for (const row of rows(snapshot, width)) console.log(row.text);

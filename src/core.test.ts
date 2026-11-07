@@ -1,104 +1,156 @@
 import { describe, expect, test } from "bun:test";
-import { tabBraid } from "./braids.ts";
 import { Ponpoko } from "./core.ts";
 import { Store } from "./store.ts";
-
-const dir = "/home/me/work/stories/sc-1234";
+import { strandNamed } from "./test-harness.ts";
 
 function setup() {
   let now = 1_000_000;
+  let ids = 0;
   const store = new Store(":memory:");
-  const core = new Ponpoko(store, async () => undefined, () => now);
+  const core = new Ponpoko(store, async () => undefined, () => now, (prefix) => `${prefix}${++ids}`);
   core.record("tool", [
-    { type: "braid.made", braid: "sc-1234", name: "SC-1234", dir },
-    { type: "strand.move", braid: "sc-1234", strand: "a:1", label: "agent one", kind: "agent", whose: "you", why: "turn ended", place: { adapter: "tool", handle: "tool:1", dir } },
-    { type: "strand.move", braid: "sc-1234", strand: "a:2", label: "agent two", kind: "agent", whose: "agent", why: "working", place: { adapter: "tool", handle: "tool:2", dir } },
+    { type: "player.joined", player: "a1", kind: "agent", who: "claude", adapter: "tool", place: { handle: "tool:1", dir: "/w/ptyparty" } },
+    { type: "player.joined", player: "a2", kind: "agent", who: "claude", adapter: "tool", place: { handle: "tool:2", dir: "/w/ptyparty" } },
   ]);
-  return { core, store, tick: (ms: number) => (now += ms) };
+  const shown = () =>
+    core
+      .snapshot()
+      .strands.map((strand) => `${"  ".repeat(strand.depth)}${strand.name} ${strand.rolled.whose ?? "-"}${strand.own.whose ? ` ${strand.own.why}` : ""}`)
+      .join("\n");
+  return { core, store, shown, tick: (ms: number) => (now += ms) };
 }
 
-describe("tabBraid", () => {
-  test("names a tab's braid from its braid label or a pointed directory, and nothing else", () => {
-    expect(tabBraid({ dir, labels: { braid: "SC-1234" } }, new Map())).toEqual({ id: "sc-1234", name: "sc-1234" });
-    expect(tabBraid({ dir }, new Map())).toBeUndefined();
-    expect(tabBraid({ dir: "/w/ptyparty" }, new Map())).toBeUndefined();
-    expect(tabBraid({ dir: "/w/ptyparty/komux" }, new Map([["/w/ptyparty", "sc-1"]]))).toEqual({ id: "sc-1", name: "sc-1" });
-    expect(tabBraid({ dir: "/w/ptyparty/komux", labels: { braid: "pr-{pr}" } }, new Map([["/w/ptyparty", "ptyparty"]]))).toEqual({ id: "ptyparty", name: "ptyparty" });
+describe("strands", () => {
+  test("nest as deep as the work, made from paths, and a strand with no one on it is yours", () => {
+    const { core, shown } = setup();
+    core.add(undefined, "ptyparty › ponpoko");
+    core.add(strandNamed(core, "ptyparty").id, "quoll");
+    expect(shown()).toBe(["ptyparty you", "  ponpoko you no one on it", "  quoll you no one on it"].join("\n"));
+    expect(core.snapshot().moves.map((strand) => strand.path.join(" › "))).toEqual(["ptyparty › ponpoko", "ptyparty › quoll"]);
   });
-});
 
-describe("the ponpoko service", () => {
-  test("knows nothing is live until something says it's present, and forgets when it leaves", () => {
+  test("an agent's moves make the strand its move, rolled up to the strands above", () => {
+    const { core, shown, tick } = setup();
+    core.present({ adapter: "tool", scope: "main", players: ["a1"], spaces: [] });
+    expect(core.status({ self: "tool:1", strand: "ptyparty › review findings › 4", text: "reading tabBraid" })).toBe("ptyparty › review findings › 4");
+    expect(shown()).toBe(["ptyparty agent", "  review findings agent", "    4 agent reading tabBraid"].join("\n"));
+    tick(60_000);
+    core.status({ self: "tool:1", text: "making a pointed directory beat a label", page: "ponpoko/review-findings.md" });
+    const strand = strandNamed(core, "ptyparty › review findings › 4");
+    expect(strand.recent.map((move) => [move.what, move.until !== undefined, move.links.map((link) => link.ref)])).toEqual([
+      ["reading tabBraid", true, []],
+      ["making a pointed directory beat a label", false, ["ponpoko/review-findings.md"]],
+    ]);
+  });
+
+  test("names resolve near the strand an agent is on before the top", () => {
     const { core } = setup();
-    expect(core.snapshot().moves.map((strand) => strand.live)).toEqual([false]);
-    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [{ dir, braid: "sc-1234", label: "tab 1 widgets", short: "tab 1", strands: ["a:1"] }] });
-    expect(core.snapshot().moves.map((strand) => [strand.live, strand.space])).toEqual([[true, "tab 1 widgets"]]);
-    expect(core.snapshot().braids[0]!.spaces).toEqual([{ label: "tab 1 widgets", short: "tab 1" }]);
-    core.absent("tool", "main");
-    expect(core.snapshot().moves[0]!.live).toBe(false);
+    core.add(undefined, "ptyparty › review findings");
+    core.add(undefined, "review findings");
+    core.status({ self: "tool:1", strand: "ptyparty", text: "looking around" });
+    core.status({ self: "tool:1", strand: "review findings › 2", text: "fixing it" });
+    expect(strandNamed(core, "ptyparty › review findings › 2").open.map((move) => move.what)).toEqual(["fixing it"]);
   });
 
-  test("presence lapses if it isn't renewed, telling watchers both ways", () => {
+  test("an agent still working outranks a wait it started, and done clears both", () => {
+    const { core, shown } = setup();
+    core.status({ self: "tool:1", strand: "sc-1", text: "opening the PR" });
+    core.wait({ self: "tool:1", who: "Copilot", kind: "machine", what: "reviewing PR #821" });
+    expect(shown()).toBe("sc-1 agent opening the PR");
+    core.doneBy({ self: "tool:1" }, "merged");
+    expect(shown()).toBe("");
+    expect(core.snapshot().counts).toMatchObject({ agents: 0, waiting: 0 });
+  });
+
+  test("waits on machines and on you", () => {
+    const { core, shown } = setup();
+    core.add(undefined, "sc-1");
+    core.wait({ self: "tool:1", strand: "sc-1", who: "Copilot", kind: "machine", what: "reviewing PR #821" });
+    expect(shown()).toBe("sc-1 machine reviewing PR #821");
+    core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "try it in a browser" });
+    expect(shown()).toBe("sc-1 you try it in a browser");
+    expect(strandNamed(core, "sc-1").open.find((move) => move.player === "you")!.answers!.id).toBe("a1");
+    core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "x", over: true });
+    core.wait({ self: "tool:1", strand: "sc-1", who: "Copilot", kind: "machine", what: "x", over: true });
+    expect(shown()).toBe("sc-1 you no one on it");
+    expect(core.model.players.get("machine:copilot")!.gone).toBeDefined();
+  });
+
+  test("done closes a strand and everything under it, and split shares work out", () => {
+    const { core, shown } = setup();
+    expect(core.split({ strand: "review findings" }, ["1", "2"])).toEqual(["review findings › 1", "review findings › 2"]);
+    core.status({ self: "tool:1", strand: "review findings › 1", text: "fixing" });
+    core.done(strandNamed(core, "review findings › 1").id);
+    expect(shown()).toBe(["review findings you", "  2 you no one on it"].join("\n"));
+    core.done(strandNamed(core, "review findings").id);
+    expect(shown()).toBe("");
+    expect(core.snapshot().counts.agents).toBe(0);
+  });
+
+  test("a rogue's loose strand merges into the strand it names, moves and all", () => {
+    const { core, shown } = setup();
+    core.record("tool", [
+      { type: "strand.made", strand: "loose1", name: "claude in ptyparty", kind: "loose" },
+      { type: "move.opened", move: "m-a", strand: "loose1", player: "a1", what: "working" },
+    ]);
+    core.status({ self: "tool:1", strand: "ptyparty › ponpoko", text: "building strands" });
+    expect(shown()).toBe(["ptyparty agent", "  ponpoko agent building strands"].join("\n"));
+    expect(core.model.strands.has("loose1")).toBe(false);
+    expect(strandNamed(core, "ptyparty › ponpoko").recent.map((move) => move.id)).toEqual(["m-a"]);
+  });
+
+  test("moving a strand under another, or merging a loose one with m", () => {
+    const { core, shown } = setup();
+    core.add(undefined, "sc-2");
+    core.add(undefined, "epic 9");
+    core.record("tool", [{ type: "strand.made", strand: "loose1", name: "claude in side", kind: "loose" }]);
+    core.reparent(strandNamed(core, "sc-2").id, "epic 9");
+    core.reparent("loose1", "epic 9 › sc-2");
+    expect(shown()).toBe(["epic 9 you", "  sc-2 you no one on it"].join("\n"));
+    expect(() => core.reparent(strandNamed(core, "epic 9").id, "epic 9 › sc-2")).toThrow("under itself");
+    core.reparent(strandNamed(core, "epic 9 › sc-2").id, "");
+    expect(shown()).toBe(["epic 9 you no one on it", "sc-2 you no one on it"].join("\n"));
+  });
+
+  test("pointing a directory links it and takes in the rogues working there", () => {
+    const { core, shown } = setup();
+    core.record("tool", [
+      { type: "strand.made", strand: "loose1", name: "claude in ptyparty", kind: "loose" },
+      { type: "move.opened", move: "m-a", strand: "loose1", player: "you", with: "a1", what: "turn ended" },
+    ]);
+    core.point("/w/ptyparty", "ptyparty");
+    expect(shown()).toBe("ptyparty you turn ended");
+    expect(strandNamed(core, "ptyparty").dir).toBe("/w/ptyparty");
+  });
+
+  test("snoozed strands leave your moves until they wake, and catching up a parent sees what's under it", () => {
     const { core, tick } = setup();
-    let changes = 0;
-    core.onChange(() => changes++);
-    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [] });
+    core.add(undefined, "sc-1 › a");
+    const a = strandNamed(core, "sc-1 › a");
+    expect(a.unseen).toBe(true);
+    core.snooze(a.id, 1_000_000 + 30 * 60_000);
+    expect(core.snapshot().moves).toEqual([]);
+    tick(31 * 60_000);
+    expect(core.snapshot().moves.map((strand) => strand.name)).toEqual(["a"]);
+    core.seen(strandNamed(core, "sc-1").id);
+    expect(strandNamed(core, "sc-1 › a").unseen).toBe(false);
+  });
+
+  test("players are live only while something says they're present", () => {
+    const { core, tick } = setup();
+    core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "look" });
+    const answers = () => strandNamed(core, "sc-1").open[0]!.answers!;
+    expect(answers().live).toBe(false);
+    core.present({ adapter: "tool", scope: "main", players: ["a1"], spaces: [{ dir: "/w", strand: strandNamed(core, "sc-1").id, label: "tab 1 widgets", short: "tab 1", players: ["a1"] }] });
+    expect([answers().live, answers().space]).toEqual([true, "tab 1 widgets"]);
+    expect(strandNamed(core, "sc-1").spaces).toEqual([{ label: "tab 1 widgets", short: "tab 1" }]);
     tick(91_000);
-    expect(core.snapshot().moves[0]!.live).toBe(false);
-    core.expire();
-    expect(changes).toBe(2);
-    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [] });
-    expect(changes).toBe(3);
-  });
-
-  test("a strand's tab is the one its own pane is in, even when another session has a tab at the same directory", () => {
-    const { core } = setup();
-    core.present({ adapter: "tool", scope: "b", strands: [], spaces: [{ dir, label: "tab 1 other", short: "tab 1", strands: [] }] });
-    core.present({ adapter: "tool", scope: "a", strands: ["a:1"], spaces: [{ dir, label: "tab 3 widgets", short: "tab 3", strands: ["a:1"] }] });
-    expect(core.snapshot().moves[0]!.space).toBe("tab 3 widgets");
-  });
-
-  test("an agent's own reports never land on a job strand that shares its handle", () => {
-    const { core } = setup();
-    core.record("tool", [{ type: "strand.move", braid: "sc-1234", strand: "j:2", label: "job", kind: "job", whose: "you", why: "failed", place: { adapter: "tool", handle: "tool:2", dir } }]);
-    core.present({ adapter: "tool", scope: "main", strands: ["j:2", "a:2"], spaces: [] });
-    core.report({ self: "tool:2", whose: "person", who: "Sam", reason: "asked Sam" });
-    expect(core.model.strands.get("a:2")!.who).toBe("Sam");
-    expect(core.model.strands.get("j:2")!.whose).toBe("you");
+    expect(answers().live).toBe(false);
   });
 
   test("a restarted service keeps what it knew", () => {
-    const { store } = setup();
-    expect([...new Ponpoko(store, async () => undefined).model.strands.keys()]).toEqual(["a:1", "a:2"]);
-  });
-
-  test("agents report on named strands, or their own when it's present", () => {
-    const { core } = setup();
-    const id = core.report({ dir, strand: "PR #821 review", whose: "machine", who: "Copilot", reason: "waiting on Copilot review of PR #821" });
-    expect(core.model.strands.get(id)).toMatchObject({ braid: "sc-1234", kind: "report", whose: "machine", who: "Copilot" });
-    expect(() => core.report({ self: "tool:2", whose: "person", reason: "x" })).toThrow(/name the strand/);
-    core.present({ adapter: "tool", scope: "main", strands: ["a:2"], spaces: [] });
-    core.report({ self: "tool:2", whose: "person", who: "Sam", reason: "asked Sam" });
-    expect(core.model.strands.get("a:2")).toMatchObject({ whose: "person", who: "Sam", source: "agent" });
-    core.status({ self: "tool:2", text: "step 3 of 10", page: "ponpoko/build-status.md" });
-    expect(core.model.strands.get("a:2")!.doing).toMatchObject({ text: "step 3 of 10", page: "ponpoko/build-status.md" });
-    core.report({ braid: "SC-1234", strand: "PR #821 review", whose: "done", reason: "review in" });
-    expect(core.model.strands.has(id)).toBe(false);
-  });
-
-  test("snoozed moves leave your moves until they wake", () => {
-    const { core, tick } = setup();
-    core.snooze("a:1", 1_000_000 + 30 * 60_000);
-    expect(core.snapshot().moves).toEqual([]);
-    tick(31 * 60_000);
-    expect(core.snapshot().moves.map((strand) => strand.id)).toEqual(["a:1"]);
-  });
-
-  test("ending and seeing strands", () => {
-    const { core } = setup();
-    core.seenStrand("a:1");
-    expect(core.model.strands.get("a:1")!.seen).toBe(true);
-    core.end("a:1", "you went to it");
-    expect(core.model.strands.has("a:1")).toBe(false);
+    const { core, store } = setup();
+    core.add(undefined, "ptyparty › ponpoko");
+    expect(new Ponpoko(store, async () => undefined).snapshot().strands.map((strand) => strand.name)).toEqual(["ptyparty", "ponpoko"]);
   });
 });

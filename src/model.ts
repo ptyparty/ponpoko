@@ -1,29 +1,44 @@
-import type { BraidKind, Place, Recorded, StrandKind, Whose } from "./events.ts";
+import type { Place, PlayerKind, Recorded, Whose } from "./events.ts";
 
-export type Braid = { id: string; name: string; kind?: BraidKind; title?: string; dir?: string; notes: { at: number; text: string }[]; seenAt: number; made: number };
 export type Strand = {
   id: string;
-  braid?: string;
-  label: string;
-  kind: StrandKind;
-  whose: Whose;
-  who?: string;
-  why: string;
-  since: number;
-  updated: number;
-  source: Recorded["source"];
-  place?: Place;
-  seen: boolean;
-  dismissed: boolean;
+  name: string;
+  parent?: string;
+  kind?: string;
+  title?: string;
+  made: number;
+  done?: number;
+  seenAt: number;
+  dismissedAt: number;
   snoozedUntil?: number;
-  doing?: { text: string; page?: string; at: number };
+  notes: { at: number; text: string }[];
 };
-export type Model = { braids: Map<string, Braid>; strands: Map<string, Strand>; labels: Map<string, { braid?: string; label: string }>; pointed: Map<string, string>; heard: Recorded[]; lastAt: number };
+export type Player = { id: string; kind: PlayerKind; who: string; adapter?: string; place?: Place; resume?: string; joined: number; gone?: number };
+export type Move = { id: string; strand: string; player: string; with?: string; what: string; from: number; until?: number; source: Recorded["source"]; described?: number };
+export type Link = { id: string; strand?: string; move?: string; adapter: string; ref: string; label?: string; at: number };
+export type Model = {
+  strands: Map<string, Strand>;
+  players: Map<string, Player>;
+  moves: Map<string, Move>;
+  links: Map<string, Link>;
+  names: Map<string, string>;
+  heard: Recorded[];
+  lastAt: number;
+};
 
+export const you = "you";
 const heardKept = 200;
 
 export function emptyModel(): Model {
-  return { braids: new Map(), strands: new Map(), labels: new Map(), pointed: new Map(), heard: [], lastAt: 0 };
+  return {
+    strands: new Map(),
+    players: new Map([[you, { id: you, kind: "you", who: "you", joined: 0 }]]),
+    moves: new Map(),
+    links: new Map(),
+    names: new Map(),
+    heard: [],
+    lastAt: 0,
+  };
 }
 
 export function replay(events: Recorded[]): Model {
@@ -37,107 +52,199 @@ export function apply(model: Model, event: Recorded): void {
   if (model.heard.length > heardKept * 2) model.heard.splice(0, model.heard.length - heardKept);
   model.lastAt = Math.max(model.lastAt, event.at);
   switch (event.type) {
-    case "braid.made":
-      if (!model.braids.has(event.braid)) model.braids.set(event.braid, { id: event.braid, name: event.name.toLowerCase(), kind: event.kind, dir: event.dir, notes: [], seenAt: 0, made: event.at });
+    case "strand.made":
+      if (model.strands.has(event.strand)) return;
+      model.strands.set(event.strand, { id: event.strand, name: event.name, parent: event.parent, kind: event.kind, made: event.at, seenAt: 0, dismissedAt: 0, notes: [] });
+      model.names.set(event.strand, path(model, event.strand).join(" › "));
       return;
-    case "braid.titled": {
-      const braid = ensureBraid(model, event.braid, event.at);
-      braid.kind = event.kind;
-      braid.title = event.title;
+    case "strand.titled":
+      withStrand(model, event.strand, (strand) => {
+        if (event.kind) strand.kind = event.kind;
+        strand.title = event.title;
+      });
       return;
-    }
-    case "braid.note":
-      ensureBraid(model, event.braid, event.at).notes.push({ at: event.at, text: event.text });
+    case "strand.parented":
+      withStrand(model, event.strand, (strand) => {
+        if (event.parent !== undefined && (event.parent === strand.id || ancestors(model, event.parent).includes(strand.id))) return;
+        strand.parent = event.parent;
+        for (const id of [strand.id, ...descendants(model, strand.id)]) model.names.set(id, path(model, id).join(" › "));
+      });
       return;
-    case "braid.seen":
-      ensureBraid(model, event.braid, event.at).seenAt = event.at;
+    case "strand.done":
+      withStrand(model, event.strand, (strand) => void (strand.done = event.at));
       return;
-    case "dir.pointed":
-      model.pointed.set(event.dir, event.braid);
-      ensureBraid(model, event.braid, event.at);
+    case "strand.forgotten":
+      remove(model, event.strand, undefined);
       return;
-    case "strand.move": {
-      if (event.braid) ensureBraid(model, event.braid, event.at);
-      model.labels.set(event.strand, { braid: event.braid, label: event.label });
-      const old = model.strands.get(event.strand);
-      const changed = !old || old.whose !== event.whose;
-      model.strands.set(event.strand, {
-        id: event.strand,
-        braid: event.braid,
-        label: event.label,
+    case "strand.merged":
+      if (model.strands.has(event.into) && event.into !== event.strand) remove(model, event.strand, event.into);
+      return;
+    case "strand.note":
+      withStrand(model, event.strand, (strand) => void strand.notes.push({ at: event.at, text: event.text }));
+      return;
+    case "strand.seen":
+      withStrand(model, event.strand, (strand) => void (strand.seenAt = event.at));
+      return;
+    case "strand.dismissed":
+      withStrand(model, event.strand, (strand) => void (strand.dismissedAt = event.at));
+      return;
+    case "strand.snoozed":
+      withStrand(model, event.strand, (strand) => void (strand.snoozedUntil = event.until));
+      return;
+    case "player.joined": {
+      const old = model.players.get(event.player);
+      model.players.set(event.player, {
+        id: event.player,
         kind: event.kind,
-        whose: event.whose,
         who: event.who,
-        why: event.why,
-        since: changed ? event.at : old.since,
-        updated: event.at,
-        source: event.source,
+        adapter: event.adapter ?? old?.adapter,
         place: event.place ?? old?.place,
-        seen: changed ? event.whose !== "you" : old.seen,
-        dismissed: changed ? false : old.dismissed,
-        snoozedUntil: changed ? undefined : old.snoozedUntil,
-        doing: old?.doing,
+        resume: event.resume ?? old?.resume,
+        joined: old?.joined ?? event.at,
       });
       return;
     }
-    case "strand.ended":
-    case "strand.forgotten":
-      model.strands.delete(event.strand);
-      return;
-    case "strand.status": {
-      const strand = model.strands.get(event.strand);
-      if (strand) strand.doing = event.text === "" ? undefined : { text: event.text, page: event.page, at: event.at };
+    case "player.gone": {
+      const player = model.players.get(event.player);
+      if (player && player.id !== you) player.gone = event.at;
       return;
     }
-    case "strand.dismissed": {
-      const strand = model.strands.get(event.strand);
-      if (strand) strand.dismissed = true;
+    case "move.opened":
+      if (!model.strands.has(event.strand)) return;
+      model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, from: event.at, source: event.source });
+      return;
+    case "move.described": {
+      const move = model.moves.get(event.move);
+      if (move) Object.assign(move, { what: event.what, described: event.at });
       return;
     }
-    case "strand.seen": {
-      const strand = model.strands.get(event.strand);
-      if (strand) strand.seen = true;
+    case "move.closed": {
+      const move = model.moves.get(event.move);
+      if (move && move.until === undefined) move.until = event.at;
       return;
     }
-    case "strand.snoozed": {
-      const strand = model.strands.get(event.strand);
-      if (strand) strand.snoozedUntil = event.until;
+    case "link.added":
+      model.links.set(event.link, { id: event.link, strand: event.strand, move: event.move, adapter: event.adapter, ref: event.ref, label: event.label, at: event.at });
       return;
-    }
+    case "link.removed":
+      model.links.delete(event.link);
+      return;
   }
 }
 
-function ensureBraid(model: Model, id: string, at: number): Braid {
-  let braid = model.braids.get(id);
-  if (!braid) {
-    braid = { id, name: id.toLowerCase(), notes: [], seenAt: 0, made: at };
-    model.braids.set(id, braid);
+function withStrand(model: Model, id: string, change: (strand: Strand) => void): void {
+  const strand = model.strands.get(id);
+  if (strand) change(strand);
+}
+
+function remove(model: Model, id: string, into: string | undefined): void {
+  const strand = model.strands.get(id);
+  if (!strand) return;
+  for (const child of children(model, id)) {
+    child.parent = into ?? strand.parent;
+    for (const below of [child.id, ...descendants(model, child.id)]) model.names.set(below, path(model, below).join(" › "));
   }
-  return braid;
+  for (const move of model.moves.values()) {
+    if (move.strand !== id) continue;
+    if (into) move.strand = into;
+    else model.moves.delete(move.id);
+  }
+  for (const link of model.links.values()) {
+    if (link.strand !== id) continue;
+    if (into) link.strand = into;
+    else model.links.delete(link.id);
+  }
+  if (into) model.strands.get(into)!.notes.push(...strand.notes);
+  model.strands.delete(id);
+}
+
+export function children(model: Model, id: string | undefined): Strand[] {
+  return [...model.strands.values()].filter((strand) => strand.parent === id);
+}
+
+export function descendants(model: Model, id: string): string[] {
+  return children(model, id).flatMap((child) => [child.id, ...descendants(model, child.id)]);
+}
+
+export function ancestors(model: Model, id: string): string[] {
+  const out: string[] = [];
+  let at = model.strands.get(id)?.parent;
+  while (at !== undefined && !out.includes(at)) {
+    out.push(at);
+    at = model.strands.get(at)?.parent;
+  }
+  return out;
+}
+
+export function path(model: Model, id: string): string[] {
+  return [...ancestors(model, id)].reverse().flatMap((ancestor) => model.strands.get(ancestor)?.name ?? []).concat(model.strands.get(id)?.name ?? id);
+}
+
+export function whoseOf(kind: PlayerKind): Whose {
+  return kind === "job" ? "machine" : kind;
+}
+
+const rank: Record<Whose, number> = { you: 0, agent: 1, person: 2, machine: 2 };
+
+export type Standing = { whose?: Whose; since: number; why: string; moves: Move[] };
+
+export function openMoves(model: Model, strand: string): Move[] {
+  return [...model.moves.values()].filter((move) => move.strand === strand && move.until === undefined).sort((a, b) => a.from - b.from);
+}
+
+export function moveWhose(model: Model, move: Move): Whose {
+  return whoseOf(model.players.get(move.player)?.kind ?? "machine");
+}
+
+export function own(model: Model, strand: Strand): Standing {
+  const open = openMoves(model, strand.id);
+  if (open.length > 0) {
+    const whose = open.map((move) => moveWhose(model, move)).sort((a, b) => rank[a] - rank[b])[0]!;
+    const moves = open.filter((move) => moveWhose(model, move) === whose);
+    return { whose, since: moves[0]!.from, why: moves[0]!.what, moves };
+  }
+  if (children(model, strand.id).some((child) => child.done === undefined)) return { since: strand.made, why: "", moves: [] };
+  const last = Math.max(strand.made, ...[...model.moves.values()].filter((move) => move.strand === strand.id).map((move) => move.until ?? move.from));
+  return { whose: "you", since: last, why: "no one on it", moves: [] };
+}
+
+export function rolled(model: Model, strand: Strand): Standing {
+  const all = [own(model, strand), ...children(model, strand.id).filter((child) => child.done === undefined).map((child) => rolled(model, child))].filter((standing) => standing.whose !== undefined);
+  if (all.length === 0) return { since: strand.made, why: "", moves: [] };
+  const best = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0]!;
+  return best;
+}
+
+export function snoozed(strand: Strand, now: number): boolean {
+  return (strand.snoozedUntil ?? 0) > now;
+}
+
+export function yourStrands(model: Model, now: number): Strand[] {
+  return [...model.strands.values()]
+    .filter((strand) => strand.done === undefined && own(model, strand).whose === "you" && !snoozed(strand, now))
+    .sort((a, b) => own(model, a).since - own(model, b).since);
+}
+
+export function isUnseen(model: Model, strand: Strand): boolean {
+  const seen = Math.max(strand.seenAt, ...ancestors(model, strand.id).map((id) => model.strands.get(id)?.seenAt ?? 0));
+  return own(model, strand).since > seen;
 }
 
 export function recentHeard(model: Model, count: number): Recorded[] {
   return model.heard.slice(-count).reverse();
 }
 
-export function yourMoves(model: Model, now: number): Strand[] {
-  return [...model.strands.values()].filter((strand) => strand.whose === "you" && !((strand.snoozedUntil ?? 0) > now)).sort((a, b) => a.since - b.since);
-}
-
-export function unseenMoves(model: Model, now: number): Strand[] {
-  return yourMoves(model, now).filter((strand) => strand.since > ((strand.braid && model.braids.get(strand.braid)?.seenAt) || 0));
-}
-
 export type Counts = { yours: number; agents: number; snoozed: number; waiting: number; oldest?: number };
 
 export function counts(model: Model, now: number): Counts {
-  const strands = [...model.strands.values()];
-  const yours = yourMoves(model, now);
+  const live = [...model.strands.values()].filter((strand) => strand.done === undefined);
+  const yours = yourStrands(model, now);
+  const open = [...model.moves.values()].filter((move) => move.until === undefined && model.strands.get(move.strand)?.done === undefined);
   return {
     yours: yours.length,
-    agents: strands.filter((strand) => strand.whose === "agent").length,
-    snoozed: strands.filter((strand) => strand.whose === "you" && (strand.snoozedUntil ?? 0) > now).length,
-    waiting: strands.filter((strand) => strand.whose === "machine" || strand.whose === "person").length,
-    oldest: yours[0]?.since,
+    agents: open.filter((move) => moveWhose(model, move) === "agent").length,
+    snoozed: live.filter((strand) => own(model, strand).whose === "you" && snoozed(strand, now)).length,
+    waiting: open.filter((move) => ["person", "machine"].includes(moveWhose(model, move))).length,
+    oldest: yours[0] ? own(model, yours[0]).since : undefined,
   };
 }

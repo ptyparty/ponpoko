@@ -4,33 +4,46 @@ import type { Snapshot } from "./core.ts";
 import { clock, rows, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
-type Mode = { kind: "list" } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: "note" | "point"; text: string };
+type Purpose = "note" | "point" | "add" | "move";
+type Mode = { kind: "list" } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string };
 
-const keysLine = " ⏎ go   o open page   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
+const keysLine = " ⏎ go   ␣ moves   a add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
 
 const help = [
   " Keys",
   "",
-  "   j k ↑ ↓   move between braids and strands",
-  "   ⏎         go to the strand: focus its pane, or reopen its tab",
-  "   o         open the notebook page an agent's status points at (📓), in quoll",
+  "   j k ↑ ↓   move between strands",
+  "   ⏎         go to the strand: focus the pane it waits on, or open a tab at its directory",
+  "   ␣         show or hide the strand's moves",
+  "   a         add a strand under this one (or at the top, with nothing picked)",
+  "   m         move the strand under another, named by its path, such as ptyparty › ponpoko; a rogue's loose strand merges into it",
+  "   d         mark the strand done",
+  "   o         open what the strand's latest move links to, such as a notebook page (📓) in quoll",
   "   z         snooze the strand, then pick how long",
-  "   n         add a note to the braid",
-  "   x         forget a strand ponpoko has wrong, such as a pane long gone",
-  "   p         point the braid's directory, or a loose strand's, at a braid, such as sc-1234",
-  "   c         mark the braid caught up, so its moves are no longer new (*)",
+  "   n         add a note to the strand",
+  "   x         forget a strand ponpoko has wrong",
+  "   p         point the strand's directory at a strand, so agents there work on it",
+  "   c         mark the strand caught up, so its moves are no longer new (*)",
   "   q         quit",
   "",
-  " Glyphs:  ● yours   ◐ an agent's   ⊘ waiting on someone or something   ◷ snoozed   ○ idle",
+  " Glyphs:  ● yours   ◐ an agent's   ⊘ waiting on someone or something   ◷ snoozed   ○ nothing to do",
   "",
   " Any key goes back.",
 ];
+
+const prompts: Record<Purpose, string> = {
+  note: "note",
+  point: "point this directory at strand",
+  add: "new strand",
+  move: "move under (empty for the top)",
+};
 
 export class TabController {
   snapshot: Snapshot | undefined;
   mode: Mode = { kind: "list" };
   message: string | undefined;
   selected = 0;
+  readonly expanded = new Set<string>();
   private top = 0;
   private down = false;
 
@@ -44,13 +57,13 @@ export class TabController {
     this.snapshot = snapshot;
     this.down = snapshot === undefined;
     if (!snapshot || !before) return;
-    const again = this.selectable(100).findIndex((row) => (before.strand ? row.strand?.id === before.strand.id : !row.strand && row.braid?.id === before.braid?.id));
+    const again = this.selectable().findIndex((row) => row.strand?.id === before.strand?.id);
     if (again >= 0) this.selected = again;
-    this.selected = Math.min(this.selected, Math.max(0, this.selectable(100).length - 1));
+    this.selected = Math.min(this.selected, Math.max(0, this.selectable().length - 1));
   }
 
   current(): Row | undefined {
-    return this.selectable(100)[this.selected];
+    return this.selectable()[this.selected];
   }
 
   async key(key: Key): Promise<"quit" | undefined> {
@@ -61,10 +74,10 @@ export class TabController {
       return undefined;
     }
     if (mode.kind === "text") return this.textKey(mode, key);
+    const strand = this.current()?.strand;
     if (mode.kind === "snooze") {
       this.mode = { kind: "list" };
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
-      const strand = this.current()?.strand;
       if (choice && strand) {
         const until = choice.until(this.now());
         await this.run(() => this.actions.snooze(strand.id, until), `Snoozed till ${clock(until)}`);
@@ -73,11 +86,10 @@ export class TabController {
     }
     if (mode.kind === "forget") {
       this.mode = { kind: "list" };
-      const strand = this.current()?.strand;
-      if (key.name === "y" && strand) await this.run(() => this.actions.forget(strand.id), `Forgot ${strand.label}`);
+      if (key.name === "y" && strand) await this.run(() => this.actions.forget(strand.id), `Forgot ${strand.name}`);
       return undefined;
     }
-    const count = this.selectable(100).length;
+    const count = this.selectable().length;
     switch (key.name) {
       case "q":
       case "escape":
@@ -94,40 +106,46 @@ export class TabController {
       case "?":
         this.mode = { kind: "help" };
         return undefined;
-      case "return": {
-        const row = this.current();
-        const strand = row?.strand ?? row?.braid?.strands[0];
+      case "return":
         if (!strand) this.message = "Nothing to go to here";
-        else await this.run(() => this.actions.go(strand, row?.braid?.dir));
+        else await this.run(() => this.actions.go(strand));
         return undefined;
-      }
+      case "space":
+      case " ":
+        if (strand && !this.expanded.delete(strand.id)) this.expanded.add(strand.id);
+        return undefined;
       case "o": {
-        const doing = this.current()?.strand?.doing;
-        if (!doing?.page) this.message = "This strand's status points at no page";
-        else await this.run(() => this.actions.showPage(doing.page!), `Showing ${doing.page} in quoll`);
+        const link = strand ? [...strand.recent.flatMap((move) => move.links), ...strand.links].filter((candidate) => candidate.adapter !== "dir").at(-1) : undefined;
+        if (!link) this.message = "Nothing on this strand links anywhere";
+        else await this.run(() => this.actions.open(link), `Opened ${link.ref}`);
         return undefined;
       }
+      case "a":
+        this.mode = { kind: "text", purpose: "add", text: "" };
+        return undefined;
+      case "m":
+      case "n":
+        if (strand) this.mode = { kind: "text", purpose: key.name === "m" ? "move" : "note", text: "" };
+        else this.message = "Pick a strand first";
+        return undefined;
+      case "d":
+        if (strand) await this.run(() => this.actions.done(strand.id), `${strand.name} is done`);
+        return undefined;
       case "z":
-        if (this.current()?.strand) this.mode = { kind: "snooze" };
+        if (strand) this.mode = { kind: "snooze" };
         else this.message = "Pick a strand to snooze";
         return undefined;
       case "x":
-        if (this.current()?.strand) this.mode = { kind: "forget" };
+        if (strand) this.mode = { kind: "forget" };
         else this.message = "Pick a strand to forget";
         return undefined;
-      case "n":
-        if (this.current()?.braid) this.mode = { kind: "text", purpose: "note", text: "" };
-        return undefined;
-      case "p": {
-        if (!this.pointDir()) this.message = "ponpoko doesn't know this braid's directory";
+      case "p":
+        if (!this.pointDir()) this.message = "ponpoko doesn't know this strand's directory";
         else this.mode = { kind: "text", purpose: "point", text: "" };
         return undefined;
-      }
-      case "c": {
-        const braid = this.current()?.braid;
-        if (braid) await this.run(() => this.actions.seen(braid.id), `${braid.name} caught up`);
+      case "c":
+        if (strand) await this.run(() => this.actions.seen(strand.id), `${strand.name} caught up`);
         return undefined;
-      }
     }
     return undefined;
   }
@@ -135,7 +153,7 @@ export class TabController {
   view(width: number, height: number): string[] {
     if (this.mode.kind === "help") return help;
     if (this.down || !this.snapshot) return [" ◆ ponpoko", "", style.red(" ponpoko ✗  the service isn't running. Start it with `systemctl --user start ponpoko`."), "", " q quit"];
-    const all = rows(this.snapshot, width);
+    const all = rows(this.snapshot, width, { expanded: this.expanded });
     const selectable = all.filter(isSelectable);
     const chosen = selectable[this.selected];
     const footer = this.footer();
@@ -151,8 +169,8 @@ export class TabController {
   private footer(): string[] {
     const mode = this.mode;
     if (mode.kind === "snooze") return [style.amber(` ${snoozeLine()}`)];
-    if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.label}?  y yes   any other key no`)];
-    if (mode.kind === "text") return [style.amber(` ${mode.purpose === "note" ? "note" : "point this braid's directory at braid"}: ${mode.text}▏`)];
+    if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.name}?  y yes   any other key no`)];
+    if (mode.kind === "text") return [style.amber(` ${prompts[mode.purpose]}: ${mode.text}▏`)];
     return [this.message ? style.amber(` ${this.message}`) : style.dim(keysLine)];
   }
 
@@ -161,20 +179,29 @@ export class TabController {
     else if (key.name === "backspace") mode.text = mode.text.slice(0, -1);
     else if (key.name === "return") {
       this.mode = { kind: "list" };
-      const braid = this.current()?.braid;
-      const dir = this.pointDir();
+      const strand = this.current()?.strand;
       const text = mode.text.trim();
-      if (text === "") return undefined;
-      if (mode.purpose === "note" && braid) await this.run(() => this.actions.note(braid.id, text), "Note added");
-      else if (mode.purpose === "point" && dir) await this.run(() => this.actions.point(dir, text), `${dir} now belongs to ${text}`);
+      if (text === "" && mode.purpose !== "move") return undefined;
+      if (mode.purpose === "add") await this.run(() => this.actions.add(strand?.id, text), `Added ${text}`);
+      else if (!strand) return undefined;
+      else if (mode.purpose === "note") await this.run(() => this.actions.note(strand.id, text), "Note added");
+      else if (mode.purpose === "move") await this.run(() => this.actions.reparent(strand.id, text), text === "" ? `${strand.name} is at the top` : `${strand.name} is under ${text}`);
+      else {
+        const dir = this.pointDir()!;
+        await this.run(() => this.actions.point(dir, text), `${dir} now works on ${text}`);
+      }
     } else if (key.text) mode.text += key.text;
     return undefined;
   }
 
   private pointDir(): string | undefined {
-    const row = this.current();
-    if (row?.braid) return row.braid.dir;
-    return typeof row?.strand?.place?.dir === "string" ? row.strand.place.dir : undefined;
+    const strand = this.current()?.strand;
+    if (!strand) return undefined;
+    for (const move of [...strand.open, ...[...strand.recent].reverse()]) {
+      const dir = (move.answers ?? move.by).place?.dir;
+      if (typeof dir === "string") return dir;
+    }
+    return strand.dir;
   }
 
   private async run(action: () => Promise<unknown>, done?: string): Promise<void> {
@@ -186,13 +213,13 @@ export class TabController {
     }
   }
 
-  private selectable(width: number): Row[] {
-    return this.snapshot ? rows(this.snapshot, width).filter(isSelectable) : [];
+  private selectable(): Row[] {
+    return this.snapshot ? rows(this.snapshot, 100, { expanded: this.expanded, heardCount: 0 }).filter(isSelectable) : [];
   }
 }
 
 function isSelectable(row: Row): boolean {
-  return row.strand !== undefined || (row.braid !== undefined && row.tone === "heading");
+  return row.strand !== undefined;
 }
 
 const tones: Record<Tone, (text: string) => string> = {

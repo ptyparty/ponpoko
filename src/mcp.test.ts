@@ -7,7 +7,7 @@ import { harness } from "./test-harness.ts";
 
 async function setup() {
   const { core, hear } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7", labels: { braid: "sc-7" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7", labels: { braid: "sc-7" } }], agents: [{ paneId: 2, tabId: 1, state: "working" }], jobs: [] });
   const send = async (request: Parameters<typeof handle>[1]) => {
     const response = await handle(core, request);
     if (!response.ok) throw new Error(response.error);
@@ -26,23 +26,27 @@ async function setup() {
 }
 
 describe("the ponpoko MCP", () => {
-  test("agents report waits and status on their braid, and ask what needs the user", async () => {
+  test("agents say what they're doing on which strand, split it, wait on others, and ask what needs the user", async () => {
     const { core, call } = await setup();
-    expect(await call("report", { strand: "PR #821 review", whose: "machine", who: "Copilot", reason: "waiting on Copilot review of PR #821" })).toBe("Recorded on report:sc-7:pr-#821-review.");
-    expect(await call("status", { text: "step 3 of 10: the command tab", page: "ponpoko/build-status.md" })).toBe("Status set on pane:s1:2.");
-    expect(core.model.strands.get("pane:s1:2")!.doing).toMatchObject({ text: "step 3 of 10: the command tab", page: "ponpoko/build-status.md" });
-    expect(await call("moves")).toContain("sc-7  Widget CSV import: agent pane 2, turn ended");
-    const braid = await call("braid");
-    expect(braid).toContain("PR #821 review: waiting on Copilot");
-    expect(braid).toContain("now: step 3 of 10");
-    expect(await call("changes", { since: "1970-01-01T00:00:00Z" })).toContain("agent: sc-7 PR #821 review waiting on Copilot");
-    expect(await call("report", { strand: "PR #821 review", whose: "done", reason: "review in" })).toContain("Recorded");
-    expect(core.model.strands.has("report:sc-7:pr-#821-review")).toBe(false);
+    await call("status", { text: "warming up" });
+    expect(await call("split", { strand: "sc-7 › review findings", names: ["1", "2"] })).toBe("Made sc-7 › review findings › 1; sc-7 › review findings › 2.");
+    expect(await call("status", { text: "fixing the report id", strand: "review findings › 1", page: "ponpoko/review-findings.md" })).toBe("Now on sc-7 › review findings › 1.");
+    expect(await call("wait", { who: "Copilot", kind: "machine", what: "reviewing PR #821", strand: "review findings › 2" })).toBe("Waiting on sc-7 › review findings › 2.");
+    expect(await call("moves")).toBe("Nothing is waiting on the user.");
+    const strand = await call("strand", { strand: "review findings" });
+    expect(strand).toContain("- 1: claude working, reported: fixing the report id");
+    expect(strand).toContain("- 2: waiting on Copilot, reported: reviewing PR #821");
+    expect(await call("strand")).toContain("sc-7 › review findings › 1");
+    expect(await call("changes", { since: "1970-01-01T00:00:00Z" })).toContain("agent: sc-7 › review findings › 2 → Copilot: reviewing PR #821");
+    expect(await call("wait", { who: "Copilot", kind: "machine", what: "review in", over: true, strand: "review findings › 2" })).toContain("Wait over");
+    expect(await call("moves")).toMatch(/^1 strand waiting on the user, oldest first:\n- sc-7 › review findings › 2: no one on it, now$/);
+    expect(await call("done", { strand: "review findings › 2" })).toBe("sc-7 › review findings › 2 is done.");
+    expect(core.snapshot().strands.map((entry) => entry.name)).toEqual(["sc-7", "review findings", "1"]);
   });
 
   test("errors come back as tool errors", async () => {
     const { call } = await setup();
-    expect(await call("status", { text: "x", strand: "nothing" })).toContain("no strand nothing");
+    expect(await call("done", { strand: "nothing" })).toContain("no strand nothing");
   });
 
   test("reads spans and times", () => {
