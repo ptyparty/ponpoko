@@ -45,7 +45,7 @@ describe("the komux bridge", () => {
     expect(core.model.strands.has("pane:s1:2")).toBe(false);
   });
 
-  test("an agent going idle after you read its turn leaves the move with you until you hand it back", async () => {
+  test("an agent going idle after you read its turn keeps its reason, and an idle agent is yours to prompt", async () => {
     const { core, hear, tick } = harness();
     await hear(snapshot);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
@@ -56,7 +56,7 @@ describe("the komux bridge", () => {
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
     expect(core.model.strands.get("pane:s1:2")!.whose).toBe("agent");
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "idle", sessionId: "c1" } });
-    expect(core.model.strands.get("pane:s1:2")!.whose).toBe("nobody");
+    expect(core.model.strands.get("pane:s1:2")).toMatchObject({ whose: "you", why: "ready for a prompt" });
   });
 
   test("a failed job stays yours through a dismissed toast, until it passes", async () => {

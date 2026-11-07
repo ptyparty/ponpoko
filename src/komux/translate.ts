@@ -14,7 +14,7 @@ const agentMoves: Record<string, { whose: Whose; why: string }> = {
   waiting: { whose: "you", why: "waiting on you" },
   done: { whose: "you", why: "turn ended" },
   failed: { whose: "you", why: "turn failed" },
-  idle: { whose: "nobody", why: "idle" },
+  idle: { whose: "you", why: "ready for a prompt" },
 };
 
 const asking = { whose: "you" as const, why: "asking you" };
