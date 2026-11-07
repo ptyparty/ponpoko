@@ -124,9 +124,9 @@ function reply(text: string, isError = false): CallToolResult {
 
 export function movesText(view: Snapshot): string {
   if (view.moves.length === 0) return "Nothing is waiting on the user.";
-  const name = (id: string) => {
+  const name = (id: string | undefined) => {
     const braid = view.braids.find((candidate) => candidate.id === id);
-    return braid ? braidTitle(braid) : id;
+    return braid ? braidTitle(braid) : (id ?? "loose");
   };
   return [
     `${view.moves.length} move${view.moves.length === 1 ? "" : "s"} waiting on the user, oldest first:`,

@@ -5,7 +5,7 @@ import { harness, recordingActions } from "./test-harness.ts";
 
 async function setup(unseen = false) {
   const { core, hear, tick, now } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1" }, { id: 2, number: 2, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { braid: "sc-1" } }, { id: 2, number: 2, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
   await hear({ type: "agent.state", agent: { paneId: 3, tabId: 1, state: "done" } });
   tick(60_000);
   await hear({ type: "agent.state", agent: { paneId: 4, tabId: 2, state: "waiting" } });
@@ -23,7 +23,7 @@ describe("the deck", () => {
     const { dealer, calls } = await setup();
     const card = plain(dealer.view());
     expect(card).toContain("your move · 1 of 2");
-    expect(card).toContain("● SC-1");
+    expect(card).toContain("● sc-1");
     expect(card).toContain("agent pane 3 · turn ended · 2m");
     expect(card).toContain("→ tab 1 widgets");
     expect(await dealer.key({ name: "return" })).toBe("close");
@@ -48,7 +48,7 @@ describe("the deck", () => {
 
   test("an empty hand says so", () => {
     const dealer = new Dealer({} as Actions, false);
-    dealer.setSnapshot({ now: 0, counts: { yours: 0, agents: 0, snoozed: 0, waiting: 0 }, braids: [], moves: [], unseen: [], heard: [], labels: {} });
+    dealer.setSnapshot({ now: 0, counts: { yours: 0, agents: 0, snoozed: 0, waiting: 0 }, braids: [], loose: [], moves: [], unseen: [], heard: [], labels: {} });
     expect(plain(dealer.view())).toContain("✓ clear");
   });
 });

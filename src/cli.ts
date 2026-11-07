@@ -55,7 +55,7 @@ async function list(): Promise<number> {
       console.log(" Your moves, oldest first\n");
       for (const strand of snapshot.moves) {
         const braid = snapshot.braids.find((candidate) => candidate.id === strand.braid);
-        console.log(`   ● ${age(snapshot.now - strand.since).padStart(6)}  ${braid ? braidTitle(braid) : strand.braid} · ${strand.label} · ${holder(strand, snapshot.now)} · ${cause(strand)}`);
+        console.log(`   ● ${age(snapshot.now - strand.since).padStart(6)}  ${braid ? braidTitle(braid) : (strand.braid ?? "loose")} · ${strand.label} · ${holder(strand, snapshot.now)} · ${cause(strand)}`);
       }
       console.log("");
     }

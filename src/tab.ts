@@ -17,7 +17,7 @@ const help = [
   "   z         snooze the strand, then pick how long",
   "   n         add a note to the braid",
   "   x         forget a strand ponpoko has wrong, such as a pane long gone",
-  "   p         point the braid's directory at another braid, such as sc-1234",
+  "   p         point the braid's directory, or a loose strand's, at a braid, such as sc-1234",
   "   c         mark the braid caught up, so its moves are no longer new (*)",
   "   q         quit",
   "",
@@ -119,8 +119,7 @@ export class TabController {
         if (this.current()?.braid) this.mode = { kind: "text", purpose: "note", text: "" };
         return undefined;
       case "p": {
-        const braid = this.current()?.braid;
-        if (!braid?.dir) this.message = "ponpoko doesn't know this braid's directory";
+        if (!this.pointDir()) this.message = "ponpoko doesn't know this braid's directory";
         else this.mode = { kind: "text", purpose: "point", text: "" };
         return undefined;
       }
@@ -163,12 +162,19 @@ export class TabController {
     else if (key.name === "return") {
       this.mode = { kind: "list" };
       const braid = this.current()?.braid;
+      const dir = this.pointDir();
       const text = mode.text.trim();
-      if (!braid || text === "") return undefined;
-      if (mode.purpose === "note") await this.run(() => this.actions.note(braid.id, text), "Note added");
-      else await this.run(() => this.actions.point(braid.dir!, text.toLowerCase()), `${braid.dir} now belongs to ${text}`);
+      if (text === "") return undefined;
+      if (mode.purpose === "note" && braid) await this.run(() => this.actions.note(braid.id, text), "Note added");
+      else if (mode.purpose === "point" && dir) await this.run(() => this.actions.point(dir, text), `${dir} now belongs to ${text}`);
     } else if (key.text) mode.text += key.text;
     return undefined;
+  }
+
+  private pointDir(): string | undefined {
+    const row = this.current();
+    if (row?.braid) return row.braid.dir;
+    return typeof row?.strand?.place?.dir === "string" ? row.strand.place.dir : undefined;
   }
 
   private async run(action: () => Promise<unknown>, done?: string): Promise<void> {

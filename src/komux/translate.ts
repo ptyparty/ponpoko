@@ -1,10 +1,10 @@
-import { braidForDir } from "../braids.ts";
+import { tabBraid } from "../braids.ts";
 import type { Knowledge, Space } from "../core.ts";
 import type { Fact, Whose } from "../events.ts";
 import type { Strand } from "../model.ts";
 import type { KomuxAgent, KomuxJob, KomuxLine, KomuxTab } from "./stream.ts";
 
-export type KomuxPlace = { adapter: "komux"; handle: string; session: string; server: string; tabId: number; paneId: number; dir: string; sessionId?: string; state?: string };
+export type KomuxPlace = { adapter: "komux"; handle: string; session: string; server: string; tabId: number; paneId: number; dir: string; sessionId?: string; state?: string; asking?: boolean };
 
 type Known = { braids: Set<string>; pointed: Map<string, string>; strands: Map<string, Strand> };
 type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob> };
@@ -16,6 +16,8 @@ const agentMoves: Record<string, { whose: Whose; why: string }> = {
   failed: { whose: "you", why: "turn failed" },
   idle: { whose: "nobody", why: "idle" },
 };
+
+const asking = { whose: "you" as const, why: "asking you" };
 
 export function komuxHandle(server: string, paneId: number): string {
   return `komux:${server}:${paneId}`;
@@ -107,7 +109,7 @@ export class Translator {
     }
   }
 
-  presence(): { scope: string; strands: string[]; spaces: Space[] } | undefined {
+  presence(pointed: Map<string, string>): { scope: string; strands: string[]; spaces: Space[] } | undefined {
     const live = this.live;
     if (!live) return undefined;
     const agents = [...live.agents.values()].map((entry) => ({ id: agentStrandId(live.server, entry.paneId), tabId: entry.tabId }));
@@ -118,11 +120,16 @@ export class Translator {
       strands: strands.map((strand) => strand.id),
       spaces: [...live.tabs.values()].map((entry) => ({
         dir: entry.dir,
+        ...optionalBraid(this.braidOf(entry, pointed)),
         label: `tab ${entry.number ?? "?"} ${entry.name}`,
         short: entry.number === undefined ? entry.name : `tab ${entry.number}`,
         strands: strands.filter((strand) => strand.tabId === entry.id).map((strand) => strand.id),
       })),
     };
+  }
+
+  server(): string | undefined {
+    return this.live?.server;
   }
 
   tabs(): KomuxTab[] {
@@ -135,10 +142,14 @@ export class Translator {
     return { type: "snapshot", session: live.session, server: live.server, tabs: [...live.tabs.values()], agents: [...live.agents.values()], jobs: [...live.jobs.values()], toasts: [] };
   }
 
+  private braidOf(entry: KomuxTab, pointed: Map<string, string>): string | undefined {
+    return tabBraid(entry, pointed)?.id;
+  }
+
   private makeBraid(entry: KomuxTab, model: Known, out: Fact[]): void {
-    const braid = braidForDir(entry.dir, model.pointed);
-    if (model.braids.has(braid.id) || out.some((fact) => fact.type === "braid.made" && fact.braid === braid.id)) return;
-    out.push({ type: "braid.made", braid: braid.id, name: braid.name, kind: braid.kind, dir: entry.dir });
+    const braid = tabBraid(entry, model.pointed);
+    if (!braid || model.braids.has(braid.id) || out.some((fact) => fact.type === "braid.made" && fact.braid === braid.id)) return;
+    out.push({ type: "braid.made", braid: braid.id, name: braid.name, dir: entry.dir });
   }
 
   private agentState(live: Live, entry: KomuxAgent, model: Known, out: Fact[]): void {
@@ -146,11 +157,12 @@ export class Translator {
     live.agents.set(entry.paneId, entry);
     const tabEntry = live.tabs.get(entry.tabId);
     if (!tabEntry) return;
-    const braid = braidForDir(tabEntry.dir, model.pointed).id;
     const id = agentStrandId(live.server, entry.paneId);
     const strand = model.strands.get(id);
+    const braid = this.braidOf(tabEntry, model.pointed) ?? reportedBraid(strand);
     const place = strand ? komuxPlace(strand) : undefined;
-    const stateChanged = (before?.state ?? place?.state) !== entry.state;
+    const isAsking = entry.asking === true;
+    const stateChanged = (before?.state ?? place?.state) !== entry.state || (before?.asking ?? place?.asking ?? false) !== isAsking;
     const placeChanged = !strand || strand.braid !== braid || place?.tabId !== entry.tabId || place?.sessionId !== entry.sessionId;
     if (!stateChanged && !placeChanged) return;
     if (!strand && entry.sessionId) {
@@ -158,9 +170,22 @@ export class Translator {
         if (old.kind === "agent" && komuxPlace(old)?.sessionId === entry.sessionId && old.id !== id) out.push({ type: "strand.ended", strand: old.id, why: "moved to a new pane" });
       }
     }
-    const move = stateChanged || !strand ? (agentMoves[entry.state] ?? { whose: "nobody" as const, why: entry.state }) : { whose: strand.whose, why: strand.why, ...(strand.who ? { who: strand.who } : {}) };
-    const newPlace: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.paneId), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.paneId, dir: tabEntry.dir, state: entry.state, ...(entry.sessionId ? { sessionId: entry.sessionId } : {}) };
-    out.push({ type: "strand.move", braid, strand: id, label: `agent ${entry.name ?? `pane ${entry.paneId}`}`, kind: "agent", ...move, place: newPlace });
+    const fresh = isAsking ? asking : (agentMoves[entry.state] ?? { whose: "nobody" as const, why: entry.state });
+    const keeps = strand && (!stateChanged || (entry.state === "idle" && !isAsking && strand.whose === "you" && strand.why !== asking.why));
+    const move = keeps ? { whose: strand.whose, why: strand.why, ...(strand.who ? { who: strand.who } : {}) } : fresh;
+    const newPlace: KomuxPlace = {
+      adapter: "komux",
+      handle: komuxHandle(live.server, entry.paneId),
+      session: live.session,
+      server: live.server,
+      tabId: entry.tabId,
+      paneId: entry.paneId,
+      dir: tabEntry.dir,
+      state: entry.state,
+      ...(isAsking ? { asking: true } : {}),
+      ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+    };
+    out.push({ type: "strand.move", ...optionalBraid(braid), strand: id, label: `agent ${entry.name ?? `pane ${entry.paneId}`}`, kind: "agent", ...move, place: newPlace });
   }
 
   private jobFailed(live: Live, entry: KomuxJob, model: Known, out: Fact[]): void {
@@ -168,11 +193,13 @@ export class Translator {
     const tabEntry = live.tabs.get(entry.tabId);
     if (!tabEntry) return;
     const id = jobStrandId(live.server, entry.id);
-    if (model.strands.get(id)?.whose === "you") return;
+    const braid = this.braidOf(tabEntry, model.pointed);
+    const strand = model.strands.get(id);
+    if (strand?.whose === "you" && strand.braid === braid) return;
     const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tabEntry.dir };
     out.push({
       type: "strand.move",
-      braid: braidForDir(tabEntry.dir, model.pointed).id,
+      ...optionalBraid(braid),
       strand: id,
       label: `job ${entry.name}`,
       kind: "job",
@@ -181,6 +208,14 @@ export class Translator {
       place,
     });
   }
+}
+
+function optionalBraid(braid: string | undefined): { braid?: string } {
+  return braid ? { braid } : {};
+}
+
+function reportedBraid(strand: Strand | undefined): string | undefined {
+  return strand?.braid?.startsWith("side:") ? undefined : strand?.braid;
 }
 
 export function komuxPlace(strand: { place?: unknown }): KomuxPlace | undefined {

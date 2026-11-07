@@ -5,7 +5,7 @@ import { harness, recordingActions } from "./test-harness.ts";
 
 async function setup() {
   const { core, hear } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1" }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { braid: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
   const { actions, calls } = recordingActions();
   const tab = new TabController(actions, () => 1_000_000);
   tab.setSnapshot(core.snapshot());
@@ -18,7 +18,7 @@ describe("the command tab", () => {
   test("lists braids and strands, and goes to the selected strand", async () => {
     const { tab, calls } = await setup();
     const screen = plain(tab.view(100, 20)).join("\n");
-    expect(screen).toContain("▾ SC-1");
+    expect(screen).toContain("▾ sc-1");
     expect(screen).toContain("●*agent pane 2");
     expect(screen).toContain("heard");
     await tab.key({ name: "j" });
@@ -47,7 +47,7 @@ describe("the command tab", () => {
       ["snooze", "pane:s1:2", 1_000_000 + 60 * 60_000],
       ["forget", "pane:s1:2"],
       ["note", "sc-1", "hi"],
-      ["point", "/w/stories/sc-1", "sc-9"],
+      ["point", "/w/stories/sc-1", "SC-9"],
     ]);
   });
 

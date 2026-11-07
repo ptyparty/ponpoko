@@ -3,7 +3,7 @@ import type { BraidKind, Place, Recorded, StrandKind, Whose } from "./events.ts"
 export type Braid = { id: string; name: string; kind?: BraidKind; title?: string; dir?: string; notes: { at: number; text: string }[]; seenAt: number; made: number };
 export type Strand = {
   id: string;
-  braid: string;
+  braid?: string;
   label: string;
   kind: StrandKind;
   whose: Whose;
@@ -18,7 +18,7 @@ export type Strand = {
   snoozedUntil?: number;
   doing?: { text: string; page?: string; at: number };
 };
-export type Model = { braids: Map<string, Braid>; strands: Map<string, Strand>; labels: Map<string, { braid: string; label: string }>; pointed: Map<string, string>; heard: Recorded[]; lastAt: number };
+export type Model = { braids: Map<string, Braid>; strands: Map<string, Strand>; labels: Map<string, { braid?: string; label: string }>; pointed: Map<string, string>; heard: Recorded[]; lastAt: number };
 
 const heardKept = 200;
 
@@ -38,7 +38,7 @@ export function apply(model: Model, event: Recorded): void {
   model.lastAt = Math.max(model.lastAt, event.at);
   switch (event.type) {
     case "braid.made":
-      if (!model.braids.has(event.braid)) model.braids.set(event.braid, { id: event.braid, name: event.name, kind: event.kind, dir: event.dir, notes: [], seenAt: 0, made: event.at });
+      if (!model.braids.has(event.braid)) model.braids.set(event.braid, { id: event.braid, name: event.name.toLowerCase(), kind: event.kind, dir: event.dir, notes: [], seenAt: 0, made: event.at });
       return;
     case "braid.titled": {
       const braid = ensureBraid(model, event.braid, event.at);
@@ -57,7 +57,7 @@ export function apply(model: Model, event: Recorded): void {
       ensureBraid(model, event.braid, event.at);
       return;
     case "strand.move": {
-      ensureBraid(model, event.braid, event.at);
+      if (event.braid) ensureBraid(model, event.braid, event.at);
       model.labels.set(event.strand, { braid: event.braid, label: event.label });
       const old = model.strands.get(event.strand);
       const changed = !old || old.whose !== event.whose;
@@ -110,7 +110,7 @@ export function apply(model: Model, event: Recorded): void {
 function ensureBraid(model: Model, id: string, at: number): Braid {
   let braid = model.braids.get(id);
   if (!braid) {
-    braid = { id, name: id.toUpperCase(), notes: [], seenAt: 0, made: at };
+    braid = { id, name: id.toLowerCase(), notes: [], seenAt: 0, made: at };
     model.braids.set(id, braid);
   }
   return braid;
@@ -125,7 +125,7 @@ export function yourMoves(model: Model, now: number): Strand[] {
 }
 
 export function unseenMoves(model: Model, now: number): Strand[] {
-  return yourMoves(model, now).filter((strand) => strand.since > (model.braids.get(strand.braid)?.seenAt ?? 0));
+  return yourMoves(model, now).filter((strand) => strand.since > ((strand.braid && model.braids.get(strand.braid)?.seenAt) || 0));
 }
 
 export type Counts = { yours: number; agents: number; snoozed: number; waiting: number; oldest?: number };

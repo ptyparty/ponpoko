@@ -7,7 +7,7 @@ import { harness } from "./test-harness.ts";
 
 async function setup() {
   const { core, hear } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7" }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7", labels: { braid: "sc-7" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
   const send = async (request: Parameters<typeof handle>[1]) => {
     const response = await handle(core, request);
     if (!response.ok) throw new Error(response.error);
@@ -31,11 +31,11 @@ describe("the ponpoko MCP", () => {
     expect(await call("report", { strand: "PR #821 review", whose: "machine", who: "Copilot", reason: "waiting on Copilot review of PR #821" })).toBe("Recorded on report:sc-7:pr-#821-review.");
     expect(await call("status", { text: "step 3 of 10: the command tab", page: "ponpoko/build-status.md" })).toBe("Status set on pane:s1:2.");
     expect(core.model.strands.get("pane:s1:2")!.doing).toMatchObject({ text: "step 3 of 10: the command tab", page: "ponpoko/build-status.md" });
-    expect(await call("moves")).toContain("SC-7  Widget CSV import: agent pane 2, turn ended");
+    expect(await call("moves")).toContain("sc-7  Widget CSV import: agent pane 2, turn ended");
     const braid = await call("braid");
     expect(braid).toContain("PR #821 review: waiting on Copilot");
     expect(braid).toContain("now: step 3 of 10");
-    expect(await call("changes", { since: "1970-01-01T00:00:00Z" })).toContain("agent: SC-7 PR #821 review waiting on Copilot");
+    expect(await call("changes", { since: "1970-01-01T00:00:00Z" })).toContain("agent: sc-7 PR #821 review waiting on Copilot");
     expect(await call("report", { strand: "PR #821 review", whose: "done", reason: "review in" })).toContain("Recorded");
     expect(core.model.strands.has("report:sc-7:pr-#821-review")).toBe(false);
   });

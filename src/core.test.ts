@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { braidForDir } from "./braids.ts";
+import { tabBraid } from "./braids.ts";
 import { Ponpoko } from "./core.ts";
 import { Store } from "./store.ts";
 
@@ -17,11 +17,13 @@ function setup() {
   return { core, store, tick: (ms: number) => (now += ms) };
 }
 
-describe("braidForDir", () => {
-  test("maps story directories to their story, and anything else to side work", () => {
-    expect(braidForDir(dir, new Map())).toEqual({ id: "sc-1234", name: "SC-1234" });
-    expect(braidForDir("/w/ptyparty", new Map())).toEqual({ id: "side:/w/ptyparty", name: "ptyparty", kind: "side" });
-    expect(braidForDir("/w/ptyparty/komux", new Map([["/w/ptyparty", "sc-1"]]))).toEqual({ id: "sc-1", name: "sc-1" });
+describe("tabBraid", () => {
+  test("names a tab's braid from its braid label or a pointed directory, and nothing else", () => {
+    expect(tabBraid({ dir, labels: { braid: "SC-1234" } }, new Map())).toEqual({ id: "sc-1234", name: "sc-1234" });
+    expect(tabBraid({ dir }, new Map())).toBeUndefined();
+    expect(tabBraid({ dir: "/w/ptyparty" }, new Map())).toBeUndefined();
+    expect(tabBraid({ dir: "/w/ptyparty/komux" }, new Map([["/w/ptyparty", "sc-1"]]))).toEqual({ id: "sc-1", name: "sc-1" });
+    expect(tabBraid({ dir: "/w/ptyparty/komux", labels: { braid: "pr-{pr}" } }, new Map([["/w/ptyparty", "ptyparty"]]))).toEqual({ id: "ptyparty", name: "ptyparty" });
   });
 });
 
@@ -29,7 +31,7 @@ describe("the ponpoko service", () => {
   test("knows nothing is live until something says it's present, and forgets when it leaves", () => {
     const { core } = setup();
     expect(core.snapshot().moves.map((strand) => strand.live)).toEqual([false]);
-    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [{ dir, label: "tab 1 widgets", short: "tab 1", strands: ["a:1"] }] });
+    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [{ dir, braid: "sc-1234", label: "tab 1 widgets", short: "tab 1", strands: ["a:1"] }] });
     expect(core.snapshot().moves.map((strand) => [strand.live, strand.space])).toEqual([[true, "tab 1 widgets"]]);
     expect(core.snapshot().braids[0]!.spaces).toEqual([{ label: "tab 1 widgets", short: "tab 1" }]);
     core.absent("tool", "main");

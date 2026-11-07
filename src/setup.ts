@@ -50,16 +50,30 @@ WantedBy=default.target
 export function pluginText(places: Places): string {
   return `const command = ${JSON.stringify([places.bun, places.cli])};
 
-export type PonpokoOptions = { deal?: string; catchUp?: string };
+export type PonpokoOptions = { deal?: string; catchUp?: string; leader?: string };
 
 export default function ponpoko(options: PonpokoOptions = {}) {
+  const deal = { popup: [...command, "deal"], name: "your move", width: 70, height: 40 };
+  const catchUp = { popup: [...command, "deal", "--unseen"], name: "catch up", width: 70, height: 40 };
   return {
     name: "ponpoko",
     run: [[...command, "komux"]],
     tray: [{ name: "ponpoko", stream: [...command, "tray", "--stream"], open: command }],
     keys: [
-      { key: options.deal ?? "alt+m", popup: [...command, "deal"], name: "your move", width: 70, height: 40 },
-      { key: options.catchUp ?? "alt+shift+m", popup: [...command, "deal", "--unseen"], name: "catch up", width: 70, height: 40 },
+      { key: options.deal ?? "alt+m", ...deal },
+      { key: options.catchUp ?? "alt+shift+m", ...catchUp },
+    ],
+    modes: [
+      {
+        key: options.leader ?? "m",
+        name: "ponpoko",
+        about: "whose move",
+        keys: [
+          { key: "m", ...deal },
+          { key: "shift+m", ...catchUp },
+          { key: "o", popup: command, name: "overview" },
+        ],
+      },
     ],
   };
 }
@@ -142,7 +156,10 @@ export function komuxConfigHint(places: Places): string {
   plugins: [ponpoko()],        // inside the exported config; ponpoko({ deal: "alt+m" }) picks the keys
 
 Alt m deals your oldest move, Alt shift m deals what changed since you last caught up,
-and the tray shows your count. Alt n is komux's focus key, so ponpoko doesn't take it.`;
+and the tray shows your count. Ctrl Space m opens ponpoko's mode: m and M deal the same
+way, and o opens the overview the tray opens.
+Give a layout labels: { braid: "sc-{story}" } so its tabs land in a braid; agents in
+other tabs are listed as loose until you point their directory at one. Alt n is komux's focus key, so ponpoko doesn't take it.`;
 }
 
 const marks = { installed: "✓", missing: "✗", different: "!" };

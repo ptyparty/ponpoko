@@ -81,7 +81,8 @@ export function rows(snapshot: Snapshot, width: number, heardCount = 8): Row[] {
   const counts = countsLine(snapshot);
   out.push({ text: `${title}${" ".repeat(Math.max(2, width - title.length - counts.length - 1))}${counts}`, tone: "heading" });
   out.push({ text: "" });
-  if (snapshot.braids.length === 0) out.push({ text: "  Nothing yet. ponpoko fills in as komux reports tabs, agents and jobs.", tone: "dim" });
+  const loose = snapshot.loose ?? [];
+  if (snapshot.braids.length === 0 && loose.length === 0) out.push({ text: "  Nothing yet. ponpoko fills in as komux reports tabs, agents and jobs.", tone: "dim" });
   for (const braid of snapshot.braids) {
     const head = ` ▾ ${braidTitle(braid)}`;
     const where = tabsText(braid);
@@ -91,6 +92,10 @@ export function rows(snapshot: Snapshot, width: number, heardCount = 8): Row[] {
       if (strand.doing) out.push({ text: `         ↳ ${strand.doing.text}${strand.doing.page ? `  📓 ${strand.doing.page}` : ""}  ${clock(strand.doing.at)}`, braid, tone: "dim" });
     }
     for (const note of braid.notes.slice(-2)) out.push({ text: `     ✎ ${note.text}  ${clock(note.at)}`, braid, tone: "dim" });
+  }
+  if (loose.length > 0) {
+    out.push({ text: " ▾ loose  not in a braid; p points its directory at one", tone: "heading" });
+    for (const strand of loose) out.push({ text: strandLine(strand, now, unseen.has(strand.id)), strand, tone: tone(strand, now) });
   }
   if (heardCount > 0 && snapshot.heard.length > 0) {
     out.push({ text: "" });
@@ -109,7 +114,7 @@ function labelsOf(snapshot: Snapshot): { braids: Map<string, string>; strands: M
 }
 
 export function describe(event: Recorded, labels: { braids: Map<string, string>; strands: Map<string, string> }): string {
-  const braid = (id: string) => labels.braids.get(id) ?? id;
+  const braid = (id: string | undefined) => (id === undefined ? "loose" : (labels.braids.get(id) ?? id));
   const strand = (id: string) => labels.strands.get(id) ?? id;
   switch (event.type) {
     case "braid.made":

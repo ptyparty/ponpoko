@@ -1,13 +1,13 @@
-import { braidForDir, storyNumber } from "./braids.ts";
+import { braidRef, pointedBraid, storyNumber } from "./braids.ts";
 import type { Fact, Recorded, Source, Whose } from "./events.ts";
 import { apply, counts, recentHeard, replay, unseenMoves, yourMoves, type Braid, type Counts, type Model, type Strand } from "./model.ts";
 import type { Store } from "./store.ts";
 
-export type Space = { dir: string; label: string; short: string; strands: string[] };
+export type Space = { dir: string; braid?: string; label: string; short: string; strands: string[] };
 export type Presence = { adapter: string; scope: string; strands: string[]; spaces: Space[] };
 export type StrandView = Strand & { live: boolean; space?: string };
 export type BraidView = Braid & { strands: StrandView[]; spaces: { label: string; short: string }[] };
-export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
+export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; loose: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
 export type Knowledge = { braids: string[]; pointed: [string, string][]; strands: Strand[] };
 
 export type Report = { braid?: string; dir?: string; self?: string; strand?: string; whose: Whose | "done"; who?: string; reason: string };
@@ -79,7 +79,7 @@ export class Ponpoko {
     const braids = [...this.model.braids.values()].map((braid): BraidView => ({
       ...braid,
       strands: [...this.model.strands.values()].filter((strand) => strand.braid === braid.id).map(view).sort((a, b) => a.since - b.since),
-      spaces: spaces.filter((space) => braidForDir(space.dir, this.model.pointed).id === braid.id).map(({ label, short }) => ({ label, short })),
+      spaces: spaces.filter((space) => space.braid === braid.id).map(({ label, short }) => ({ label, short })),
     }));
     const shown = braids.filter((braid) => braid.strands.length > 0 || braid.spaces.length > 0 || braid.notes.length > 0);
     shown.sort((a, b) => firstMove(a, now) - firstMove(b, now) || a.name.localeCompare(b.name));
@@ -88,6 +88,7 @@ export class Ponpoko {
       now,
       counts: counts(this.model, now),
       braids: shown,
+      loose: [...this.model.strands.values()].filter((strand) => strand.braid === undefined).map(view).sort((a, b) => a.since - b.since),
       moves: yourMoves(this.model, now).map(view),
       unseen: unseenMoves(this.model, now).map((strand) => strand.id),
       heard,
@@ -95,7 +96,7 @@ export class Ponpoko {
         heard.flatMap((event) => {
           if (!("strand" in event)) return [];
           const known = this.model.labels.get(event.strand);
-          return known ? [[event.strand, `${this.model.braids.get(known.braid)?.name ?? known.braid} ${known.label}`]] : [];
+          return known ? [[event.strand, `${(known.braid && this.model.braids.get(known.braid)?.name) || known.braid || "loose"} ${known.label}`]] : [];
         }),
       ),
     };
@@ -105,20 +106,17 @@ export class Ponpoko {
     const own = report.strand === undefined || report.strand === "self";
     const mine = own ? this.ownStrand(report.self) : undefined;
     if (own && !mine) throw new Error("name the strand this report is about, such as \"PR #821 review\"; ponpoko doesn't know this agent's own strand");
-    const braid = mine?.braid ?? this.reportBraid(report);
-    const id = mine?.id ?? `report:${braid}:${slug(report.strand!)}`;
+    const braid = report.braid ? braidRef(report.braid).id : mine ? mine.braid : this.reportBraid(report);
+    const id = mine?.id ?? `report:${braid ?? "loose"}:${slug(report.strand!)}`;
     if (report.whose === "done") {
       if (this.model.strands.has(id)) this.record(source, [{ type: "strand.ended", strand: id, why: report.reason }]);
       return id;
     }
     const facts: Fact[] = [];
-    if (!this.model.braids.has(braid) && report.dir) {
-      const ref = braidForDir(report.dir, this.model.pointed);
-      facts.push({ type: "braid.made", braid, name: ref.name, kind: ref.kind, dir: report.dir });
-    }
+    if (braid && !this.model.braids.has(braid)) facts.push({ type: "braid.made", braid, name: braidRef(braid).name, ...(report.dir ? { dir: report.dir } : {}) });
     facts.push({
       type: "strand.move",
-      braid,
+      ...(braid ? { braid } : {}),
       strand: id,
       label: mine?.label ?? report.strand!,
       kind: mine ? mine.kind : "report",
@@ -134,7 +132,7 @@ export class Ponpoko {
     const own = status.strand === undefined || status.strand === "self";
     const mine = own ? this.ownStrand(status.self) : undefined;
     if (own && !mine) throw new Error("ponpoko doesn't know this agent's own strand; name the strand instead");
-    const id = mine?.id ?? `report:${this.reportBraid(status)}:${slug(status.strand!)}`;
+    const id = mine?.id ?? `report:${this.reportBraid(status) ?? "loose"}:${slug(status.strand!)}`;
     if (!this.model.strands.has(id)) throw new Error(`no strand ${status.strand}; report it first`);
     this.record("agent", [{ type: "strand.status", strand: id, text: status.text, ...(status.page ? { page: status.page } : {}) }]);
     return id;
@@ -169,10 +167,16 @@ export class Ponpoko {
     this.record("you", [{ type: "braid.seen", braid }]);
   }
 
-  point(dir: string, braid: string): void {
+  point(dir: string, wanted: string): void {
+    const braid = braidRef(wanted).id;
     const facts: Fact[] = [];
-    if (!this.model.braids.has(braid)) facts.push({ type: "braid.made", braid, name: storyNumber(braid) ? braid.toUpperCase() : braid });
+    if (!this.model.braids.has(braid)) facts.push({ type: "braid.made", braid, name: braidRef(braid).name });
     facts.push({ type: "dir.pointed", dir, braid });
+    for (const strand of this.model.strands.values()) {
+      const at = strand.place?.dir;
+      if (strand.braid !== undefined || typeof at !== "string" || (at !== dir && !at.startsWith(`${dir}/`))) continue;
+      facts.push({ type: "strand.move", braid, strand: strand.id, label: strand.label, kind: strand.kind, whose: strand.whose, ...(strand.who ? { who: strand.who } : {}), why: strand.why });
+    }
     this.record("you", facts);
   }
 
@@ -191,10 +195,12 @@ export class Ponpoko {
     return [...this.model.strands.values()].find((strand) => strand.kind === "agent" && strand.place?.handle === self && live.has(strand.id));
   }
 
-  private reportBraid(report: { braid?: string; dir?: string }): string {
-    if (report.braid) return report.braid.toLowerCase().startsWith("sc-") ? report.braid.toLowerCase() : report.braid;
-    if (report.dir) return braidForDir(report.dir, this.model.pointed).id;
-    throw new Error("say which braid this is about");
+  private reportBraid(report: { braid?: string; dir?: string; self?: string }): string | undefined {
+    if (report.braid) return braidRef(report.braid).id;
+    if (this.ownStrand(report.self)?.braid) return this.ownStrand(report.self)!.braid;
+    if (!report.dir) return undefined;
+    const braidDirs = new Map([...this.model.braids.values()].flatMap((braid) => (braid.dir && braid.kind !== "side" ? [[braid.dir, braid.id] as const] : [])));
+    return pointedBraid(report.dir, this.model.pointed) ?? pointedBraid(report.dir, braidDirs);
   }
 
   private mustHave(id: string): Strand {

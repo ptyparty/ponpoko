@@ -17,7 +17,7 @@ export const fact = z.discriminatedUnion("type", [
   z.object({ type: z.literal("dir.pointed"), dir: z.string(), braid: z.string() }),
   z.object({
     type: z.literal("strand.move"),
-    braid: z.string(),
+    braid: z.string().optional(),
     strand: z.string(),
     label: z.string(),
     kind: z.enum(["agent", "job", "report"]),

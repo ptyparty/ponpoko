@@ -1,9 +1,9 @@
-import { braidForDir } from "../braids.ts";
+import { tabBraid } from "../braids.ts";
 import { ask, watch } from "../client.ts";
 import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
-import { known, Translator } from "./translate.ts";
+import { known, komuxPlace, Translator } from "./translate.ts";
 
 export type Service = {
   knowledge: () => Promise<Knowledge>;
@@ -58,9 +58,10 @@ export class Bridge {
 
   async publish(): Promise<void> {
     try {
-      const presence = this.translator.presence();
+      const knowledge = await this.knowledge();
+      const presence = this.translator.presence(new Map(knowledge.pointed));
       if (presence) await this.service.present({ adapter: "komux", ...presence });
-      await this.syncBadges(await this.knowledge());
+      await this.syncBadges(knowledge);
     } catch {
       this.behind = true;
     }
@@ -85,7 +86,7 @@ export class Bridge {
   }
 
   async leave(): Promise<void> {
-    const presence = this.translator.presence();
+    const presence = this.translator.presence(new Map(this.last.pointed));
     if (presence) await this.service.absent(presence.scope).catch(() => undefined);
   }
 
@@ -93,8 +94,8 @@ export class Bridge {
     const now = this.now();
     const pointed = new Map(knowledge.pointed);
     return this.translator.tabs().map((tab): Badge => {
-      const braid = braidForDir(tab.dir, pointed).id;
-      const strands = knowledge.strands.filter((strand) => strand.braid === braid);
+      const braid = tabBraid(tab, pointed)?.id;
+      const strands = knowledge.strands.filter((strand) => (braid !== undefined && strand.braid === braid) || (strand.braid === undefined && this.inTab(strand, tab.id)));
       const snoozed = (strand: (typeof strands)[number]) => (strand.snoozedUntil ?? 0) > now;
       const yours = strands.filter((strand) => strand.whose === "you" && !snoozed(strand)).length;
       if (yours > 0) return { tabId: tab.id, text: yours > 1 ? `●${yours}` : "●", color: "warning" };
@@ -102,6 +103,11 @@ export class Bridge {
       if (strands.some((strand) => strand.whose === "you" && snoozed(strand))) return { tabId: tab.id, text: "◷", color: "muted" };
       return { tabId: tab.id, text: null };
     });
+  }
+
+  private inTab(strand: Knowledge["strands"][number], tabId: number): boolean {
+    const place = komuxPlace(strand);
+    return place !== undefined && place.server === this.translator.server() && place.tabId === tabId;
   }
 
   private async syncBadges(knowledge: Knowledge): Promise<void> {

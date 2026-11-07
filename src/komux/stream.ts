@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-const tab = z.object({ id: z.number(), number: z.number().optional(), name: z.string(), dir: z.string() });
-const agent = z.object({ paneId: z.number(), tabId: z.number(), state: z.string(), name: z.string().optional(), sessionId: z.string().optional() });
+const tab = z.object({ id: z.number(), number: z.number().optional(), name: z.string(), dir: z.string(), labels: z.record(z.string(), z.string()).optional() });
+const agent = z.object({ paneId: z.number(), tabId: z.number(), state: z.string(), asking: z.boolean().optional(), name: z.string().optional(), sessionId: z.string().optional() });
 const job = z.object({ id: z.number(), tabId: z.number(), name: z.string(), state: z.string(), code: z.number().nullable().optional(), agent: z.boolean().optional() });
 const toast = z.object({ kind: z.string(), id: z.number(), tabId: z.number() });
 const envelope = { session: z.string(), server: z.string().default("unknown"), at: z.number().optional() };

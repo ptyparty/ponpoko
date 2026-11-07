@@ -91,7 +91,7 @@ export class Dealer {
     const lines = [
       style.dim(` ${hand} · 1 of ${this.hand.length}`),
       "",
-      style.amber(style.bold(` ${glyph(card, this.snapshot.now)} ${braid ? braidTitle(braid) : card.braid}`)),
+      style.amber(style.bold(` ${glyph(card, this.snapshot.now)} ${braid ? braidTitle(braid) : (card.braid ?? "loose")}`)),
       `   ${card.label} · ${card.why}${card.who ? ` (${card.who})` : ""} · ${age(this.snapshot.now - card.since)}`,
       style.dim(`   ${holder(card, this.snapshot.now)}, since ${clock(card.since)}${card.source === "agent" ? " · reported by the agent" : ""}`),
       `   ${where}`,
@@ -107,7 +107,7 @@ export class Dealer {
   private async finish(): Promise<"close"> {
     if (this.unseen && this.snapshot) {
       const unseen = new Set(this.snapshot.unseen);
-      const braids = new Set(this.snapshot.moves.filter((strand) => this.dealt.has(strand.id)).map((strand) => strand.braid));
+      const braids = new Set(this.snapshot.moves.filter((strand) => this.dealt.has(strand.id)).flatMap((strand) => (strand.braid ? [strand.braid] : [])));
       for (const braid of braids) {
         const left = this.snapshot.moves.some((strand) => strand.braid === braid && unseen.has(strand.id) && !this.dealt.has(strand.id));
         if (!left) await this.actions.seen(braid).catch(() => undefined);
