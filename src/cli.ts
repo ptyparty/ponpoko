@@ -7,6 +7,7 @@ const usage = `Usage:
   ponpoko                 The command tab: every braid, its strands, and what ponpoko heard
   ponpoko list            Your moves, then everything else, printed once
   ponpoko tray            One line for komux's tray
+  ponpoko deal [--unseen] Deal your oldest move as a card, for a komux popup
   ponpoko serve           Run the service (ponpoko.service runs this)
   ponpoko setup [--yes]   Install the service, komux plugin, skill and MCP
 `;
@@ -22,6 +23,8 @@ async function main(args: string[]): Promise<number> {
       return (await import("./tab.ts")).runTab();
     case "list":
       return list();
+    case "deal":
+      return (await import("./deal.ts")).runDeal(args.slice(1));
     case "setup":
       return (await import("./setup.ts")).setupCommand(args.slice(1));
     case "tray":
