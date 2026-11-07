@@ -180,6 +180,20 @@ describe("the deck", () => {
     expect(card).toContain("✎ No PR yet; 15 uncommitted changes in gadgets.");
   });
 
+  test("a card shows the tree of strands under it with how each stands", async () => {
+    const { core, now } = harness();
+    core.add(undefined, "sc-1 › a › b");
+    core.add(undefined, "sc-1 › c");
+    core.wait({ strand: "sc-1 › c", who: "Copilot", kind: "machine", what: "PR review" }, "you");
+    core.wait({ strand: "sc-1", who: "you", kind: "you", what: "look" }, "you");
+    const dealer = new Dealer(recordingActions().actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    while (dealer.card()?.name !== "sc-1") await dealer.key({ name: "j" });
+    const card = plain(dealer.view(100)).split("\n");
+    const tree = card.slice(card.findIndex((line) => line.includes("under it · 3")));
+    expect(tree.slice(1, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" | ● a", " | ● b | no one on it · now", " | ⊘ c | Copilot · PR review · now"]);
+  });
+
   test("an empty hand says so", () => {
     const dealer = new Dealer({} as Actions, false);
     dealer.setSnapshot({ now: 0, counts: { yours: 0, agents: 0, snoozed: 0, waiting: 0 }, strands: [], moves: [], unseen: [], heard: [], labels: {} });

@@ -35,7 +35,7 @@ Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs wor
 ## In komux
 
 - The tray shows how many moves are yours and how long the oldest has waited. Click it to open the command tab.
-- **Alt m** deals your moves as a short list: anything a Claude is asking you first, then the newest, with Claudes only ready for a prompt last. Beside them, on the right when the popup is wide enough, it lists the strands agents are working, those waiting on others, and those snoozed; Tab, `h`/`l` or the arrow keys move between the two sides, and Enter goes to any of them. The picked card shows the strand's whole path. `j`/`k` or `1`–`9` pick a card, Enter goes to it, `f` starts a fresh Claude on it, `s` or space sends it to the back, `d` marks it done, `z` snoozes it, `x` forgets it.
+- **Alt m** deals your moves as a short list: anything a Claude is asking you first, then the newest, with Claudes only ready for a prompt last. Beside them, on the right when the popup is wide enough, it lists the strands agents are working, those waiting on others, and those snoozed; Tab, `h`/`l` or the arrow keys move between the two sides, and Enter goes to any of them. The picked card shows the strand's whole path, and the tree of strands under it with how each stands. `j`/`k` or `1`–`9` pick a card, Enter goes to it, `f` starts a fresh Claude on it, `s` or space sends it to the back, `d` marks it done, `z` snoozes it, `x` forgets it.
 - **Alt shift m** deals what changed since you last caught up.
 - **Ctrl Space m** opens ponpoko's mode: `m` and `M` deal the same way, and `o` opens the command tab.
 

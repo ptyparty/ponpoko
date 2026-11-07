@@ -2,7 +2,7 @@ import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snooze
 import { state } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { goPlace, goTarget, pickupOffer, startsAt } from "./komux/go.ts";
-import { age, cause, clock, fit, holder, snoozedLabel, untilNeeded } from "./render.ts";
+import { age, cause, clock, fit, holder, snoozedLabel, strandGlyph, untilNeeded } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -156,6 +156,14 @@ export class Dealer {
     return undefined;
   }
 
+  private under(strand: StrandView): StrandView[] {
+    const strands = this.strands();
+    const at = strands.findIndex((candidate) => candidate.id === strand.id);
+    if (at < 0) return [];
+    const end = strands.findIndex((candidate, index) => index > at && candidate.depth <= strand.depth);
+    return strands.slice(at + 1, end < 0 ? undefined : end);
+  }
+
   private side(to: "mine" | "others"): void {
     const count = this.rows().length - this.hand.length;
     if (to === "others" && count === 0) return;
@@ -206,15 +214,17 @@ export class Dealer {
     for (const strand of this.hand) row(mine, strand, `${cause(strand)} · ${age(now - strand.own.since)}`, true);
     for (const section of this.others) {
       theirs.push({ line: style.dim(` ${section.title} · ${section.strands.length}`) });
-      for (const strand of section.strands) row(theirs, strand, section.title === "snoozed" ? `${snoozedLabel(strand, now)} · ${othersCause(strand)}` : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
+      for (const strand of section.strands) row(theirs, strand, section.title === "snoozed" ? [snoozedLabel(strand, now), othersCause(strand)].filter(Boolean).join(" · ") : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
     }
-    const room = Math.max(6, height - 20);
-    const list = this.wide
-      ? sideBySide(scrolled(mine, this.selected, room), scrolled(theirs, this.selected, room), column)
-      : scrolled([...mine, ...theirs], this.selected, room);
-    const lines = [
-      ...list,
-      ...(this.wide ? [style.dim(` ${"─".repeat(Math.max(0, width - 2))}`)] : [""]),
+    const under = this.under(card);
+    const tree = under.slice(0, 12).map((strand) => {
+      const label = strand.title ? `${strand.name}  ${strand.title}` : strand.name;
+      const state = (strand.snoozedUntil ?? 0) > now ? snoozedLabel(strand, now) : strand.own.whose ? `${othersCause(strand)} · ${age(now - strand.own.since)}` : "";
+      const indent = "  ".repeat(strand.depth - card.depth - 1);
+      const text = fit(`   ${indent}${strandGlyph(strand, now)} ${fit(label, Math.max(24, Math.floor(width * 0.4)) - indent.length)}  ${state}`, width - 1).trimEnd();
+      return strand.own.whose === "you" ? text : style.dim(text);
+    });
+    const detail = [
       style.amber(style.bold(fit(` ● ${card.name}${card.title ? `  ${card.title}` : ""}`, width - 1).trimEnd())),
       ...(card.above ?? []).map((above) => style.dim(fit(`   in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, width - 1).trimEnd())),
       "",
@@ -222,8 +232,14 @@ export class Dealer {
       style.dim(`   ${holder(card, this.snapshot.now)}, since ${clock(card.own.since)}`),
       ...(card.notes.length > 0 ? wrap(`✎ ${card.notes.at(-1)!.text}`, width - 6).map((text) => style.dim(`   ${text}`)) : []),
       `   ${where}`,
+      ...(under.length > 0 ? ["", style.dim(`   under it · ${under.length}`), ...tree, ...(under.length > tree.length ? [style.dim(`   +${under.length - tree.length} more`)] : [])] : []),
       "",
     ];
+    const room = Math.max(6, height - detail.length - 3);
+    const list = this.wide
+      ? sideBySide(scrolled(mine, this.selected, room), scrolled(theirs, this.selected, room), column)
+      : scrolled([...mine, ...theirs], this.selected, room);
+    const lines = [...list, ...(this.wide ? [style.dim(` ${"─".repeat(Math.max(0, width - 2))}`)] : [""]), ...detail];
     const footer =
       this.mode === "snooze"
         ? style.amber(` ${snoozeLine()}`)
