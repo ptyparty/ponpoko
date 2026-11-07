@@ -3,6 +3,7 @@ import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
 import { age } from "./render.ts";
 import type { Link } from "./model.ts";
+import { parseWhen, whenLabel } from "./when.ts";
 
 export type Actions = {
   go: (strand: StrandView, strands: StrandView[]) => Promise<unknown>;
@@ -60,7 +61,13 @@ export const snoozeChoices: SnoozeChoice[] = [
 ];
 
 export function snoozeLine(): string {
-  return `snooze for  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("   ")}   esc cancel`;
+  return `snooze for  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("   ")}   t until…   esc cancel`;
+}
+
+export function timeLine(typed: string, now: number): string {
+  const until = parseWhen(typed, now);
+  const reading = until !== undefined ? `→ ${whenLabel(until, now)}` : typed.trim() === "" ? "such as 14:30, mon 9, 2h, nov 12" : "→ ?";
+  return `snooze until: ${typed}▏  ${reading}   ⏎ snooze   esc cancel`;
 }
 
 export { pickup };

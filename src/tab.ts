@@ -1,11 +1,12 @@
-import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
+import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { goPlace, goTarget, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { clock, rows, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
+import { parseWhen, whenLabel } from "./when.ts";
 
-type Purpose = "note" | "point" | "add" | "move";
+type Purpose = "note" | "point" | "add" | "move" | "snooze";
 type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
 const keysLine = "␣ moves   f fresh   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
@@ -22,7 +23,7 @@ const help = [
   "   m         move the strand under another, named by its path, such as ptyparty › ponpoko; a rogue's loose strand merges into it",
   "   d         mark the strand done",
   "   o         open what the strand's latest move links to, such as a notebook page (📓) in quoll",
-  "   z         snooze the strand, then pick how long",
+  "   z         snooze the strand, then pick how long, or t to type a time such as 14:30, mon 9, 2h or nov 12",
   "   n         add a note to the strand",
   "   x         forget a strand ponpoko has wrong",
   "   p         point the strand's directory at a strand, so agents there work on it",
@@ -39,6 +40,7 @@ const prompts: Record<Purpose, string> = {
   point: "point this directory at strand",
   add: "new strand",
   move: "move under (empty for the top)",
+  snooze: "snooze until",
 };
 
 export class TabController {
@@ -83,7 +85,7 @@ export class TabController {
     if (mode.kind === "text") return this.textKey(mode, key);
     const strand = this.current()?.strand;
     if (mode.kind === "snooze") {
-      this.mode = { kind: "list" };
+      this.mode = key.name === "t" && strand ? { kind: "text", purpose: "snooze", text: "" } : { kind: "list" };
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
       if (choice && strand) {
         const until = choice.until(this.now());
@@ -197,6 +199,7 @@ export class TabController {
     if (mode.kind === "snooze") return [style.amber(` ${snoozeLine()}`)];
     if (mode.kind === "pickup") return [style.amber(` no one is on it · ${pickupLine(mode.options, this.now())}`)];
     if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.name}?  y yes   any other key no`)];
+    if (mode.kind === "text" && mode.purpose === "snooze") return [style.amber(` ${timeLine(mode.text, this.now())}`)];
     if (mode.kind === "text") return [style.amber(` ${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`)];
     if (this.message) return [style.amber(` ${this.message}`)];
     const strand = this.current()?.strand;
@@ -207,9 +210,10 @@ export class TabController {
     if (key.name === "escape" || key.name === "ctrl+c") this.mode = { kind: "list" };
     else if (key.name === "backspace") mode.text = mode.text.slice(0, -1);
     else if (key.name === "return") {
-      this.mode = { kind: "list" };
       const strand = this.current()?.strand;
       const text = mode.text.trim();
+      if (mode.purpose === "snooze") return this.snoozeUntil(strand, text);
+      this.mode = { kind: "list" };
       if (text === "" && mode.purpose !== "move") return undefined;
       if (mode.purpose === "add") await this.run(() => this.actions.add(mode.top ? undefined : strand?.id, text), `Added ${text}`);
       else if (!strand) return undefined;
@@ -220,6 +224,17 @@ export class TabController {
         await this.run(() => this.actions.point(dir, text), `${dir} now works on ${text}`);
       }
     } else if (key.text) mode.text += key.text;
+    return undefined;
+  }
+
+  private async snoozeUntil(strand: StrandView | undefined, text: string): Promise<undefined> {
+    const until = parseWhen(text, this.now());
+    if (until === undefined) {
+      this.message = `ponpoko can't read "${text}" as a time to come`;
+      return undefined;
+    }
+    this.mode = { kind: "list" };
+    if (strand) await this.run(() => this.actions.snooze(strand.id, until), `Snoozed till ${whenLabel(until, this.now())}`);
     return undefined;
   }
 

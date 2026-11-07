@@ -88,6 +88,16 @@ describe("the command tab", () => {
     expect(calls).toEqual([["pickUp", strandNamed(core, "sc-1").id, "fresh"]]);
   });
 
+  test("snoozes the picked strand until a typed time", async () => {
+    const { core, tab, calls } = await setup();
+    await tab.key({ name: "z" });
+    await tab.key({ name: "t" });
+    for (const char of "30m") await tab.key({ name: char, text: char });
+    expect(plain(tab.view(120, 20)).at(-1)).toContain("snooze until: 30m▏  → ");
+    await tab.key({ name: "return" });
+    expect(calls).toEqual([["snooze", strandNamed(core, "sc-1").id, 1_000_000 + 30 * 60_000]]);
+  });
+
   test("says when the service is down", () => {
     const tab = new TabController({} as Actions);
     tab.setSnapshot(undefined);

@@ -13,16 +13,20 @@ async function setup(unseen = false) {
   const { actions, calls } = recordingActions();
   const dealer = new Dealer(actions, unseen, now);
   dealer.setSnapshot(core.snapshot());
-  return { core, dealer, calls };
+  return { core, dealer, calls, now };
 }
 
 const plain = (lines: string[]) => lines.map((line) => line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")).join("\n");
 
 describe("the deck", () => {
-  test("deals the oldest strand first with its whole path, says where Enter goes, and closes after going", async () => {
+  test("lists the hand with the picked card's details, and goes to the picked card", async () => {
     const { core, dealer, calls } = await setup();
+    const hand = plain(dealer.view());
+    expect(hand).toContain("your move · 2");
+    expect(hand).toContain("▸ 1  claude in side");
+    expect(hand).toContain("  2  sc-1");
+    await dealer.key({ name: "j" });
     const card = plain(dealer.view());
-    expect(card).toContain("your move · 1 of 2");
     expect(card).toContain("● sc-1");
     expect(card).toContain("claude · turn ended · 2m");
     expect(card).toContain("→ claude in tab 1 widgets");
@@ -30,9 +34,27 @@ describe("the deck", () => {
     expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
   });
 
-  test("f starts a fresh Claude on the card even when one is in its tab", async () => {
+  test("deals what's asking you first, then the newest, and an agent only ready for a prompt last", async () => {
+    const { core, hear, tick, now } = harness();
+    const tabs = ["a", "b", "c", "d"].map((name, index) => ({ id: index + 1, number: index + 1, name, dir: `/w/${name}` }));
+    await hear({ type: "snapshot", tabs, agents: [], jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
+    await hear({ type: "agent.state", agent: { paneId: 4, tabId: 4, state: "done" } });
+    tick(60_000);
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "done" } });
+    await hear({ type: "agent.state", agent: { paneId: 4, tabId: 4, state: "idle" } });
+    tick(60_000);
+    await hear({ type: "agent.state", agent: { paneId: 3, tabId: 3, state: "waiting" } });
+    tick(60_000);
+    const dealer = new Dealer(recordingActions().actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    expect(plain(dealer.view()).match(/\d  claude in \w/g)).toEqual(["1  claude in c", "2  claude in b", "3  claude in a", "4  claude in d"]);
+  });
+
+  test("f starts a fresh Claude on the picked card even when one is in its tab", async () => {
     const { core, dealer, calls } = await setup();
-    expect(plain(dealer.view())).toContain("f fresh Claude");
+    await dealer.key({ name: "2" });
+    expect(plain(dealer.view())).toContain("f fresh");
     expect(await dealer.key({ name: "f" })).toBe("close");
     expect(calls).toEqual([["pickUp", strandNamed(core, "sc-1").id, "fresh"]]);
   });
@@ -40,19 +62,34 @@ describe("the deck", () => {
   test("skip puts the card at the back, and d marks it done", async () => {
     const { core, dealer, calls } = await setup();
     await dealer.key({ name: "s" });
-    expect(dealer.card()?.name).toBe("claude in side");
-    await dealer.key({ name: "s" });
     expect(dealer.card()?.name).toBe("sc-1");
+    await dealer.key({ name: "s" });
+    expect(dealer.card()?.name).toBe("claude in side");
     await dealer.key({ name: "d" });
-    expect(calls).toEqual([["done", strandNamed(core, "sc-1").id]]);
+    expect(calls).toEqual([["done", strandNamed(core, "claude in side").id]]);
+  });
+
+  test("snoozes until a typed time, and keeps asking until it reads one", async () => {
+    const { core, dealer, calls, now } = await setup();
+    await dealer.key({ name: "z" });
+    await dealer.key({ name: "t" });
+    for (const char of "soon") await dealer.key({ name: char, text: char });
+    await dealer.key({ name: "return" });
+    expect(dealer.mode).toBe("time");
+    expect(plain(dealer.view())).toContain("snooze until: soon▏  → ?");
+    for (const _ of "soon") await dealer.key({ name: "backspace" });
+    for (const char of "2h") await dealer.key({ name: char, text: char });
+    await dealer.key({ name: "return" });
+    expect(dealer.mode).toBe("card");
+    expect(calls).toEqual([["snooze", strandNamed(core, "claude in side").id, now() + 2 * 3_600_000]]);
   });
 
   test("catching up marks each dealt strand seen", async () => {
     const { core, dealer, calls } = await setup(true);
-    expect(plain(dealer.view())).toContain("since you last caught up · 1 of 2");
+    expect(plain(dealer.view())).toContain("since you last caught up · 2");
     await dealer.key({ name: "s" });
     expect(await dealer.key({ name: "escape" })).toBe("close");
-    expect(calls).toEqual([["seen", strandNamed(core, "sc-1").id]]);
+    expect(calls).toEqual([["seen", strandNamed(core, "claude in side").id]]);
   });
 
   test("a card says what the strand is: its title, the strands above it, and its latest note", async () => {

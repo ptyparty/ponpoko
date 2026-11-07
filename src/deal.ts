@@ -1,17 +1,20 @@
-import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
+import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { goPlace, goTarget, pickupOffer, startsAt } from "./komux/go.ts";
 import { age, cause, clock, fit, holder } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
+import { parseWhen, whenLabel } from "./when.ts";
 
-type Mode = "card" | "pickup" | "snooze" | "forget";
+type Mode = "card" | "pickup" | "snooze" | "time" | "forget";
 
 export class Dealer {
   private snapshot: Snapshot | undefined;
   private hand: StrandView[] = [];
   private skipped: string[] = [];
   private dealt = new Set<string>();
+  private selected = 0;
+  private typed = "";
   mode: Mode = "card";
   message: string | undefined;
 
@@ -27,11 +30,14 @@ export class Dealer {
       this.hand = [];
       return;
     }
+    const before = this.card()?.id;
     const wanted = this.unseen ? new Set(snapshot.unseen) : undefined;
-    const moves = snapshot.moves.filter((strand) => !wanted || wanted.has(strand.id));
+    const moves = snapshot.moves.filter((strand) => !wanted || wanted.has(strand.id)).sort((a, b) => urgency(a) - urgency(b) || b.own.since - a.own.since);
     const fresh = moves.filter((strand) => !this.skipped.includes(strand.id));
     const back = this.skipped.flatMap((id) => moves.filter((strand) => strand.id === id));
     this.hand = [...fresh, ...back];
+    const again = this.hand.findIndex((strand) => strand.id === before);
+    this.selected = again >= 0 ? again : Math.min(this.selected, Math.max(0, this.hand.length - 1));
   }
 
   private strands(): StrandView[] {
@@ -39,14 +45,16 @@ export class Dealer {
   }
 
   card(): StrandView | undefined {
-    return this.hand[0];
+    return this.hand[this.selected];
   }
 
   async key(key: Key): Promise<"close" | undefined> {
     this.message = undefined;
     const card = this.card();
+    if (this.mode === "time") return this.timeKey(key);
     if (this.mode === "snooze") {
-      this.mode = "card";
+      this.mode = key.name === "t" ? "time" : "card";
+      this.typed = "";
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
       if (choice && card) await this.act(() => this.actions.snooze(card.id, choice.until(this.now())), `Snoozed till ${clock(choice.until(this.now()))}`);
       return undefined;
@@ -90,8 +98,16 @@ export class Dealer {
         if (card) {
           this.dealt.add(card.id);
           this.skipped = [...this.skipped.filter((id) => id !== card.id), card.id];
-          this.hand = [...this.hand.slice(1), card];
+          this.hand = [...this.hand.filter((strand) => strand !== card), card];
         }
+        return undefined;
+      case "j":
+      case "down":
+        this.selected = Math.min(this.selected + 1, Math.max(0, this.hand.length - 1));
+        return undefined;
+      case "k":
+      case "up":
+        this.selected = Math.max(this.selected - 1, 0);
         return undefined;
       case "z":
         if (card) this.mode = "snooze";
@@ -103,6 +119,22 @@ export class Dealer {
         if (card) await this.act(() => this.actions.done(card.id), `${card.name} is done`);
         return undefined;
     }
+    if (/^[1-9]$/.test(key.name) && Number(key.name) <= this.hand.length) this.selected = Number(key.name) - 1;
+    return undefined;
+  }
+
+  private async timeKey(key: Key): Promise<undefined> {
+    const card = this.card();
+    if (key.name === "escape" || key.name === "ctrl+c") this.mode = "card";
+    else if (key.name === "backspace") this.typed = this.typed.slice(0, -1);
+    else if (key.name === "return") {
+      const until = parseWhen(this.typed, this.now());
+      if (until === undefined) this.message = `ponpoko can't read "${this.typed.trim()}" as a time to come`;
+      else {
+        this.mode = "card";
+        if (card) await this.act(() => this.actions.snooze(card.id, until), `Snoozed till ${whenLabel(until, this.now())}`);
+      }
+    } else if (key.text) this.typed += key.text;
     return undefined;
   }
 
@@ -117,8 +149,14 @@ export class Dealer {
     const options = pickupOffer(card, this.strands());
     const place = goPlace(card, aboveOf(this.strands(), card));
     const where = target ? `→ ${target.who} in ${target.space ?? "its tab"}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
+    const shown = this.hand.slice(0, 9);
     const lines = [
-      style.dim(` ${hand} · 1 of ${this.hand.length}`),
+      style.dim(` ${hand} · ${this.hand.length}`),
+      ...shown.map((strand, index) => {
+        const row = fit(`${index === this.selected ? "▸" : " "} ${index + 1}  ${fit(strand.name, 24)}  ${cause(strand)} · ${age(this.snapshot!.now - strand.own.since)}`, width - 2).trimEnd();
+        return urgency(strand) === 0 ? style.amber(` ${row}`) : index === this.selected ? ` ${row}` : style.dim(` ${row}`);
+      }),
+      ...(this.hand.length > shown.length ? [style.dim(`   +${this.hand.length - shown.length} more; s sends a card to the back`)] : []),
       "",
       style.amber(style.bold(fit(` ● ${card.name}${card.title ? `  ${card.title}` : ""}`, width - 1).trimEnd())),
       ...(card.above ?? []).map((above) => style.dim(fit(`   in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, width - 1).trimEnd())),
@@ -132,11 +170,13 @@ export class Dealer {
     const footer =
       this.mode === "snooze"
         ? style.amber(` ${snoozeLine()}`)
+        : this.mode === "time"
+          ? style.amber(` ${timeLine(this.typed, this.now())}`)
         : this.mode === "forget"
           ? style.amber(` forget ${card.name}?  y yes   any other key no`)
           : this.mode === "pickup" && options
             ? style.amber(` ${pickupLine(options, this.snapshot.now)}`)
-            : style.dim(` ⏎ go   s skip${startsAt(card) ? "   f fresh Claude" : ""}   d done   z snooze   x forget   esc close`);
+            : style.dim(` ⏎ go  j/k pick  s skip${startsAt(card) ? "  f fresh" : ""}  d done  z snooze  x forget  esc`);
     if (this.message) lines.push(style.amber(` ${this.message}`));
     lines.push(footer);
     return lines;
@@ -183,6 +223,12 @@ export async function runDeal(args: string[]): Promise<number> {
   clearInterval(ticker);
   screen.close();
   return 0;
+}
+
+function urgency(strand: StrandView): number {
+  const asks = strand.open.filter((move) => move.player === "you").map((move) => move.what);
+  if (asks.some((what) => what === "asking you" || what === "waiting on you")) return 0;
+  return asks.length > 0 && asks.every((what) => what === "ready for a prompt") ? 2 : 1;
 }
 
 function wrap(text: string, width: number): string[] {

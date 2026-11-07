@@ -35,13 +35,13 @@ Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs wor
 ## In komux
 
 - The tray shows how many moves are yours and how long the oldest has waited. Click it to open the command tab.
-- **Alt m** deals your oldest move as a card. Enter goes to it, `s` or space skips to the next, `d` marks it done, `z` snoozes it, `x` forgets it. A card shows the strand's whole path.
+- **Alt m** deals your moves as a short list: anything a Claude is asking you first, then the newest, with Claudes only ready for a prompt last. The picked card shows the strand's whole path. `j`/`k` or `1`–`9` pick a card, Enter goes to it, `f` starts a fresh Claude on it, `s` or space sends it to the back, `d` marks it done, `z` snoozes it, `x` forgets it.
 - **Alt shift m** deals what changed since you last caught up.
 - **Ctrl Space m** opens ponpoko's mode: `m` and `M` deal the same way, and `o` opens the command tab.
 
 Pass `ponpoko({ deal, catchUp, leader })` to pick other keys.
 
-In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens what its latest move links to (a notebook page in quoll), `z` snoozes, `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
+In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens what its latest move links to (a notebook page in quoll), `z` snoozes (`t` then types a time such as `14:30`, `mon 9`, `2h` or `nov 12`), `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
 
 Enter on a strand no one is on offers to resume the last Claude that worked on it, or to start a fresh one briefed with the strand's moves and links. Either way it opens the strand's project with its layout and wakes the Claude docked there. Only when that Claude is busy, or the layout has none, does it open a pane running `komux claude`; set `PONPOKO_CLAUDE` in komux's `env`, such as `komux claude --mode auto`, to run something else.
 
