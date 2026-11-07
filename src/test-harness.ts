@@ -36,6 +36,7 @@ export function recordingActions() {
   const record = (name: string) => async (...args: unknown[]) => void calls.push([name, ...args]);
   const actions = {
     go: async (strand: { id: string }) => void calls.push(["go", strand.id]),
+    pickUp: async (strand: { id: string }, how: string) => void calls.push(["pickUp", strand.id, how]),
     forget: record("forget"),
     snooze: record("snooze"),
     note: record("note"),

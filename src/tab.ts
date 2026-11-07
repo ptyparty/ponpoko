@@ -1,11 +1,12 @@
-import { serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
+import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
+import type { Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import type { Snapshot } from "./core.ts";
 import { clock, rows, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
 type Purpose = "note" | "point" | "add" | "move";
-type Mode = { kind: "list" } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string };
 
 const keysLine = " ⏎ go   ␣ moves   a add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
 
@@ -84,6 +85,12 @@ export class TabController {
       }
       return undefined;
     }
+    if (mode.kind === "pickup") {
+      this.mode = { kind: "list" };
+      const how = pickupChoice(mode.options, key.name);
+      if (how && strand) await this.run(() => this.actions.pickUp(strand, how), how === "resume" ? "Resuming its last Claude" : "Starting a fresh Claude on it");
+      return undefined;
+    }
     if (mode.kind === "forget") {
       this.mode = { kind: "list" };
       if (key.name === "y" && strand) await this.run(() => this.actions.forget(strand.id), `Forgot ${strand.name}`);
@@ -106,10 +113,13 @@ export class TabController {
       case "?":
         this.mode = { kind: "help" };
         return undefined;
-      case "return":
+      case "return": {
+        const options = strand ? pickup(strand) : undefined;
         if (!strand) this.message = "Nothing to go to here";
+        else if (options) this.mode = { kind: "pickup", options };
         else await this.run(() => this.actions.go(strand));
         return undefined;
+      }
       case "space":
       case " ":
         if (strand && !this.expanded.delete(strand.id)) this.expanded.add(strand.id);
@@ -169,6 +179,7 @@ export class TabController {
   private footer(): string[] {
     const mode = this.mode;
     if (mode.kind === "snooze") return [style.amber(` ${snoozeLine()}`)];
+    if (mode.kind === "pickup") return [style.amber(` no one is on it · ${pickupLine(mode.options, this.now())}`)];
     if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.name}?  y yes   any other key no`)];
     if (mode.kind === "text") return [style.amber(` ${prompts[mode.purpose]}: ${mode.text}▏`)];
     return [this.message ? style.amber(` ${this.message}`) : style.dim(keysLine)];

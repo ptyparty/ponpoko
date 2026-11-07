@@ -1,10 +1,12 @@
 import { ask } from "./client.ts";
 import type { StrandView } from "./core.ts";
-import { goInKomux, goTarget } from "./komux/go.ts";
+import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
+import { age } from "./render.ts";
 import type { Link } from "./model.ts";
 
 export type Actions = {
   go: (strand: StrandView) => Promise<unknown>;
+  pickUp: (strand: StrandView, how: "resume" | "fresh") => Promise<unknown>;
   forget: (strand: string) => Promise<unknown>;
   snooze: (strand: string, until: number) => Promise<unknown>;
   note: (strand: string, text: string) => Promise<unknown>;
@@ -23,6 +25,7 @@ export const serviceActions: Actions = {
     if (target?.player.kind === "job") await ask({ method: "close-move", params: { move: target.move.id } });
     else if (strand.unseen) await ask({ method: "seen", params: { strand: strand.id } });
   },
+  pickUp: (strand, how) => pickUpInKomux(strand, how),
   forget: (strand) => ask({ method: "forget", params: { strand } }),
   snooze: (strand, until) => ask({ method: "snooze", params: { strand, until } }),
   note: (strand, text) => ask({ method: "note", params: { strand, text } }),
@@ -58,4 +61,18 @@ export const snoozeChoices: SnoozeChoice[] = [
 
 export function snoozeLine(): string {
   return `snooze for  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("   ")}   esc cancel`;
+}
+
+export { pickup };
+
+export function pickupLine(options: Pickup, now: number): string {
+  if (!options.resume) return "⏎ start a fresh Claude on it   esc cancel";
+  const ago = age(now - options.resume.at);
+  return `⏎ resume ${options.resume.who} from ${ago === "now" ? "just now" : `${ago} ago`}   f start a fresh Claude   esc cancel`;
+}
+
+export function pickupChoice(options: Pickup, key: string): "resume" | "fresh" | undefined {
+  if (key === "return" || key === "r") return options.resume ? "resume" : "fresh";
+  if (key === "f") return "fresh";
+  return undefined;
 }

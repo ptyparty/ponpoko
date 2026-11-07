@@ -43,3 +43,53 @@ function lastDir(strand: StrandView): string | undefined {
 function needsYou(strand: StrandView, move: MoveView): boolean {
   return move.player === "you" && (move.what === "asking you" || move.what === "waiting on you" || strand.unseen);
 }
+
+export type Pickup = { resume?: { session: string; dir: string; who: string; at: number }; dir?: string };
+
+export function pickup(strand: StrandView): Pickup | undefined {
+  if (goTarget(strand)) return undefined;
+  const last = [...strand.recent].reverse().find((move) => {
+    const player = move.answers ?? move.by;
+    return player.kind === "agent" && player.resume && komuxPlace(player)?.dir;
+  });
+  const agent = last ? (last.answers ?? last.by) : undefined;
+  const resume = last && agent ? { session: agent.resume!, dir: komuxPlace(agent)!.dir, who: agent.who, at: last.until ?? last.from } : undefined;
+  const dir = strand.dir ?? resume?.dir ?? lastDir(strand);
+  if (!resume && !dir) return undefined;
+  return { ...(resume ? { resume } : {}), ...(dir ? { dir } : {}) };
+}
+
+export function claudeCommand(env: Record<string, string | undefined> = process.env): string[] {
+  const words = (env.PONPOKO_CLAUDE ?? "").trim().split(/\s+/).filter((word) => word !== "");
+  return words.length > 0 ? words : ["komux", "claude"];
+}
+
+export function brief(strand: StrandView): string {
+  const path = strand.path.join(" › ");
+  const moves = strand.recent.map((move) => `- ${move.player === "you" ? "you" : move.by.who}: ${move.what}${move.links.map((link) => ` (${link.adapter} ${link.ref})`).join("")}`);
+  const links = strand.links.filter((link) => link.adapter !== "dir").map((link) => `- ${link.adapter} ${link.ref}`);
+  return [
+    `You're picking up the strand "${path}" in ponpoko${strand.title ? `: ${strand.title}` : ""}.`,
+    ...(moves.length > 0 ? ["", "Its moves so far, oldest first:", ...moves] : []),
+    ...(links.length > 0 ? ["", "It links to:", ...links] : []),
+    ...strand.notes.map((note) => `Note: ${note.text}`),
+    "",
+    `Call ponpoko's status tool with strand "${path}" as you start, then carry on from where the work stopped. Ask me before doing anything the moves don't make clear.`,
+  ].join("\n");
+}
+
+export async function pickUpInKomux(strand: StrandView, how: "resume" | "fresh", env = process.env, control?: Control): Promise<void> {
+  const socket = env.KOMUX_SOCKET;
+  if (!socket) throw new Error("picking a strand up works from inside komux");
+  const send = control ?? ((request: unknown) => sendKomux(socket, request));
+  const options = pickup(strand);
+  const resume = how === "resume" ? options?.resume : undefined;
+  if (how === "resume" && !resume) throw new Error("no Claude on this strand to resume");
+  const dir = resume?.dir ?? options?.dir;
+  if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
+  const opened = await send({ method: "project.open", params: { target: dir } });
+  if (!opened.ok) throw new Error(opened.error ?? "komux refused");
+  const command = [...claudeCommand(env), ...(resume ? ["--resume", resume.session] : ["--prompt", brief(strand)])];
+  const pane = await send({ method: "pane.open", params: { command, cwd: dir, placement: "right", name: "claude" } });
+  if (!pane.ok) throw new Error(pane.error === undefined ? "komux refused" : `komux refused: ${pane.error}; it may need restarting to open panes for ponpoko`);
+}

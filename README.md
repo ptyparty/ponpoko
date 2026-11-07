@@ -43,6 +43,8 @@ Pass `ponpoko({ deal, catchUp, leader })` to pick other keys.
 
 In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens what its latest move links to (a notebook page in quoll), `z` snoozes, `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
 
+Enter on a strand no one is on offers to resume the last Claude that worked on it, in a new pane where it was, or to start a fresh one briefed with the strand's moves and links. It runs `komux claude`; set `PONPOKO_CLAUDE` in komux's `env`, such as `komux claude --mode auto`, to run something else.
+
 Glyphs: ● yours, ◐ an agent's, ⊘ waiting on someone or something, ◷ snoozed, ○ nothing to do.
 
 ## Where things live

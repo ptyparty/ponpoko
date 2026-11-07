@@ -1,10 +1,10 @@
-import { serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
+import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import type { Snapshot, StrandView } from "./core.ts";
 import { age, cause, clock, holder, pathText } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 
-type Mode = "card" | "snooze" | "forget";
+type Mode = "card" | "pickup" | "snooze" | "forget";
 
 export class Dealer {
   private snapshot: Snapshot | undefined;
@@ -46,6 +46,16 @@ export class Dealer {
       if (choice && card) await this.act(() => this.actions.snooze(card.id, choice.until(this.now())), `Snoozed till ${clock(choice.until(this.now()))}`);
       return undefined;
     }
+    if (this.mode === "pickup") {
+      this.mode = "card";
+      const options = card ? pickup(card) : undefined;
+      const how = options ? pickupChoice(options, key.name) : undefined;
+      if (how && card && (await this.act(() => this.actions.pickUp(card, how)))) {
+        this.dealt.add(card.id);
+        return this.finish();
+      }
+      return undefined;
+    }
     if (this.mode === "forget") {
       this.mode = "card";
       if (key.name === "y" && card) await this.act(() => this.actions.forget(card.id), `Forgot ${card.name}`);
@@ -58,6 +68,10 @@ export class Dealer {
         return this.finish();
       case "return":
         if (!card) return this.finish();
+        if (pickup(card)) {
+          this.mode = "pickup";
+          return undefined;
+        }
         this.dealt.add(card.id);
         if (await this.act(() => this.actions.go(card))) return this.finish();
         return undefined;
@@ -90,7 +104,8 @@ export class Dealer {
       return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is waiting on you"), "", style.dim(" esc close")];
     }
     const target = card.open.map((move) => move.answers ?? move.by).find((player) => player.live && player.space);
-    const where = target ? `→ ${target.space}` : card.dir ? `→ open a tab at ${card.dir}` : "→ nowhere ponpoko knows of";
+    const options = pickup(card);
+    const where = target ? `→ ${target.space}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : card.dir ? `→ open a tab at ${card.dir}` : "→ nowhere ponpoko knows of";
     const lines = [
       style.dim(` ${hand} · 1 of ${this.hand.length}`),
       "",
@@ -102,7 +117,13 @@ export class Dealer {
       "",
     ];
     const footer =
-      this.mode === "snooze" ? style.amber(` ${snoozeLine()}`) : this.mode === "forget" ? style.amber(` forget ${card.name}?  y yes   any other key no`) : style.dim(" ⏎ go   s skip   d done   z snooze   x forget   esc close");
+      this.mode === "snooze"
+        ? style.amber(` ${snoozeLine()}`)
+        : this.mode === "forget"
+          ? style.amber(` forget ${card.name}?  y yes   any other key no`)
+          : this.mode === "pickup" && options
+            ? style.amber(` ${pickupLine(options, this.snapshot.now)}`)
+            : style.dim(" ⏎ go   s skip   d done   z snooze   x forget   esc close");
     if (this.message) lines.push(style.amber(` ${this.message}`));
     lines.push(footer);
     return lines;

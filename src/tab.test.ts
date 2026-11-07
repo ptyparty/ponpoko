@@ -71,4 +71,23 @@ describe("the command tab", () => {
     tab.setSnapshot(undefined);
     expect(plain(tab.view(100, 20)).join("\n")).toContain("ponpoko ✗");
   });
+
+  test("Enter on a strand no one is on offers to resume its last Claude or start a fresh one", async () => {
+    const { core, hear } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { braid: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done", sessionId: "c2" }], jobs: [] });
+    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
+    const { actions, calls } = recordingActions();
+    const tab = new TabController(actions, () => 1_000_000);
+    tab.setSnapshot(core.snapshot());
+    await tab.key({ name: "return" });
+    expect(plain(tab.view(120, 20)).at(-1)).toContain("no one is on it · ⏎ resume claude from just now   f start a fresh Claude");
+    await tab.key({ name: "return" });
+    await tab.key({ name: "return" });
+    await tab.key({ name: "f" });
+    const id = strandNamed(core, "sc-1").id;
+    expect(calls).toEqual([
+      ["pickUp", id, "resume"],
+      ["pickUp", id, "fresh"],
+    ]);
+  });
 });

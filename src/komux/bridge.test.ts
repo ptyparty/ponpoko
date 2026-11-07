@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { harness, strandNamed } from "../test-harness.ts";
-import { goInKomux } from "./go.ts";
+import { brief, goInKomux, pickup, pickUpInKomux } from "./go.ts";
 
 const story = "/home/me/work/stories/sc-1234/widgets";
 const side = "/home/me/work/ptyparty";
@@ -224,5 +224,27 @@ describe("go in komux", () => {
     const { core, hear } = harness();
     await hear(snapshot);
     await expect(goInKomux(strandNamed(core, "sc-1234"), {})).rejects.toThrow("go works from inside komux");
+  });
+
+  test("a strand no one is on offers its last Claude to resume, or a fresh one briefed with its moves", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
+    core.status({ self: "komux:s1:2", text: "fixing the importer", page: "sc-1234/plan.md" });
+    expect(pickup(strandNamed(core, "sc-1234"))).toBeUndefined();
+    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
+    const strand = strandNamed(core, "sc-1234");
+    expect(pickup(strand)).toEqual({ resume: { session: "c1", dir: story, who: "claude", at: 1_000_000 }, dir: story });
+    expect(brief(strand)).toContain('You\'re picking up the strand "sc-1234" in ponpoko: Widget CSV import.');
+    expect(brief(strand)).toContain("- claude: fixing the importer (quoll sc-1234/plan.md)");
+    const { sent, control } = recorder();
+    await pickUpInKomux(strand, "resume", { ...env, PONPOKO_CLAUDE: "komux claude --mode auto" }, control);
+    await pickUpInKomux(strand, "fresh", env, control);
+    expect(sent).toEqual([
+      { method: "project.open", params: { target: story } },
+      { method: "pane.open", params: { command: ["komux", "claude", "--mode", "auto", "--resume", "c1"], cwd: story, placement: "right", name: "claude" } },
+      { method: "project.open", params: { target: story } },
+      { method: "pane.open", params: { command: ["komux", "claude", "--prompt", brief(strand)], cwd: story, placement: "right", name: "claude" } },
+    ]);
   });
 });
