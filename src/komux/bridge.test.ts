@@ -123,6 +123,14 @@ describe("the komux bridge", () => {
     expect(line(core, "  importer")).toBe("  importer agent pane:s2:8: working");
   });
 
+  test("a tab's label finds its strand even when the strand sits under another, such as a story under its epic", async () => {
+    const { core, hear } = harness();
+    core.add(undefined, "epic 9 › sc-1234");
+    await hear(snapshot);
+    expect(line(core, "  sc-1234")).toBe("  sc-1234 you pane:s1:2: working; you(job:s1:7): build failed (exit 1)");
+    expect(core.snapshot().strands.filter((strand) => strand.name === "sc-1234")).toHaveLength(1);
+  });
+
   test("reconnecting or replaying a snapshot records nothing new", async () => {
     const { hear, store } = harness();
     await hear(snapshot);

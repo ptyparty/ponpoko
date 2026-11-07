@@ -264,7 +264,8 @@ export function tabStrand(tab: KomuxTab, model: Pick<Known, "strands" | "links">
   const label = tab.labels?.strand ?? tab.labels?.braid;
   if (label && !/\{[\w-]+\}/.test(label)) {
     const wanted = label.toLowerCase();
-    const found = [...model.strands.values()].find((strand) => strand.parent === undefined && strand.done === undefined && strand.name.toLowerCase() === wanted);
+    const named = [...model.strands.values()].filter((strand) => strand.done === undefined && strand.name.toLowerCase() === wanted);
+    const found = named.find((strand) => strand.parent === undefined) ?? (named.length === 1 ? named[0] : undefined);
     return found ? { id: found.id, name: found.name } : { name: label.toLowerCase() };
   }
   let best: Link | undefined;
