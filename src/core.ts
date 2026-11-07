@@ -118,7 +118,7 @@ export class Ponpoko {
       closed: [...this.model.strands.values()].filter((strand) => strand.done !== undefined),
       players: [...this.model.players.values()].filter((player) => player.gone === undefined),
       open: moves.filter((move) => move.until === undefined),
-      links: [...this.model.links.values()].filter((link) => link.adapter === "dir"),
+      links: [...this.model.links.values()].filter((link) => link.adapter === "dir" || link.adapter === "komux"),
       on,
       resumed,
       spoke: [...new Set(moves.filter((move) => move.source === "agent" || (move.described !== undefined && move.player !== you)).map((move) => move.strand))],

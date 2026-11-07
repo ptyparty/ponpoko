@@ -11,8 +11,6 @@ export type KomuxPlace = {
   tabId: number;
   paneId: number;
   dir: string;
-  layout?: string;
-  args?: Record<string, string>;
   sessionId?: string;
   state?: string;
   asking?: boolean;
@@ -181,13 +179,10 @@ export class Translator {
       tabId: entry.tabId,
       paneId: entry.paneId,
       dir: tab.dir,
-      ...(tab.layout ? { layout: tab.layout } : {}),
-      ...(tab.args ? { args: tab.args } : {}),
       ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
     };
     const old = player ? komuxPlace(player) : undefined;
-    const tabChanged = old?.layout !== place.layout || JSON.stringify(old?.args) !== JSON.stringify(place.args);
-    if (!player || old?.tabId !== place.tabId || old?.dir !== place.dir || old?.sessionId !== place.sessionId || tabChanged) {
+    if (!player || old?.tabId !== place.tabId || old?.dir !== place.dir || old?.sessionId !== place.sessionId) {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
     }
     if (wanted === ready && yours.length > 0) return;
@@ -257,6 +252,12 @@ class Facts {
   }
 
   labelled(tab: KomuxTab, reopen: boolean): string | undefined {
+    const strand = this.labelledStrand(tab, reopen);
+    if (strand && tab.layout) this.rememberTab(strand, tab);
+    return strand;
+  }
+
+  private labelledStrand(tab: KomuxTab, reopen: boolean): string | undefined {
     const found = tabStrand(tab, this.model);
     if (!found) return undefined;
     if (found.id) return found.id;
@@ -269,6 +270,14 @@ class Facts {
       return strand.id;
     }
     return this.make(found.name, undefined);
+  }
+
+  private rememberTab(strand: string, tab: KomuxTab): void {
+    const ref = komuxTabRef({ dir: tab.dir, layout: tab.layout, args: tab.args });
+    if (this.model.links.some((link) => link.strand === strand && link.adapter === "komux" && link.ref === ref)) return;
+    const link = this.newId("l");
+    this.push({ type: "link.added", link, strand, adapter: "komux", ref, label: tab.name });
+    this.model.links.push({ id: link, strand, adapter: "komux", ref, label: tab.name, at: Date.now() });
   }
 
   leave(player: string, why: string, closedByYou: boolean): void {
@@ -315,6 +324,21 @@ export function tabStrand(tab: KomuxTab, model: Pick<Known, "strands" | "links">
     if ((tab.dir === link.ref || tab.dir.startsWith(`${link.ref}/`)) && (!best || link.ref.length > best.ref.length)) best = link;
   }
   return best ? { id: best.strand!, name: model.strands.get(best.strand!)!.name } : undefined;
+}
+
+export type KomuxTabRef = { dir: string; layout?: string; args?: Record<string, string> };
+
+export function komuxTabRef(tab: KomuxTabRef): string {
+  return JSON.stringify({ dir: tab.dir, ...(tab.layout ? { layout: tab.layout } : {}), ...(tab.args && Object.keys(tab.args).length > 0 ? { args: tab.args } : {}) });
+}
+
+export function readKomuxTabRef(ref: string): KomuxTabRef | undefined {
+  try {
+    const parsed = JSON.parse(ref) as Partial<KomuxTabRef>;
+    return typeof parsed.dir === "string" ? { dir: parsed.dir, ...(typeof parsed.layout === "string" ? { layout: parsed.layout } : {}), ...(parsed.args && typeof parsed.args === "object" ? { args: parsed.args } : {}) } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function komuxPlace(player: { adapter?: string; place?: unknown }): KomuxPlace | undefined {

@@ -1,6 +1,6 @@
 import type { MoveView, PlayerView, StrandView } from "../core.ts";
 import { sendKomux } from "./stream.ts";
-import { komuxPlace } from "./translate.ts";
+import { komuxPlace, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
 export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string }>;
 
@@ -17,9 +17,10 @@ export async function goInKomux(strand: StrandView, env = process.env, control?:
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
     return "focused";
   }
-  const dir = strand.dir ?? lastDir(strand);
+  const tab = tabOf(strand);
+  const dir = tab?.dir ?? strand.dir ?? lastDir(strand);
   if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
-  const opened = await send({ method: "project.open", params: { target: dir } });
+  const opened = await send({ method: "project.open", params: { target: dir, ...layoutAt(tab, dir) } });
   if (!opened.ok) throw new Error(opened.error ?? "komux refused");
   return "opened";
 }
@@ -30,6 +31,16 @@ export function goTarget(strand: StrandView): { player: PlayerView; move: MoveVi
     if (player.live && komuxPlace(player)) return { player, move };
   }
   return undefined;
+}
+
+export function tabOf(strand: StrandView): KomuxTabRef | undefined {
+  const link = strand.links.filter((candidate) => candidate.adapter === "komux").sort((a, b) => a.at - b.at).at(-1);
+  return link ? readKomuxTabRef(link.ref) : undefined;
+}
+
+function layoutAt(tab: KomuxTabRef | undefined, dir: string): { layout?: string; args?: Record<string, string> } {
+  if (!tab || tab.dir !== dir) return {};
+  return { ...(tab.layout ? { layout: tab.layout } : {}), ...(tab.args ? { args: tab.args } : {}) };
 }
 
 function lastDir(strand: StrandView): string | undefined {
@@ -44,7 +55,7 @@ function needsYou(strand: StrandView, move: MoveView): boolean {
   return move.player === "you" && (move.what === "asking you" || move.what === "waiting on you" || strand.unseen);
 }
 
-export type Pickup = { resume?: { session: string; dir: string; who: string; at: number; layout?: string; args?: Record<string, string> }; dir?: string };
+export type Pickup = { resume?: { session: string; dir: string; who: string; at: number }; dir?: string };
 
 export function pickup(strand: StrandView): Pickup | undefined {
   if (goTarget(strand) || strand.own.whose === undefined) return undefined;
@@ -54,11 +65,8 @@ export function pickup(strand: StrandView): Pickup | undefined {
   });
   const agent = last ? (last.answers ?? last.by) : undefined;
   const place = agent ? komuxPlace(agent) : undefined;
-  const resume =
-    last && agent && place
-      ? { session: agent.resume!, dir: place.dir, who: agent.who, at: last.until ?? last.from, ...(place.layout ? { layout: place.layout } : {}), ...(place.args ? { args: place.args } : {}) }
-      : undefined;
-  const dir = strand.dir ?? resume?.dir ?? lastDir(strand);
+  const resume = last && agent && place ? { session: agent.resume!, dir: place.dir, who: agent.who, at: last.until ?? last.from } : undefined;
+  const dir = tabOf(strand)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand);
   if (!resume && !dir) return undefined;
   return { ...(resume ? { resume } : {}), ...(dir ? { dir } : {}) };
 }
@@ -91,8 +99,7 @@ export async function pickUpInKomux(strand: StrandView, how: "resume" | "fresh",
   if (how === "resume" && !resume) throw new Error("no Claude on this strand to resume");
   const dir = resume?.dir ?? options?.dir;
   if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
-  const layout = options?.resume && options.resume.dir === dir ? { ...(options.resume.layout ? { layout: options.resume.layout } : {}), ...(options.resume.args ? { args: options.resume.args } : {}) } : {};
-  const docked = await send({ method: "claude.start", params: { target: dir, ...layout, ...(resume ? { resume: resume.session } : { prompt: brief(strand) }) } });
+  const docked = await send({ method: "claude.start", params: { target: dir, ...layoutAt(tabOf(strand), dir), ...(resume ? { resume: resume.session } : { prompt: brief(strand) }) } });
   if (docked.ok) return;
   if (!/^(busy|none):/.test(docked.error ?? "")) throw new Error(`komux refused: ${docked.error ?? "no reason"}; it may need restarting to start Claude for ponpoko`);
   const command = [...claudeCommand(env), ...(resume ? ["--resume", resume.session] : ["--prompt", brief(strand)])];

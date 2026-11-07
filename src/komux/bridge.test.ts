@@ -305,6 +305,23 @@ describe("go in komux", () => {
     ]);
   });
 
+  test("a PR review strand comes back as its PR review tab after komux restarts, even if its Claude was never prompted", async () => {
+    const { core, hear, store } = harness();
+    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", braid: "sc-1235" } };
+    await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [], jobs: [] });
+    const facts = store.all().length;
+    await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [], jobs: [] });
+    expect(store.all().length).toBe(facts);
+    await hear({ server: "s2", type: "snapshot", tabs: snapshot.tabs, agents: [], jobs: [] });
+    const { sent, control } = recorder();
+    await goInKomux(strandNamed(core, "sc-1235"), { ...env, KOMUX_SERVER_ID: "s2" }, control);
+    await pickUpInKomux(strandNamed(core, "sc-1235"), "fresh", { ...env, KOMUX_SERVER_ID: "s2" }, control);
+    expect(sent).toEqual([
+      { method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" } } },
+      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" }, prompt: brief(strandNamed(core, "sc-1235")) } },
+    ]);
+  });
+
   test("picking up falls back to a new pane when the tab's docked Claude is busy or missing", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });
