@@ -29,18 +29,40 @@ describe("the ponpoko service", () => {
   test("knows nothing is live until something says it's present, and forgets when it leaves", () => {
     const { core } = setup();
     expect(core.snapshot().moves.map((strand) => strand.live)).toEqual([false]);
-    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [{ dir, label: "tab 1 widgets" }] });
+    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [{ dir, label: "tab 1 widgets", short: "tab 1", strands: ["a:1"] }] });
     expect(core.snapshot().moves.map((strand) => [strand.live, strand.space])).toEqual([[true, "tab 1 widgets"]]);
-    expect(core.snapshot().braids[0]!.spaces).toEqual(["tab 1 widgets"]);
+    expect(core.snapshot().braids[0]!.spaces).toEqual([{ label: "tab 1 widgets", short: "tab 1" }]);
     core.absent("tool", "main");
     expect(core.snapshot().moves[0]!.live).toBe(false);
   });
 
-  test("presence lapses if it isn't renewed", () => {
+  test("presence lapses if it isn't renewed, telling watchers both ways", () => {
     const { core, tick } = setup();
+    let changes = 0;
+    core.onChange(() => changes++);
     core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [] });
     tick(91_000);
     expect(core.snapshot().moves[0]!.live).toBe(false);
+    core.expire();
+    expect(changes).toBe(2);
+    core.present({ adapter: "tool", scope: "main", strands: ["a:1"], spaces: [] });
+    expect(changes).toBe(3);
+  });
+
+  test("a strand's tab is the one its own pane is in, even when another session has a tab at the same directory", () => {
+    const { core } = setup();
+    core.present({ adapter: "tool", scope: "b", strands: [], spaces: [{ dir, label: "tab 1 other", short: "tab 1", strands: [] }] });
+    core.present({ adapter: "tool", scope: "a", strands: ["a:1"], spaces: [{ dir, label: "tab 3 widgets", short: "tab 3", strands: ["a:1"] }] });
+    expect(core.snapshot().moves[0]!.space).toBe("tab 3 widgets");
+  });
+
+  test("an agent's own reports never land on a job strand that shares its handle", () => {
+    const { core } = setup();
+    core.record("tool", [{ type: "strand.move", braid: "sc-1234", strand: "j:2", label: "job", kind: "job", whose: "you", why: "failed", place: { adapter: "tool", handle: "tool:2", dir } }]);
+    core.present({ adapter: "tool", scope: "main", strands: ["j:2", "a:2"], spaces: [] });
+    core.report({ self: "tool:2", whose: "person", who: "Sam", reason: "asked Sam" });
+    expect(core.model.strands.get("a:2")!.who).toBe("Sam");
+    expect(core.model.strands.get("j:2")!.whose).toBe("you");
   });
 
   test("a restarted service keeps what it knew", () => {

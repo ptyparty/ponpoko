@@ -3,10 +3,10 @@ import type { Fact, Recorded, Source, Whose } from "./events.ts";
 import { apply, counts, recentHeard, replay, unseenMoves, yourMoves, type Braid, type Counts, type Model, type Strand } from "./model.ts";
 import type { Store } from "./store.ts";
 
-export type Space = { dir: string; label: string };
+export type Space = { dir: string; label: string; short: string; strands: string[] };
 export type Presence = { adapter: string; scope: string; strands: string[]; spaces: Space[] };
 export type StrandView = Strand & { live: boolean; space?: string };
-export type BraidView = Braid & { strands: StrandView[]; spaces: string[] };
+export type BraidView = Braid & { strands: StrandView[]; spaces: { label: string; short: string }[] };
 export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
 export type Knowledge = { braids: string[]; pointed: [string, string][]; strands: Strand[] };
 
@@ -48,7 +48,15 @@ export class Ponpoko {
     const key = `${presence.adapter}:${presence.scope}`;
     const before = this.presences.get(key);
     this.presences.set(key, { ...presence, until: this.now() + presenceMs });
-    if (!before || JSON.stringify([before.strands, before.spaces]) !== JSON.stringify([presence.strands, presence.spaces])) this.changed();
+    const lapsed = before !== undefined && before.until <= this.now();
+    if (!before || lapsed || JSON.stringify([before.strands, before.spaces]) !== JSON.stringify([presence.strands, presence.spaces])) this.changed();
+  }
+
+  expire(): void {
+    const now = this.now();
+    const lapsed = [...this.presences].filter(([, presence]) => presence.until <= now);
+    for (const [key] of lapsed) this.presences.delete(key);
+    if (lapsed.length > 0) this.changed();
   }
 
   absent(adapter: string, scope: string): void {
@@ -65,14 +73,13 @@ export class Ponpoko {
     const live = new Set(present.flatMap((presence) => presence.strands));
     const spaces = present.flatMap((presence) => presence.spaces);
     const view = (strand: Strand): StrandView => {
-      const dir = strand.place?.dir;
-      const space = live.has(strand.id) && dir ? spaces.find((candidate) => candidate.dir === dir)?.label : undefined;
+      const space = spaces.find((candidate) => candidate.strands.includes(strand.id))?.label;
       return { ...strand, live: live.has(strand.id), ...(space ? { space } : {}) };
     };
     const braids = [...this.model.braids.values()].map((braid): BraidView => ({
       ...braid,
       strands: [...this.model.strands.values()].filter((strand) => strand.braid === braid.id).map(view).sort((a, b) => a.since - b.since),
-      spaces: spaces.filter((space) => braidForDir(space.dir, this.model.pointed).id === braid.id).map((space) => space.label),
+      spaces: spaces.filter((space) => braidForDir(space.dir, this.model.pointed).id === braid.id).map(({ label, short }) => ({ label, short })),
     }));
     const shown = braids.filter((braid) => braid.strands.length > 0 || braid.spaces.length > 0 || braid.notes.length > 0);
     shown.sort((a, b) => firstMove(a, now) - firstMove(b, now) || a.name.localeCompare(b.name));
@@ -181,7 +188,7 @@ export class Ponpoko {
     if (!self) return undefined;
     const now = this.now();
     const live = new Set([...this.presences.values()].filter((presence) => presence.until > now).flatMap((presence) => presence.strands));
-    return [...this.model.strands.values()].find((strand) => strand.place?.handle === self && live.has(strand.id));
+    return [...this.model.strands.values()].find((strand) => strand.kind === "agent" && strand.place?.handle === self && live.has(strand.id));
   }
 
   private reportBraid(report: { braid?: string; dir?: string }): string {

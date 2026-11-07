@@ -26,9 +26,9 @@ describe("the komux bridge", () => {
     await hear(snapshot);
     await Bun.sleep(0);
     const view = core.snapshot();
-    expect(view.braids.map((braid) => [braid.name, braid.title, braid.spaces])).toEqual([
-      ["ptyparty", undefined, ["tab 2 ptyparty"]],
-      ["SC-1234", "Widget CSV import", ["tab 1 widgets"]],
+    expect(view.braids.map((braid) => [braid.name, braid.title, braid.spaces.map((space) => space.short)])).toEqual([
+      ["ptyparty", undefined, ["tab 2"]],
+      ["SC-1234", "Widget CSV import", ["tab 1"]],
     ]);
     expect(view.moves.map((strand) => [strand.label, strand.why, strand.live, strand.space])).toEqual([
       ["agent pane 5", "turn ended", true, "tab 2 ptyparty"],
@@ -75,6 +75,30 @@ describe("the komux bridge", () => {
     await hear(snapshot);
     expect(store.all().length).toBe(facts);
     expect(core.model.strands.get("pane:s1:5")).toMatchObject({ whose: "person", who: "Sam" });
+  });
+
+  test("lines heard while the service is down are caught up once it's back", async () => {
+    const { core, hear, bridge, service } = harness();
+    await hear(snapshot);
+    service.down = true;
+    await hear({ type: "tab.opened", tab: { id: 3, number: 3, name: "new", dir: side } });
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "waiting" } });
+    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
+    service.down = false;
+    await hear({ type: "focus", tabId: 1, paneId: 5 });
+    expect(core.model.strands.has("pane:s1:9")).toBe(false);
+    await bridge.heartbeat();
+    expect(core.model.strands.get("pane:s1:9")).toMatchObject({ whose: "you", why: "waiting on you" });
+    expect(core.model.strands.has("pane:s1:2")).toBe(false);
+  });
+
+  test("a bridge leaving an old komux doesn't take away the new one's presence", async () => {
+    const { core, hear, bridge } = harness();
+    await hear(snapshot);
+    const second = harness(1_000_000, undefined, core);
+    await second.hear({ server: "s2", type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: story }], agents: [{ paneId: 3, tabId: 1, state: "done" }], jobs: [] });
+    await bridge.leave();
+    expect(core.snapshot().moves.find((strand) => strand.id === "pane:s2:3")!.live).toBe(true);
   });
 
   test("badges each live tab with whose move its braid holds, sending only changes", async () => {

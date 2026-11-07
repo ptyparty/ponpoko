@@ -4,16 +4,20 @@ import { Bridge } from "./komux/bridge.ts";
 import { komuxLine } from "./komux/stream.ts";
 import { Store } from "./store.ts";
 
-export function harness(start = 1_000_000, store = new Store(":memory:")) {
+export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko) {
   let now = start;
-  const core = new Ponpoko(store, async () => ({ kind: "story", title: "Widget CSV import" }), () => now);
+  const core = shared ?? new Ponpoko(store, async () => ({ kind: "story", title: "Widget CSV import" }), () => now);
   const sent: unknown[] = [];
+  const service = { down: false };
+  const up = () => {
+    if (service.down) throw new Error("ponpoko isn't running");
+  };
   const bridge = new Bridge(
     {
-      knowledge: async () => core.knowledge(),
-      record: async (facts) => core.record("komux", facts),
-      present: async (presence) => core.present(presence),
-      absent: async (scope) => core.absent("komux", scope),
+      knowledge: async () => (up(), core.knowledge()),
+      record: async (facts) => (up(), core.record("komux", facts)),
+      present: async (presence) => (up(), core.present(presence)),
+      absent: async (scope) => (up(), core.absent("komux", scope)),
     },
     async (request) => {
       sent.push(request);
@@ -22,7 +26,8 @@ export function harness(start = 1_000_000, store = new Store(":memory:")) {
     () => now,
   );
   const hear = (line: Record<string, unknown>) => bridge.line(komuxLine.parse({ session: "main", server: "s1", ...line }));
-  return { core, bridge, sent, hear, store, tick: (ms: number) => (now += ms), now: () => now };
+  core.onChange(() => bridge.changed());
+  return { core, bridge, sent, hear, store, service, tick: (ms: number) => (now += ms), now: () => now };
 }
 
 export function recordingActions() {

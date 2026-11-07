@@ -24,7 +24,7 @@ export const request = z.discriminatedUnion("method", [
       adapter: z.string().min(1),
       scope: z.string().min(1),
       strands: z.array(z.string()),
-      spaces: z.array(z.object({ dir: z.string(), label: z.string() })),
+      spaces: z.array(z.object({ dir: z.string(), label: z.string(), short: z.string(), strands: z.array(z.string()) })),
     }),
   }),
   z.object({ method: z.literal("absent"), params: z.object({ adapter: z.string(), scope: z.string() }) }),
@@ -59,6 +59,7 @@ export async function serve(): Promise<void> {
   core.onChange(() => {
     for (const socket of watchers) socket.write('{"changed":true}\n');
   });
+  const expiry = setInterval(() => core.expire(), 15_000);
 
   const server = Bun.listen<{ buffer: string }>({
     unix: path,
@@ -85,6 +86,7 @@ export async function serve(): Promise<void> {
   });
 
   const stop = () => {
+    clearInterval(expiry);
     server.stop(true);
     rmSync(path, { force: true });
     process.exit(0);

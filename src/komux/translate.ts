@@ -110,13 +110,18 @@ export class Translator {
   presence(): { scope: string; strands: string[]; spaces: Space[] } | undefined {
     const live = this.live;
     if (!live) return undefined;
+    const agents = [...live.agents.values()].map((entry) => ({ id: agentStrandId(live.server, entry.paneId), tabId: entry.tabId }));
+    const jobs = [...live.jobs.values()].filter((entry) => entry.state === "failed" && !entry.agent).map((entry) => ({ id: jobStrandId(live.server, entry.id), tabId: entry.tabId }));
+    const strands = [...agents, ...jobs];
     return {
-      scope: live.session,
-      strands: [
-        ...[...live.agents.keys()].map((paneId) => agentStrandId(live.server, paneId)),
-        ...[...live.jobs.values()].filter((entry) => entry.state === "failed" && !entry.agent).map((entry) => jobStrandId(live.server, entry.id)),
-      ],
-      spaces: [...live.tabs.values()].map((entry) => ({ dir: entry.dir, label: `tab ${entry.number ?? "?"} ${entry.name}` })),
+      scope: `${live.session}/${live.server}`,
+      strands: strands.map((strand) => strand.id),
+      spaces: [...live.tabs.values()].map((entry) => ({
+        dir: entry.dir,
+        label: `tab ${entry.number ?? "?"} ${entry.name}`,
+        short: entry.number === undefined ? entry.name : `tab ${entry.number}`,
+        strands: strands.filter((strand) => strand.tabId === entry.id).map((strand) => strand.id),
+      })),
     };
   }
 

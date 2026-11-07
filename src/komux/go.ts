@@ -14,7 +14,7 @@ export async function goInKomux(strand: StrandView, braidDir: string | undefined
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
     return "focused";
   }
-  const dir = place?.dir ?? strand.place?.dir ?? braidDir;
+  const dir = strand.place?.dir ?? braidDir;
   if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
   const opened = await send({ method: "project.open", params: { target: dir } });
   if (!opened.ok) throw new Error(opened.error ?? "komux refused");

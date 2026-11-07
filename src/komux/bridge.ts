@@ -2,7 +2,7 @@ import { braidForDir } from "../braids.ts";
 import { ask, watch } from "../client.ts";
 import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
-import { komuxLine, sendKomux, subscribe, type KomuxLine } from "./stream.ts";
+import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
 import { known, Translator } from "./translate.ts";
 
 export type Service = {
@@ -20,6 +20,8 @@ export class Bridge {
   readonly translator = new Translator();
   private readonly badgesSent = new Map<number, string>();
   private behind = false;
+  private cached: Knowledge | undefined;
+  private last: Knowledge = { braids: [], pointed: [], strands: [] };
 
   constructor(
     private readonly service: Service,
@@ -28,30 +30,57 @@ export class Bridge {
   ) {}
 
   async line(line: KomuxLine): Promise<void> {
-    try {
-      const facts = this.translator.facts(line, known(await this.service.knowledge()));
-      if (facts.length > 0) await this.service.record(facts);
-      this.behind = false;
-    } catch {
+    const knowledge = await this.knowledge().catch(() => undefined);
+    const facts = this.translator.facts(line, known(knowledge ?? this.last));
+    if (!knowledge || this.behind) {
       this.behind = true;
       return;
     }
+    if (!(await this.record(facts))) return;
     await this.publish();
   }
 
   async heartbeat(): Promise<void> {
-    const again = this.behind ? this.translator.resnapshot() : undefined;
-    if (again) return this.line(again);
+    if (this.behind) {
+      const again = this.translator.resnapshot();
+      this.cached = undefined;
+      const knowledge = await this.knowledge().catch(() => undefined);
+      if (!again || !knowledge) return;
+      if (!(await this.record(this.translator.facts(again, known(knowledge))))) return;
+      this.behind = false;
+    }
     await this.publish();
+  }
+
+  changed(): void {
+    this.cached = undefined;
   }
 
   async publish(): Promise<void> {
     try {
       const presence = this.translator.presence();
       if (presence) await this.service.present({ adapter: "komux", ...presence });
-      await this.syncBadges(await this.service.knowledge());
+      await this.syncBadges(await this.knowledge());
     } catch {
       this.behind = true;
+    }
+  }
+
+  private async knowledge(): Promise<Knowledge> {
+    this.cached ??= await this.service.knowledge();
+    this.last = this.cached;
+    return this.cached;
+  }
+
+  private async record(facts: Fact[]): Promise<boolean> {
+    if (facts.length === 0) return true;
+    try {
+      await this.service.record(facts);
+      this.cached = undefined;
+      return true;
+    } catch {
+      this.behind = true;
+      return false;
     }
   }
 
@@ -109,11 +138,14 @@ export async function runBridge(env = process.env): Promise<number> {
     queue = queue.then(work).catch(() => undefined);
   };
   const closed = Promise.withResolvers<void>();
-  await subscribe(events, (line) => serial(() => bridge.line(komuxLine.parse(line))), () => closed.resolve());
+  await subscribe(events, (line) => serial(() => bridge.line(line)), () => closed.resolve());
   let watching: { close: () => void } | undefined;
   const keepWatching = async () => {
     watching ??= await watch(
-      () => serial(() => bridge.publish()),
+      () => {
+        bridge.changed();
+        serial(() => bridge.publish());
+      },
       () => (watching = undefined),
     ).catch(() => undefined);
   };
