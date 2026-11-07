@@ -37,7 +37,7 @@ export const request = z.discriminatedUnion("method", [
   z.object({ method: z.literal("close-move"), params: z.object({ move: z.string() }) }),
   z.object({ method: z.literal("seen"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("forget"), params: z.object({ strand: z.string() }) }),
-  z.object({ method: z.literal("snooze"), params: z.object({ strand: z.string(), until: z.number() }) }),
+  z.object({ method: z.literal("snooze"), params: z.object({ strand: z.string(), until: z.number(), untilNeeded: z.boolean().optional() }) }),
   z.object({ method: z.literal("note"), params: z.object({ strand: z.string(), text: z.string().min(1).max(500) }) }),
   z.object({ method: z.literal("point"), params: z.object({ dir: z.string(), to: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("changes"), params: z.object({ since: z.number() }) }),
@@ -152,7 +152,7 @@ export function handle(core: Ponpoko, request: Request): Response {
         core.forget(request.params.strand);
         return { ok: true };
       case "snooze":
-        core.snooze(request.params.strand, request.params.until);
+        core.snooze(request.params.strand, request.params.until, request.params.untilNeeded);
         return { ok: true };
       case "note":
         core.note(request.params.strand, request.params.text);

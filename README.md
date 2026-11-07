@@ -41,7 +41,7 @@ Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs wor
 
 Pass `ponpoko({ deal, catchUp, leader })` to pick other keys.
 
-In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens what its latest move links to (a notebook page in quoll), `z` snoozes (`t` then types a time such as `14:30`, `mon 9`, `2h` or `nov 12`), `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
+In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens what its latest move links to (a notebook page in quoll), `z` snoozes (`t` then types a time such as `14:30`, `mon 9`, `2h` or `nov 12`, and `u` snoozes it till it or a strand under it becomes your move, or one under it is done), `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
 
 Enter on a strand no one is on offers to resume the last Claude that worked on it, or to start a fresh one briefed with the strand's moves and links. Either way it opens the strand's project with its layout and wakes the Claude docked there. Only when that Claude is busy, or the layout has none, does it open a pane running `komux claude`; set `PONPOKO_CLAUDE` in komux's `env`, such as `komux claude --mode auto`, to run something else.
 

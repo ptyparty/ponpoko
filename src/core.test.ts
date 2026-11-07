@@ -144,6 +144,25 @@ describe("strands", () => {
     expect(strandNamed(core, "sc-1 › a").unseen).toBe(false);
   });
 
+  test("a strand snoozed till needed wakes when it or a strand under it becomes your move, or one under it is done", () => {
+    const { core, tick } = setup();
+    core.add(undefined, "sc-1 › a");
+    core.add(undefined, "sc-1 › b");
+    core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "look" });
+    const epic = strandNamed(core, "sc-1").id;
+    const moves = () => core.snapshot().moves.map((strand) => strand.name);
+    core.snooze(epic, Number.MAX_SAFE_INTEGER, true);
+    expect(moves()).toEqual(["a", "b"]);
+    tick(60_000);
+    core.status({ self: "tool:1", strand: "sc-1 › a", text: "working" });
+    expect(moves()).toEqual(["b"]);
+    core.wait({ self: "tool:1", strand: "sc-1 › a", who: "you", kind: "you", what: "try it" });
+    expect(moves()).toEqual(["sc-1", "b", "a"]);
+    core.snooze(epic, Number.MAX_SAFE_INTEGER, true);
+    core.done(strandNamed(core, "sc-1 › b").id);
+    expect(moves()).toEqual(["sc-1", "a"]);
+  });
+
   test("players are live only while something says they're present", () => {
     const { core, tick } = setup();
     core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "look" });

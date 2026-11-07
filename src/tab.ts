@@ -2,7 +2,7 @@ import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snooze
 import { goPlace, goTarget, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { clock, rows, type Row, type Tone } from "./render.ts";
+import { clock, rows, untilNeeded, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -23,7 +23,7 @@ const help = [
   "   m         move the strand under another, named by its path, such as ptyparty › ponpoko; a rogue's loose strand merges into it",
   "   d         mark the strand done",
   "   o         open what the strand's latest move links to, such as a notebook page (📓) in quoll",
-  "   z         snooze the strand, then pick how long, or t to type a time such as 14:30, mon 9, 2h or nov 12",
+  "   z         snooze the strand, then pick how long, t to type a time such as 14:30, mon 9, 2h or nov 12, or u till it or a strand under it needs you",
   "   n         add a note to the strand",
   "   x         forget a strand ponpoko has wrong",
   "   p         point the strand's directory at a strand, so agents there work on it",
@@ -91,6 +91,7 @@ export class TabController {
         const until = choice.until(this.now());
         await this.run(() => this.actions.snooze(strand.id, until), `Snoozed till ${clock(until)}`);
       }
+      if (key.name === untilNeeded.key && strand) await this.run(() => this.actions.snooze(strand.id, untilNeeded.until, true), `Snoozed till ${untilNeeded.said}`);
       return undefined;
     }
     if (mode.kind === "pickup") {

@@ -310,9 +310,9 @@ export class Ponpoko {
     this.record("you", [{ type: "strand.forgotten", strand }]);
   }
 
-  snooze(strand: string, until: number): void {
+  snooze(strand: string, until: number, untilNeeded = false): void {
     this.mustHave(strand);
-    this.record("you", [{ type: "strand.snoozed", strand, until }]);
+    this.record("you", [{ type: "strand.snoozed", strand, until, ...(untilNeeded ? { untilNeeded } : {}) }]);
   }
 
   note(strand: string, text: string): void {

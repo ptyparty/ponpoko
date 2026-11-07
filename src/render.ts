@@ -1,8 +1,15 @@
 import type { MoveView, Snapshot, StrandView } from "./core.ts";
 import type { Recorded, Whose } from "./events.ts";
+import { whenLabel } from "./when.ts";
 
 export type Row = { text: string; strand?: StrandView; tone?: Tone };
 export type Tone = "you" | "agent" | "waiting" | "quiet" | "heading" | "dim";
+
+export const untilNeeded = { key: "u", until: Number.MAX_SAFE_INTEGER, said: "something under it needs you" };
+
+export function snoozedLabel(strand: { snoozedUntil?: number; untilNeeded?: boolean }, now: number): string {
+  return strand.untilNeeded ? `till ${untilNeeded.said}` : `till ${whenLabel(strand.snoozedUntil ?? now, now)}`;
+}
 
 export function age(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
@@ -59,7 +66,7 @@ export function holder(strand: StrandView, now: number): string {
   const moves = strand.open.filter((move) => (move.player === "you" ? "you" : move.by.kind === "job" ? "machine" : move.by.kind) === standing.whose);
   switch (standing.whose) {
     case "you":
-      if (snoozed(strand, now)) return `snoozed till ${clock(strand.snoozedUntil!)}`;
+      if (snoozed(strand, now)) return `snoozed ${snoozedLabel(strand, now)}`;
       return strand.unseen ? "yours" : strand.dismissedAt >= standing.since ? "yours, toast dismissed" : "yours, seen";
     case "agent":
       return `${moves.map((move) => move.by.who).join(", ") || "agent"} working`;
@@ -154,7 +161,7 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
     case "strand.dismissed":
       return `${name(event.strand)} toast dismissed`;
     case "strand.snoozed":
-      return `${name(event.strand)} snoozed till ${clock(event.until)}`;
+      return `${name(event.strand)} snoozed till ${event.untilNeeded ? untilNeeded.said : clock(event.until)}`;
     case "player.joined":
       return `${event.who} joined`;
     case "player.gone":

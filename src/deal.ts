@@ -2,7 +2,7 @@ import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snooze
 import { state } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { goPlace, goTarget, pickupOffer, startsAt } from "./komux/go.ts";
-import { age, cause, clock, fit, holder } from "./render.ts";
+import { age, cause, clock, fit, holder, snoozedLabel, untilNeeded } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -72,6 +72,7 @@ export class Dealer {
       this.typed = "";
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
       if (choice && card) await this.act(() => this.actions.snooze(card.id, choice.until(this.now())), `Snoozed till ${clock(choice.until(this.now()))}`);
+      if (key.name === untilNeeded.key && card) await this.act(() => this.actions.snooze(card.id, untilNeeded.until, true), `Snoozed till ${untilNeeded.said}`);
       return undefined;
     }
     if (this.mode === "pickup") {
@@ -175,7 +176,7 @@ export class Dealer {
     for (const strand of this.hand) row(strand, `${cause(strand)} · ${age(now - strand.own.since)}`, true);
     for (const section of this.others) {
       listed.push({ line: style.dim(` ${section.title} · ${section.strands.length}`) });
-      for (const strand of section.strands) row(strand, section.title === "snoozed" ? `till ${whenLabel(strand.snoozedUntil!, now)} · ${othersCause(strand)}` : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
+      for (const strand of section.strands) row(strand, section.title === "snoozed" ? `${snoozedLabel(strand, now)} · ${othersCause(strand)}` : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
     }
     const room = Math.max(6, height - 20);
     const picked = listed.findIndex((entry) => entry.row === this.selected);

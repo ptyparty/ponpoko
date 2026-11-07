@@ -46,7 +46,7 @@ describe("the command tab", () => {
     await type(tab, "epic 9");
     await tab.key({ name: "d" });
     await tab.key({ name: "z" });
-    expect(plain(tab.view(100, 20)).at(-1)).toContain("snooze for");
+    expect(plain(tab.view(100, 20)).at(-1)).toContain("snooze  1 15m");
     await tab.key({ name: "2" });
     await tab.key({ name: "x" });
     await tab.key({ name: "n" });

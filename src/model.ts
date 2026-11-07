@@ -11,6 +11,7 @@ export type Strand = {
   seenAt: number;
   dismissedAt: number;
   snoozedUntil?: number;
+  untilNeeded?: boolean;
   notes: { at: number; text: string }[];
 };
 export type Player = { id: string; kind: PlayerKind; who: string; adapter?: string; place?: Place; resume?: string; joined: number; gone?: number };
@@ -80,6 +81,7 @@ function applyFact(model: Model, event: Recorded): void {
       return;
     case "strand.done":
       withStrand(model, event.strand, (strand) => void (strand.done = event.at));
+      wakeAbove(model, event.strand);
       return;
     case "strand.reopened":
       withStrand(model, event.strand, (strand) => void (strand.done = undefined));
@@ -104,7 +106,10 @@ function applyFact(model: Model, event: Recorded): void {
       withStrand(model, event.strand, (strand) => void (strand.dismissedAt = event.at));
       return;
     case "strand.snoozed":
-      withStrand(model, event.strand, (strand) => void (strand.snoozedUntil = event.until));
+      withStrand(model, event.strand, (strand) => {
+        strand.snoozedUntil = event.until;
+        strand.untilNeeded = event.untilNeeded || undefined;
+      });
       return;
     case "player.joined": {
       const old = model.players.get(event.player);
@@ -127,6 +132,10 @@ function applyFact(model: Model, event: Recorded): void {
     case "move.opened":
       if (!model.strands.has(event.strand)) return;
       model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, from: event.at, source: event.source });
+      if (event.player === you) {
+        wake(model, event.strand);
+        wakeAbove(model, event.strand);
+      }
       return;
     case "move.described": {
       const move = model.moves.get(event.move);
@@ -264,6 +273,17 @@ export function rolled(model: Model, strand: Strand): Standing {
   const standing = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0] ?? { since: strand.made, why: "", moves: [] };
   index.rolled.set(strand.id, standing);
   return standing;
+}
+
+function wakeAbove(model: Model, id: string): void {
+  for (const above of ancestors(model, id)) wake(model, above);
+}
+
+function wake(model: Model, id: string): void {
+  const strand = model.strands.get(id);
+  if (!strand?.untilNeeded) return;
+  strand.snoozedUntil = undefined;
+  strand.untilNeeded = undefined;
 }
 
 export function snoozed(strand: Strand, now: number): boolean {

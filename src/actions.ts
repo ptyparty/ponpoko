@@ -1,7 +1,7 @@
 import { ask } from "./client.ts";
 import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
-import { age } from "./render.ts";
+import { age, untilNeeded } from "./render.ts";
 import type { Link } from "./model.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -9,7 +9,7 @@ export type Actions = {
   go: (strand: StrandView, strands: StrandView[]) => Promise<unknown>;
   pickUp: (strand: StrandView, how: "resume" | "fresh") => Promise<unknown>;
   forget: (strand: string) => Promise<unknown>;
-  snooze: (strand: string, until: number) => Promise<unknown>;
+  snooze: (strand: string, until: number, untilNeeded?: boolean) => Promise<unknown>;
   note: (strand: string, text: string) => Promise<unknown>;
   point: (dir: string, to: string) => Promise<unknown>;
   seen: (strand: string) => Promise<unknown>;
@@ -28,7 +28,7 @@ export const serviceActions: Actions = {
   },
   pickUp: (strand, how) => pickUpInKomux(strand, how),
   forget: (strand) => ask({ method: "forget", params: { strand } }),
-  snooze: (strand, until) => ask({ method: "snooze", params: { strand, until } }),
+  snooze: (strand, until, untilNeeded) => ask({ method: "snooze", params: { strand, until, ...(untilNeeded ? { untilNeeded } : {}) } }),
   note: (strand, text) => ask({ method: "note", params: { strand, text } }),
   point: (dir, to) => ask({ method: "point", params: { dir, to } }),
   seen: (strand) => ask({ method: "seen", params: { strand } }),
@@ -45,9 +45,9 @@ export const serviceActions: Actions = {
 export type SnoozeChoice = { key: string; label: string; until: (now: number) => number };
 
 export const snoozeChoices: SnoozeChoice[] = [
-  { key: "1", label: "15 minutes", until: (now) => now + 15 * 60_000 },
-  { key: "2", label: "1 hour", until: (now) => now + 60 * 60_000 },
-  { key: "3", label: "4 hours", until: (now) => now + 4 * 60 * 60_000 },
+  { key: "1", label: "15m", until: (now) => now + 15 * 60_000 },
+  { key: "2", label: "1h", until: (now) => now + 60 * 60_000 },
+  { key: "3", label: "4h", until: (now) => now + 4 * 60 * 60_000 },
   {
     key: "4",
     label: "tomorrow 9:00",
@@ -61,7 +61,7 @@ export const snoozeChoices: SnoozeChoice[] = [
 ];
 
 export function snoozeLine(): string {
-  return `snooze for  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("   ")}   t until…   esc cancel`;
+  return `snooze  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("  ")}  t a time  ${untilNeeded.key} till needed  esc`;
 }
 
 export function timeLine(typed: string, now: number): string {
