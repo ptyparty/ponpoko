@@ -72,6 +72,36 @@ describe("the deck", () => {
     expect(calls).toEqual([["go", strandNamed(core, "sc-7").id]]);
   });
 
+  test("puts yours on the left and everyone else's on the right when the popup is wide, and moves between them", async () => {
+    const { core, hear, tick, now } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets" }, { id: 2, number: 2, name: "side", dir: "/w/side" }, { id: 3, number: 3, name: "docs", dir: "/w/docs" }], agents: [], jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
+    await hear({ type: "agent.state", agent: { paneId: 3, tabId: 3, state: "done" } });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "working" } });
+    core.wait({ strand: "sc-7", who: "Copilot", kind: "machine", what: "PR review" }, "you");
+    tick(60_000);
+    const dealer = new Dealer(recordingActions().actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    const lines = plain(dealer.view(120, 40)).split("\n");
+    expect(lines[0]).toMatch(/^ your move · 2 +│ agents · 1$/);
+    expect(lines[1]).toMatch(/^ ▸ 1  claude in \w+ .*│   3  claude in side/);
+    expect(lines[2]).toMatch(/^   2  claude in \w+ .*│ waiting on others · 1$/);
+    expect(lines[3]).toMatch(/^ +│   4  sc-7 /);
+    await dealer.key({ name: "j" });
+    await dealer.key({ name: "j" });
+    expect(dealer.card()?.name).not.toBe("claude in side");
+    await dealer.key({ name: "tab" });
+    expect(dealer.card()?.name).toBe("claude in side");
+    await dealer.key({ name: "j" });
+    expect(dealer.card()?.name).toBe("sc-7");
+    await dealer.key({ name: "h" });
+    await dealer.key({ name: "l" });
+    expect(dealer.card()?.name).toBe("sc-7");
+    await dealer.key({ name: "k" });
+    await dealer.key({ name: "k" });
+    expect(dealer.card()?.name).toBe("claude in side");
+  });
+
   test("catching up lists only your new moves", async () => {
     const { dealer } = await setup(true);
     await dealer.key({ name: "j" });

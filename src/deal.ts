@@ -15,6 +15,8 @@ export class Dealer {
   private skipped: string[] = [];
   private dealt = new Set<string>();
   private selected = 0;
+  private wide = false;
+  private sideAt = { mine: 0, others: 0 };
   private typed = "";
   mode: Mode = "card";
   message: string | undefined;
@@ -118,12 +120,27 @@ export class Dealer {
         }
         return undefined;
       case "j":
-      case "down":
-        this.selected = Math.min(this.selected + 1, Math.max(0, this.rows().length - 1));
+      case "down": {
+        const last = this.wide && this.selected < this.hand.length ? this.hand.length - 1 : this.rows().length - 1;
+        this.selected = Math.min(this.selected + 1, Math.max(0, last));
         return undefined;
+      }
       case "k":
-      case "up":
-        this.selected = Math.max(this.selected - 1, 0);
+      case "up": {
+        const first = this.wide && this.selected >= this.hand.length ? this.hand.length : 0;
+        this.selected = Math.max(this.selected - 1, first);
+        return undefined;
+      }
+      case "tab":
+        this.side(this.selected < this.hand.length ? "others" : "mine");
+        return undefined;
+      case "l":
+      case "right":
+        this.side("others");
+        return undefined;
+      case "h":
+      case "left":
+        this.side("mine");
         return undefined;
       case "z":
         if (card) this.mode = "snooze";
@@ -137,6 +154,15 @@ export class Dealer {
     }
     if (/^[1-9]$/.test(key.name) && Number(key.name) <= this.rows().length) this.selected = Number(key.name) - 1;
     return undefined;
+  }
+
+  private side(to: "mine" | "others"): void {
+    const count = this.rows().length - this.hand.length;
+    if (to === "others" && count === 0) return;
+    if (to === "mine" && this.hand.length === 0) return;
+    if (this.selected < this.hand.length) this.sideAt.mine = this.selected;
+    else this.sideAt.others = this.selected - this.hand.length;
+    this.selected = to === "mine" ? Math.min(this.sideAt.mine, this.hand.length - 1) : this.hand.length + Math.min(this.sideAt.others, count - 1);
   }
 
   private async timeKey(key: Key): Promise<undefined> {
@@ -166,24 +192,28 @@ export class Dealer {
     const place = goPlace(card, aboveOf(this.strands(), card));
     const where = target ? `→ ${target.who} in ${target.space ?? "its tab"}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
     const now = this.snapshot.now;
-    const listed: { line: string; row?: number }[] = [{ line: style.dim(` ${hand} · ${this.hand.length}${this.hand.length === 0 ? "  ✓ nothing is waiting on you" : ""}`) }];
+    this.wide = width >= 100 && this.others.length > 0;
+    const column = this.wide ? Math.floor((width - 3) / 2) : width;
+    const mine: Listed[] = [{ line: style.dim(` ${hand} · ${this.hand.length}${this.hand.length === 0 ? "  ✓ nothing is waiting on you" : ""}`) }];
+    const theirs: Listed[] = [];
     let index = 0;
-    const row = (strand: StrandView, what: string, mine: boolean) => {
+    const row = (into: Listed[], strand: StrandView, what: string, yours: boolean) => {
       const at = index++;
-      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${fit(strand.name, 24)}  ${what}`, width - 2).trimEnd();
-      listed.push({ row: at, line: mine && urgency(strand) === 0 ? style.amber(` ${text}`) : at === this.selected ? ` ${text}` : style.dim(` ${text}`) });
+      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${fit(strand.name, this.wide ? 18 : 24)}  ${what}`, column - 2).trimEnd();
+      into.push({ row: at, line: yours && urgency(strand) === 0 ? style.amber(` ${text}`) : at === this.selected ? ` ${text}` : style.dim(` ${text}`) });
     };
-    for (const strand of this.hand) row(strand, `${cause(strand)} · ${age(now - strand.own.since)}`, true);
+    for (const strand of this.hand) row(mine, strand, `${cause(strand)} · ${age(now - strand.own.since)}`, true);
     for (const section of this.others) {
-      listed.push({ line: style.dim(` ${section.title} · ${section.strands.length}`) });
-      for (const strand of section.strands) row(strand, section.title === "snoozed" ? `${snoozedLabel(strand, now)} · ${othersCause(strand)}` : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
+      theirs.push({ line: style.dim(` ${section.title} · ${section.strands.length}`) });
+      for (const strand of section.strands) row(theirs, strand, section.title === "snoozed" ? `${snoozedLabel(strand, now)} · ${othersCause(strand)}` : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
     }
     const room = Math.max(6, height - 20);
-    const picked = listed.findIndex((entry) => entry.row === this.selected);
-    const start = Math.max(0, Math.min(picked - Math.floor(room / 2), listed.length - room));
+    const list = this.wide
+      ? sideBySide(scrolled(mine, this.selected, room), scrolled(theirs, this.selected, room), column)
+      : scrolled([...mine, ...theirs], this.selected, room);
     const lines = [
-      ...listed.slice(start, start + room).map((entry) => entry.line),
-      "",
+      ...list,
+      ...(this.wide ? [style.dim(` ${"─".repeat(Math.max(0, width - 2))}`)] : [""]),
       style.amber(style.bold(fit(` ● ${card.name}${card.title ? `  ${card.title}` : ""}`, width - 1).trimEnd())),
       ...(card.above ?? []).map((above) => style.dim(fit(`   in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, width - 1).trimEnd())),
       "",
@@ -202,7 +232,7 @@ export class Dealer {
           ? style.amber(` forget ${card.name}?  y yes   any other key no`)
           : this.mode === "pickup" && options
             ? style.amber(` ${pickupLine(options, this.snapshot.now)}`)
-            : style.dim(` ⏎ go  j/k pick  s skip${startsAt(card) ? "  f fresh" : ""}  d done  z snooze  x forget  esc`);
+            : style.dim(` ⏎ go  j/k pick${this.wide ? "  tab side" : ""}  s skip${startsAt(card) ? "  f fresh" : ""}  d done  z snooze  x forget  esc`);
     if (this.message) lines.push(style.amber(` ${this.message}`));
     lines.push(footer);
     return lines;
@@ -249,6 +279,22 @@ export async function runDeal(args: string[]): Promise<number> {
   clearInterval(ticker);
   screen.close();
   return 0;
+}
+
+type Listed = { line: string; row?: number };
+
+function scrolled(listed: Listed[], selected: number, room: number): string[] {
+  const picked = listed.findIndex((entry) => entry.row === selected);
+  const start = picked < 0 ? 0 : Math.max(0, Math.min(picked - Math.floor(room / 2), listed.length - room));
+  return listed.slice(start, start + room).map((entry) => entry.line);
+}
+
+function sideBySide(left: string[], right: string[], column: number): string[] {
+  const visible = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "").length;
+  return Array.from({ length: Math.max(left.length, right.length) }, (_, at) => {
+    const line = left[at] ?? "";
+    return `${line}${" ".repeat(Math.max(0, column - visible(line)))}${style.dim(" │")}${right[at] ?? ""}`;
+  });
 }
 
 function othersCause(strand: StrandView): string {
