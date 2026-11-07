@@ -238,13 +238,27 @@ describe("go in komux", () => {
     expect(brief(strand)).toContain('You\'re picking up the strand "sc-1234" in ponpoko: Widget CSV import.');
     expect(brief(strand)).toContain("- claude: fixing the importer (quoll sc-1234/plan.md)");
     const { sent, control } = recorder();
-    await pickUpInKomux(strand, "resume", { ...env, PONPOKO_CLAUDE: "komux claude --mode auto" }, control);
+    await pickUpInKomux(strand, "resume", env, control);
     await pickUpInKomux(strand, "fresh", env, control);
     expect(sent).toEqual([
-      { method: "project.open", params: { target: story } },
-      { method: "pane.open", params: { command: ["komux", "claude", "--mode", "auto", "--resume", "c1"], cwd: story, placement: "right", name: "claude" } },
-      { method: "project.open", params: { target: story } },
-      { method: "pane.open", params: { command: ["komux", "claude", "--prompt", brief(strand)], cwd: story, placement: "right", name: "claude" } },
+      { method: "claude.start", params: { target: story, resume: "c1" } },
+      { method: "claude.start", params: { target: story, prompt: brief(strand) } },
     ]);
+  });
+
+  test("picking up falls back to a new pane when the tab's docked Claude is busy or missing", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
+    const strand = strandNamed(core, "sc-1234");
+    const sent: unknown[] = [];
+    const control = async (request: unknown) => {
+      sent.push(request);
+      return (request as { method: string }).method === "claude.start" ? { ok: false, error: "busy: Claude is already running in that tab" } : { ok: true };
+    };
+    await pickUpInKomux(strand, "resume", { ...env, PONPOKO_CLAUDE: "komux claude --mode auto" }, control);
+    expect(sent.at(-1)).toEqual({ method: "pane.open", params: { command: ["komux", "claude", "--mode", "auto", "--resume", "c1"], cwd: story, placement: "right", name: "claude" } });
+    const old = async (request: unknown) => ((request as { method: string }).method === "claude.start" ? { ok: false, error: "Invalid input" } : { ok: true });
+    await expect(pickUpInKomux(strand, "resume", env, old)).rejects.toThrow("it may need restarting");
   });
 });

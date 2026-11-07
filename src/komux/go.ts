@@ -87,9 +87,10 @@ export async function pickUpInKomux(strand: StrandView, how: "resume" | "fresh",
   if (how === "resume" && !resume) throw new Error("no Claude on this strand to resume");
   const dir = resume?.dir ?? options?.dir;
   if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
-  const opened = await send({ method: "project.open", params: { target: dir } });
-  if (!opened.ok) throw new Error(opened.error ?? "komux refused");
+  const docked = await send({ method: "claude.start", params: { target: dir, ...(resume ? { resume: resume.session } : { prompt: brief(strand) }) } });
+  if (docked.ok) return;
+  if (!/^(busy|none):/.test(docked.error ?? "")) throw new Error(`komux refused: ${docked.error ?? "no reason"}; it may need restarting to start Claude for ponpoko`);
   const command = [...claudeCommand(env), ...(resume ? ["--resume", resume.session] : ["--prompt", brief(strand)])];
   const pane = await send({ method: "pane.open", params: { command, cwd: dir, placement: "right", name: "claude" } });
-  if (!pane.ok) throw new Error(pane.error === undefined ? "komux refused" : `komux refused: ${pane.error}; it may need restarting to open panes for ponpoko`);
+  if (!pane.ok) throw new Error(`komux refused: ${pane.error ?? "no reason"}`);
 }
