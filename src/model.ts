@@ -81,6 +81,9 @@ function applyFact(model: Model, event: Recorded): void {
     case "strand.done":
       withStrand(model, event.strand, (strand) => void (strand.done = event.at));
       return;
+    case "strand.reopened":
+      withStrand(model, event.strand, (strand) => void (strand.done = undefined));
+      return;
     case "strand.forgotten":
       remove(model, event.strand, undefined);
       return;

@@ -5,7 +5,7 @@ import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
 async function setup(unseen = false) {
   const { core, hear, tick, now } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { braid: "sc-1" } }, { id: 2, number: 2, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }, { id: 2, number: 2, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
   await hear({ type: "agent.state", agent: { paneId: 3, tabId: 1, state: "done" } });
   tick(60_000);
   await hear({ type: "agent.state", agent: { paneId: 4, tabId: 2, state: "waiting" } });

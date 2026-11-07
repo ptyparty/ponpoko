@@ -12,6 +12,7 @@ export const fact = z.discriminatedUnion("type", [
   z.object({ type: z.literal("strand.titled"), strand: id, kind: z.string().optional(), title: z.string() }),
   z.object({ type: z.literal("strand.parented"), strand: id, parent: id.optional() }),
   z.object({ type: z.literal("strand.done"), strand: id, why: z.string() }),
+  z.object({ type: z.literal("strand.reopened"), strand: id }),
   z.object({ type: z.literal("strand.forgotten"), strand: id }),
   z.object({ type: z.literal("strand.merged"), strand: id, into: id }),
   z.object({ type: z.literal("strand.note"), strand: id, text: z.string() }),

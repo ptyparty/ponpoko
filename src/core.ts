@@ -44,7 +44,7 @@ export type StrandView = Strand & {
   dir?: string;
 };
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
-export type Knowledge = { strands: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[] };
+export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
 export type StatusReport = Where & { text: string; page?: string };
@@ -115,6 +115,7 @@ export class Ponpoko {
     }
     return {
       strands: [...this.model.strands.values()].filter((strand) => isLive(this.model, strand)),
+      closed: [...this.model.strands.values()].filter((strand) => strand.done !== undefined),
       players: [...this.model.players.values()].filter((player) => player.gone === undefined),
       open: moves.filter((move) => move.until === undefined),
       links: [...this.model.links.values()].filter((link) => link.adapter === "dir"),

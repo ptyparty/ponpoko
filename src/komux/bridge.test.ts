@@ -8,7 +8,7 @@ const side = "/home/me/work/ptyparty";
 const snapshot = {
   type: "snapshot",
   tabs: [
-    { id: 1, number: 1, name: "widgets", dir: story, labels: { braid: "sc-1234" } },
+    { id: 1, number: 1, name: "widgets", dir: story, labels: { strand: "sc-1234" } },
     { id: 2, number: 2, name: "ptyparty", dir: side },
   ],
   agents: [
@@ -129,6 +129,33 @@ describe("the komux bridge", () => {
     await hear(snapshot);
     expect(line(core, "  sc-1234")).toBe("  sc-1234 you pane:s1:2: working; you(job:s1:7): build failed (exit 1)");
     expect(core.snapshot().strands.filter((strand) => strand.name === "sc-1234")).toHaveLength(1);
+  });
+
+  test("opening a tab labelled with a strand makes that strand at once, and it's yours", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, agents: [], jobs: [] });
+    await hear({ type: "tab.opened", tab: { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235", pr: "540" } } });
+    expect(line(core, "sc-1235")).toBe("sc-1235 you");
+    expect(strandNamed(core, "sc-1235").own.why).toBe("no one on it");
+    await hear({ type: "tab.opened", tab: { id: 4, number: 4, name: "another", dir: "/w/x", labels: { strand: "SC-1235" } } });
+    expect(core.snapshot().strands.filter((strand) => strand.name === "sc-1235")).toHaveLength(1);
+  });
+
+  test("a finished strand isn't made again when its Claude goes idle, and comes back when you prompt it or open its tab", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
+    core.doneBy({ self: "komux:s1:2" }, "finished");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "idle", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBeUndefined();
+    await hear({ ...snapshot, jobs: [], agents: [{ paneId: 2, tabId: 1, state: "idle", sessionId: "c1" }] });
+    expect(line(core, "sc-1234")).toBeUndefined();
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working");
+    expect(core.snapshot().strands.filter((strand) => strand.name === "sc-1234")).toHaveLength(1);
+    core.doneBy({ self: "komux:s1:2" }, "finished again");
+    await hear({ type: "tab.opened", tab: { id: 5, number: 5, name: "widgets again", dir: story, labels: { strand: "sc-1234" } } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you");
   });
 
   test("reconnecting or replaying a snapshot records nothing new", async () => {

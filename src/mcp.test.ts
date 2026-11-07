@@ -7,7 +7,7 @@ import { harness } from "./test-harness.ts";
 
 async function setup() {
   const { core, hear } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7", labels: { braid: "sc-7" } }], agents: [{ paneId: 2, tabId: 1, state: "working" }], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-7", labels: { strand: "sc-7" } }], agents: [{ paneId: 2, tabId: 1, state: "working" }], jobs: [] });
   const send = async (request: Parameters<typeof handle>[1]) => {
     const response = await handle(core, request);
     if (!response.ok) throw new Error(response.error);

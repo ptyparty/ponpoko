@@ -5,7 +5,7 @@ import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
 async function setup() {
   const { core, hear } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { braid: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
   core.add(strandNamed(core, "sc-1").id, "tests");
   const { actions, calls } = recordingActions();
   const tab = new TabController(actions, () => 1_000_000);
@@ -77,7 +77,7 @@ describe("the command tab", () => {
 
   test("Enter on a strand no one is on offers to resume its last Claude or start a fresh one", async () => {
     const { core, hear } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { braid: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done", sessionId: "c2" }], jobs: [] });
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done", sessionId: "c2" }], jobs: [] });
     await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
     const { actions, calls } = recordingActions();
     const tab = new TabController(actions, () => 1_000_000);

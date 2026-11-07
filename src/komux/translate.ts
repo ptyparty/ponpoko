@@ -5,7 +5,7 @@ import type { KomuxAgent, KomuxJob, KomuxLine, KomuxTab } from "./stream.ts";
 
 export type KomuxPlace = { adapter: "komux"; handle: string; session: string; server: string; tabId: number; paneId: number; dir: string; sessionId?: string; state?: string; asking?: boolean };
 
-export type Known = { strands: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string> };
+export type Known = { strands: Map<string, Strand>; closed: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string> };
 type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob> };
 
 const yourMoves: Record<string, string> = {
@@ -31,6 +31,7 @@ export function jobPlayerId(server: string, jobId: number): string {
 export function known(knowledge: Knowledge): Known {
   return {
     strands: new Map(knowledge.strands.map((strand) => [strand.id, strand])),
+    closed: new Map((knowledge.closed ?? []).map((strand) => [strand.id, strand])),
     players: new Map(knowledge.players.map((player) => [player.id, player])),
     open: [...knowledge.open],
     links: [...knowledge.links],
@@ -52,6 +53,7 @@ export class Translator {
     switch (line.type) {
       case "snapshot": {
         live.tabs = new Map(line.tabs.map((entry) => [entry.id, entry]));
+        for (const entry of line.tabs) out.labelled(entry, false);
         const agents = new Set(line.agents.map((entry) => agentPlayerId(line.server, entry.paneId)));
         const failing = new Set(line.jobs.filter((entry) => entry.state === "failed" && !entry.agent).map((entry) => jobPlayerId(line.server, entry.id)));
         for (const player of model.players.values()) {
@@ -68,6 +70,7 @@ export class Translator {
       case "tab.opened":
       case "tab.changed":
         live.tabs.set(line.tab.id, line.tab);
+        out.labelled(line.tab, line.type === "tab.opened");
         return out.list;
       case "tab.closed":
         live.tabs.delete(line.tabId);
@@ -172,10 +175,11 @@ export class Translator {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
     }
     if (wanted === ready && yours.length > 0) return;
-    const strand = () => out.strandFor(id, tab, entry.name ?? "claude", entry.sessionId);
+    const strand = (reopen: boolean) => out.strandFor(id, tab, entry.name ?? "claude", reopen, entry.sessionId);
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
-      if (mine.length === 0) out.open(strand(), id, "working");
+      const on = mine.length === 0 ? strand(true) : undefined;
+      if (on) out.open(on, id, "working");
       return;
     }
     for (const move of mine) out.push({ type: "move.closed", move: move.id });
@@ -184,7 +188,8 @@ export class Translator {
       if (current.what !== wanted) out.push({ type: "move.described", move: current.id, what: wanted });
       return;
     }
-    out.open(strand(), "you", wanted, id);
+    const on = strand(false);
+    if (on) out.open(on, "you", wanted, id);
   }
 
   private jobFailed(live: Live, entry: KomuxJob, out: Facts): void {
@@ -196,7 +201,8 @@ export class Translator {
     const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tab.dir };
     out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
     const why = entry.code === null || entry.code === undefined ? `${entry.name} failed` : `${entry.name} failed (exit ${entry.code})`;
-    out.open(out.strandFor(id, tab, entry.name), "you", why, id);
+    const on = out.strandFor(id, tab, entry.name, true);
+    if (on) out.open(on, "you", why, id);
   }
 }
 
@@ -227,12 +233,26 @@ class Facts {
     this.model.on.set(answers ?? player, strand);
   }
 
-  strandFor(player: string, tab: KomuxTab, who: string, resume?: string): string {
+  strandFor(player: string, tab: KomuxTab, who: string, reopen: boolean, resume?: string): string | undefined {
     const on = this.model.on.get(player) ?? (resume ? this.model.resumed.get(resume) : undefined);
     if (on && this.model.strands.has(on)) return on;
+    if (on && this.model.closed.has(on) && !reopen) return undefined;
+    return this.labelled(tab, reopen) ?? this.make(`${who} in ${tab.name}`, "loose");
+  }
+
+  labelled(tab: KomuxTab, reopen: boolean): string | undefined {
     const found = tabStrand(tab, this.model);
-    if (found?.id) return found.id;
-    return this.make(found?.name ?? `${who} in ${tab.name}`, found ? undefined : "loose");
+    if (!found) return undefined;
+    if (found.id) return found.id;
+    if (found.closed) {
+      if (!reopen) return undefined;
+      this.push({ type: "strand.reopened", strand: found.closed });
+      const strand = this.model.closed.get(found.closed)!;
+      this.model.closed.delete(found.closed);
+      this.model.strands.set(strand.id, { ...strand, done: undefined });
+      return strand.id;
+    }
+    return this.make(found.name, undefined);
   }
 
   leave(player: string, why: string, closedByYou: boolean): void {
@@ -260,13 +280,18 @@ class Facts {
   }
 }
 
-export function tabStrand(tab: KomuxTab, model: Pick<Known, "strands" | "links">): { id?: string; name: string } | undefined {
-  const label = tab.labels?.strand ?? tab.labels?.braid;
+export function tabStrand(tab: KomuxTab, model: Pick<Known, "strands" | "links"> & Partial<Pick<Known, "closed">>): { id?: string; closed?: string; name: string } | undefined {
+  const label = tab.labels?.strand;
   if (label && !/\{[\w-]+\}/.test(label)) {
     const wanted = label.toLowerCase();
-    const named = [...model.strands.values()].filter((strand) => strand.done === undefined && strand.name.toLowerCase() === wanted);
-    const found = named.find((strand) => strand.parent === undefined) ?? (named.length === 1 ? named[0] : undefined);
-    return found ? { id: found.id, name: found.name } : { name: label.toLowerCase() };
+    const pick = (strands: Iterable<Strand>) => {
+      const named = [...strands].filter((strand) => strand.name.toLowerCase() === wanted);
+      return named.find((strand) => strand.parent === undefined) ?? (named.length === 1 ? named[0] : undefined);
+    };
+    const found = pick([...model.strands.values()].filter((strand) => strand.done === undefined));
+    if (found) return { id: found.id, name: found.name };
+    const closed = pick(model.closed?.values() ?? []);
+    return closed ? { closed: closed.id, name: closed.name } : { name: label.toLowerCase() };
   }
   let best: Link | undefined;
   for (const link of model.links) {

@@ -141,6 +141,8 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
       return `${name(event.strand)} moved under ${name(event.parent)}`;
     case "strand.done":
       return `${name(event.strand)} done: ${event.why}`;
+    case "strand.reopened":
+      return `${name(event.strand)} reopened`;
     case "strand.forgotten":
       return `${name(event.strand)} forgotten`;
     case "strand.merged":
