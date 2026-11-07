@@ -51,6 +51,47 @@ describe("the deck", () => {
     expect(plain(dealer.view()).match(/\d  claude in \w/g)).toEqual(["1  claude in c", "2  claude in b", "3  claude in a", "4  claude in d"]);
   });
 
+  test("lists agents at work, strands waiting on others and snoozed strands under yours, and goes to any of them", async () => {
+    const { core, hear, tick, now } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets" }, { id: 2, number: 2, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "working" } });
+    core.wait({ strand: "sc-7", who: "Copilot", kind: "machine", what: "PR review" }, "you");
+    core.add(undefined, "sc-8");
+    core.snooze(strandNamed(core, "sc-8").id, now() + 3_600_000);
+    tick(60_000);
+    const { actions, calls } = recordingActions();
+    const dealer = new Dealer(actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    const deck = plain(dealer.view());
+    expect(deck).toMatch(/your move · 1\n.*1  claude in widgets[^\n]*\n agents · 1\n.*2  claude in side +claude · working[^\n]*\n waiting on others · 1\n.*3  sc-7 +Copilot · PR review[^\n]*\n snoozed · 1\n.*4  sc-8 +till /);
+    await dealer.key({ name: "3" });
+    await dealer.key({ name: "s" });
+    expect(dealer.card()?.name).toBe("sc-7");
+    expect(await dealer.key({ name: "return" })).toBe("close");
+    expect(calls).toEqual([["go", strandNamed(core, "sc-7").id]]);
+  });
+
+  test("catching up lists only your new moves", async () => {
+    const { dealer } = await setup(true);
+    await dealer.key({ name: "j" });
+    await dealer.key({ name: "j" });
+    expect(dealer.card()?.name).toBe("sc-1");
+    expect(plain(dealer.view())).not.toContain("agents ·");
+  });
+
+  test("scrolls the list to keep the picked card in view", async () => {
+    const { core, hear, now } = harness();
+    await hear({ type: "snapshot", tabs: [], agents: [], jobs: [] });
+    for (const name of Array.from({ length: 30 }, (_, index) => `sc-${100 + index}`)) core.add(undefined, name);
+    const dealer = new Dealer(recordingActions().actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    for (const _ of Array.from({ length: 25 })) await dealer.key({ name: "j" });
+    const deck = plain(dealer.view(70, 30));
+    expect(deck).toContain(`▸    ${dealer.card()?.name}`);
+    expect(deck.split("\n").length).toBeLessThanOrEqual(30);
+  });
+
   test("f starts a fresh Claude on the picked card even when one is in its tab", async () => {
     const { core, dealer, calls } = await setup();
     await dealer.key({ name: "2" });

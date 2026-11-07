@@ -11,6 +11,7 @@ type Mode = "card" | "pickup" | "snooze" | "time" | "forget";
 export class Dealer {
   private snapshot: Snapshot | undefined;
   private hand: StrandView[] = [];
+  private others: { title: string; strands: StrandView[] }[] = [];
   private skipped: string[] = [];
   private dealt = new Set<string>();
   private selected = 0;
@@ -28,6 +29,7 @@ export class Dealer {
     this.snapshot = snapshot;
     if (!snapshot) {
       this.hand = [];
+      this.others = [];
       return;
     }
     const before = this.card()?.id;
@@ -36,8 +38,21 @@ export class Dealer {
     const fresh = moves.filter((strand) => !this.skipped.includes(strand.id));
     const back = this.skipped.flatMap((id) => moves.filter((strand) => strand.id === id));
     this.hand = [...fresh, ...back];
-    const again = this.hand.findIndex((strand) => strand.id === before);
-    this.selected = again >= 0 ? again : Math.min(this.selected, Math.max(0, this.hand.length - 1));
+    const live = this.unseen ? [] : snapshot.strands;
+    const asleep = (strand: StrandView) => (strand.snoozedUntil ?? 0) > snapshot.now;
+    const newest = (a: StrandView, b: StrandView) => b.own.since - a.own.since;
+    this.others = [
+      { title: "agents", strands: live.filter((strand) => strand.own.whose === "agent" && !asleep(strand)).sort(newest) },
+      { title: "waiting on others", strands: live.filter((strand) => (strand.own.whose === "person" || strand.own.whose === "machine") && !asleep(strand)).sort(newest) },
+      { title: "snoozed", strands: live.filter(asleep).sort((a, b) => a.snoozedUntil! - b.snoozedUntil!) },
+    ].filter((section) => section.strands.length > 0);
+    const rows = this.rows();
+    const again = rows.findIndex((strand) => strand.id === before);
+    this.selected = again >= 0 ? again : Math.min(this.selected, Math.max(0, rows.length - 1));
+  }
+
+  private rows(): StrandView[] {
+    return [...this.hand, ...this.others.flatMap((section) => section.strands)];
   }
 
   private strands(): StrandView[] {
@@ -45,7 +60,7 @@ export class Dealer {
   }
 
   card(): StrandView | undefined {
-    return this.hand[this.selected];
+    return this.rows()[this.selected];
   }
 
   async key(key: Key): Promise<"close" | undefined> {
@@ -95,7 +110,7 @@ export class Dealer {
         return undefined;
       case "s":
       case " ":
-        if (card) {
+        if (card && this.hand.includes(card)) {
           this.dealt.add(card.id);
           this.skipped = [...this.skipped.filter((id) => id !== card.id), card.id];
           this.hand = [...this.hand.filter((strand) => strand !== card), card];
@@ -103,7 +118,7 @@ export class Dealer {
         return undefined;
       case "j":
       case "down":
-        this.selected = Math.min(this.selected + 1, Math.max(0, this.hand.length - 1));
+        this.selected = Math.min(this.selected + 1, Math.max(0, this.rows().length - 1));
         return undefined;
       case "k":
       case "up":
@@ -119,7 +134,7 @@ export class Dealer {
         if (card) await this.act(() => this.actions.done(card.id), `${card.name} is done`);
         return undefined;
     }
-    if (/^[1-9]$/.test(key.name) && Number(key.name) <= this.hand.length) this.selected = Number(key.name) - 1;
+    if (/^[1-9]$/.test(key.name) && Number(key.name) <= this.rows().length) this.selected = Number(key.name) - 1;
     return undefined;
   }
 
@@ -138,25 +153,35 @@ export class Dealer {
     return undefined;
   }
 
-  view(width = 80): string[] {
+  view(width = 80, height = 40): string[] {
     const hand = this.unseen ? "since you last caught up" : "your move";
     if (!this.snapshot) return ["", style.red(" ponpoko ✗  the service isn't running"), "", style.dim(" esc close")];
     const card = this.card();
     if (!card) {
-      return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is waiting on you"), "", style.dim(" esc close")];
+      return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is going on"), "", style.dim(" esc close")];
     }
     const target = goTarget(card, this.strands())?.player;
     const options = pickupOffer(card, this.strands());
     const place = goPlace(card, aboveOf(this.strands(), card));
     const where = target ? `→ ${target.who} in ${target.space ?? "its tab"}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
-    const shown = this.hand.slice(0, 9);
+    const now = this.snapshot.now;
+    const listed: { line: string; row?: number }[] = [{ line: style.dim(` ${hand} · ${this.hand.length}${this.hand.length === 0 ? "  ✓ nothing is waiting on you" : ""}`) }];
+    let index = 0;
+    const row = (strand: StrandView, what: string, mine: boolean) => {
+      const at = index++;
+      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${fit(strand.name, 24)}  ${what}`, width - 2).trimEnd();
+      listed.push({ row: at, line: mine && urgency(strand) === 0 ? style.amber(` ${text}`) : at === this.selected ? ` ${text}` : style.dim(` ${text}`) });
+    };
+    for (const strand of this.hand) row(strand, `${cause(strand)} · ${age(now - strand.own.since)}`, true);
+    for (const section of this.others) {
+      listed.push({ line: style.dim(` ${section.title} · ${section.strands.length}`) });
+      for (const strand of section.strands) row(strand, section.title === "snoozed" ? `till ${whenLabel(strand.snoozedUntil!, now)} · ${othersCause(strand)}` : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
+    }
+    const room = Math.max(6, height - 20);
+    const picked = listed.findIndex((entry) => entry.row === this.selected);
+    const start = Math.max(0, Math.min(picked - Math.floor(room / 2), listed.length - room));
     const lines = [
-      style.dim(` ${hand} · ${this.hand.length}`),
-      ...shown.map((strand, index) => {
-        const row = fit(`${index === this.selected ? "▸" : " "} ${index + 1}  ${fit(strand.name, 24)}  ${cause(strand)} · ${age(this.snapshot!.now - strand.own.since)}`, width - 2).trimEnd();
-        return urgency(strand) === 0 ? style.amber(` ${row}`) : index === this.selected ? ` ${row}` : style.dim(` ${row}`);
-      }),
-      ...(this.hand.length > shown.length ? [style.dim(`   +${this.hand.length - shown.length} more; s sends a card to the back`)] : []),
+      ...listed.slice(start, start + room).map((entry) => entry.line),
       "",
       style.amber(style.bold(fit(` ● ${card.name}${card.title ? `  ${card.title}` : ""}`, width - 1).trimEnd())),
       ...(card.above ?? []).map((above) => style.dim(fit(`   in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, width - 1).trimEnd())),
@@ -204,7 +229,7 @@ export class Dealer {
 export async function runDeal(args: string[]): Promise<number> {
   const dealer = new Dealer(serviceActions, args.includes("--unseen"));
   const done = Promise.withResolvers<void>();
-  const draw = () => screen.draw(dealer.view(screen.width));
+  const draw = () => screen.draw(dealer.view(screen.width, screen.height));
   const reload = async () => {
     dealer.setSnapshot(await state().catch(() => undefined));
     draw();
@@ -223,6 +248,11 @@ export async function runDeal(args: string[]): Promise<number> {
   clearInterval(ticker);
   screen.close();
   return 0;
+}
+
+function othersCause(strand: StrandView): string {
+  const move = strand.open.find((candidate) => candidate.from === strand.own.since) ?? strand.open[0];
+  return move && move.player !== "you" ? `${move.by.who} · ${strand.own.why}` : cause(strand);
 }
 
 function urgency(strand: StrandView): number {
