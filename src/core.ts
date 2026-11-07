@@ -7,7 +7,7 @@ import type { Store } from "./store.ts";
 
 export type StrandView = Strand & { live: boolean; tab?: { session: string; number?: number; name: string } };
 export type BraidView = Braid & { strands: StrandView[]; tabs: { session: string; number?: number; name: string }[] };
-export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[] };
+export type Snapshot = { now: number; counts: Counts; braids: BraidView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
 
 export type Report = { braid?: string; dir?: string; session?: string; paneId?: number; strand?: string; whose: Whose | "done"; who?: string; reason: string };
 
@@ -70,13 +70,21 @@ export class Ponpoko {
     }));
     const shown = braids.filter((braid) => braid.strands.length > 0 || braid.tabs.length > 0 || braid.notes.length > 0);
     shown.sort((a, b) => firstMove(a, now) - firstMove(b, now) || a.name.localeCompare(b.name));
+    const heard = recentHeard(this.model, 30);
     return {
       now,
       counts: counts(this.model, now),
       braids: shown,
       moves: yourMoves(this.model, now).map(view),
       unseen: unseenMoves(this.model, now).map((strand) => strand.id),
-      heard: recentHeard(this.model, 30),
+      heard,
+      labels: Object.fromEntries(
+        heard.flatMap((event) => {
+          if (!("strand" in event)) return [];
+          const known = this.model.labels.get(event.strand);
+          return known ? [[event.strand, `${this.model.braids.get(known.braid)?.name ?? known.braid} ${known.label}`]] : [];
+        }),
+      ),
     };
   }
 

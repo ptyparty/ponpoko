@@ -18,12 +18,12 @@ export type Strand = {
   snoozedUntil?: number;
   doing?: { text: string; page?: string; at: number };
 };
-export type Model = { braids: Map<string, Braid>; strands: Map<string, Strand>; pointed: Map<string, string>; heard: Recorded[]; lastAt: number };
+export type Model = { braids: Map<string, Braid>; strands: Map<string, Strand>; labels: Map<string, { braid: string; label: string }>; pointed: Map<string, string>; heard: Recorded[]; lastAt: number };
 
 const heardKept = 200;
 
 export function emptyModel(): Model {
-  return { braids: new Map(), strands: new Map(), pointed: new Map(), heard: [], lastAt: 0 };
+  return { braids: new Map(), strands: new Map(), labels: new Map(), pointed: new Map(), heard: [], lastAt: 0 };
 }
 
 export function replay(events: Recorded[]): Model {
@@ -58,6 +58,7 @@ export function apply(model: Model, event: Recorded): void {
       return;
     case "strand.move": {
       ensureBraid(model, event.braid, event.at);
+      model.labels.set(event.strand, { braid: event.braid, label: event.label });
       const old = model.strands.get(event.strand);
       const changed = !old || old.whose !== event.whose;
       model.strands.set(event.strand, {

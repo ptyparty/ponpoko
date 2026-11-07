@@ -54,7 +54,7 @@ describe("the deck", () => {
 
   test("an empty hand says so", () => {
     const dealer = new Dealer({} as Actions, false);
-    dealer.setSnapshot({ now: 0, counts: { yours: 0, agents: 0, snoozed: 0, waiting: 0 }, braids: [], moves: [], unseen: [], heard: [] });
+    dealer.setSnapshot({ now: 0, counts: { yours: 0, agents: 0, snoozed: 0, waiting: 0 }, braids: [], moves: [], unseen: [], heard: [], labels: {} });
     expect(plain(dealer.view())).toContain("✓ clear");
   });
 });

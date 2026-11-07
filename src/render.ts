@@ -105,7 +105,7 @@ export function rows(snapshot: Snapshot, width: number, heardCount = 8): Row[] {
 
 function labelsOf(snapshot: Snapshot): { braids: Map<string, string>; strands: Map<string, string> } {
   const braids = new Map(snapshot.braids.map((braid) => [braid.id, braid.name]));
-  const strands = new Map(snapshot.braids.flatMap((braid) => braid.strands.map((strand) => [strand.id, `${braid.name} ${strand.label}`] as const)));
+  const strands = new Map([...Object.entries(snapshot.labels ?? {}), ...snapshot.braids.flatMap((braid) => braid.strands.map((strand) => [strand.id, `${braid.name} ${strand.label}`] as const))]);
   return { braids, strands };
 }
 

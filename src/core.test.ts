@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { braidForDir } from "./braids.ts";
 import { Ponpoko } from "./core.ts";
 import { komuxLine, type KomuxLine } from "./komux.ts";
+import { rows } from "./render.ts";
 import { Store } from "./store.ts";
 
 const story = "/home/me/work/stories/sc-1234/widgets";
@@ -130,6 +131,7 @@ describe("ponpoko", () => {
       { session: "main", request: { method: "project.open", params: { target: story } } },
     ]);
     expect(core.model.strands.has("job:s1:7")).toBe(false);
+    expect(rows(core.snapshot(), 100).map((row) => row.text).join("\n")).toContain("SC-1234 job build ended: you went to it");
   });
 
   test("snoozed moves leave the deal until they wake", () => {

@@ -94,7 +94,7 @@ export class Translator {
       case "agent.gone": {
         live.agents.delete(line.paneId);
         const id = agentStrandId(line.server, line.paneId);
-        if (model.strands.has(id)) out.push({ type: "strand.ended", strand: id, why: "pane closed" });
+        if (model.strands.has(id)) out.push({ type: "strand.ended", strand: id, why: "agent gone" });
         return out;
       }
       case "job.started":
