@@ -291,6 +291,20 @@ describe("go in komux", () => {
     ]);
   });
 
+  test("picking up a strand reopens the layout and args its Claude's tab was opened with, such as a PR review", async () => {
+    const { core, hear } = harness();
+    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", braid: "sc-1235" } };
+    await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [{ paneId: 9, tabId: 3, state: "done", sessionId: "r1" }], jobs: [] });
+    await hear({ type: "agent.gone", paneId: 9, tabId: 3 });
+    const { sent, control } = recorder();
+    await pickUpInKomux(strandNamed(core, "sc-1235"), "resume", env, control);
+    await pickUpInKomux(strandNamed(core, "sc-1235"), "fresh", env, control);
+    expect(sent).toEqual([
+      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" }, resume: "r1" } },
+      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" }, prompt: brief(strandNamed(core, "sc-1235")) } },
+    ]);
+  });
+
   test("picking up falls back to a new pane when the tab's docked Claude is busy or missing", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });

@@ -44,7 +44,7 @@ function needsYou(strand: StrandView, move: MoveView): boolean {
   return move.player === "you" && (move.what === "asking you" || move.what === "waiting on you" || strand.unseen);
 }
 
-export type Pickup = { resume?: { session: string; dir: string; who: string; at: number }; dir?: string };
+export type Pickup = { resume?: { session: string; dir: string; who: string; at: number; layout?: string; args?: Record<string, string> }; dir?: string };
 
 export function pickup(strand: StrandView): Pickup | undefined {
   if (goTarget(strand) || strand.own.whose === undefined) return undefined;
@@ -53,7 +53,11 @@ export function pickup(strand: StrandView): Pickup | undefined {
     return player.kind === "agent" && player.resume && komuxPlace(player)?.dir;
   });
   const agent = last ? (last.answers ?? last.by) : undefined;
-  const resume = last && agent ? { session: agent.resume!, dir: komuxPlace(agent)!.dir, who: agent.who, at: last.until ?? last.from } : undefined;
+  const place = agent ? komuxPlace(agent) : undefined;
+  const resume =
+    last && agent && place
+      ? { session: agent.resume!, dir: place.dir, who: agent.who, at: last.until ?? last.from, ...(place.layout ? { layout: place.layout } : {}), ...(place.args ? { args: place.args } : {}) }
+      : undefined;
   const dir = strand.dir ?? resume?.dir ?? lastDir(strand);
   if (!resume && !dir) return undefined;
   return { ...(resume ? { resume } : {}), ...(dir ? { dir } : {}) };
@@ -87,7 +91,8 @@ export async function pickUpInKomux(strand: StrandView, how: "resume" | "fresh",
   if (how === "resume" && !resume) throw new Error("no Claude on this strand to resume");
   const dir = resume?.dir ?? options?.dir;
   if (!dir) throw new Error("ponpoko doesn't know where this strand lives");
-  const docked = await send({ method: "claude.start", params: { target: dir, ...(resume ? { resume: resume.session } : { prompt: brief(strand) }) } });
+  const layout = options?.resume && options.resume.dir === dir ? { ...(options.resume.layout ? { layout: options.resume.layout } : {}), ...(options.resume.args ? { args: options.resume.args } : {}) } : {};
+  const docked = await send({ method: "claude.start", params: { target: dir, ...layout, ...(resume ? { resume: resume.session } : { prompt: brief(strand) }) } });
   if (docked.ok) return;
   if (!/^(busy|none):/.test(docked.error ?? "")) throw new Error(`komux refused: ${docked.error ?? "no reason"}; it may need restarting to start Claude for ponpoko`);
   const command = [...claudeCommand(env), ...(resume ? ["--resume", resume.session] : ["--prompt", brief(strand)])];

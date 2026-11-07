@@ -3,7 +3,20 @@ import type { Fact } from "../events.ts";
 import type { Link, Move, Player, Strand } from "../model.ts";
 import type { KomuxAgent, KomuxJob, KomuxLine, KomuxTab } from "./stream.ts";
 
-export type KomuxPlace = { adapter: "komux"; handle: string; session: string; server: string; tabId: number; paneId: number; dir: string; sessionId?: string; state?: string; asking?: boolean };
+export type KomuxPlace = {
+  adapter: "komux";
+  handle: string;
+  session: string;
+  server: string;
+  tabId: number;
+  paneId: number;
+  dir: string;
+  layout?: string;
+  args?: Record<string, string>;
+  sessionId?: string;
+  state?: string;
+  asking?: boolean;
+};
 
 export type Known = { strands: Map<string, Strand>; closed: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string> };
 type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob> };
@@ -168,10 +181,13 @@ export class Translator {
       tabId: entry.tabId,
       paneId: entry.paneId,
       dir: tab.dir,
+      ...(tab.layout ? { layout: tab.layout } : {}),
+      ...(tab.args ? { args: tab.args } : {}),
       ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
     };
     const old = player ? komuxPlace(player) : undefined;
-    if (!player || old?.tabId !== place.tabId || old?.dir !== place.dir || old?.sessionId !== place.sessionId) {
+    const tabChanged = old?.layout !== place.layout || JSON.stringify(old?.args) !== JSON.stringify(place.args);
+    if (!player || old?.tabId !== place.tabId || old?.dir !== place.dir || old?.sessionId !== place.sessionId || tabChanged) {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
     }
     if (wanted === ready && yours.length > 0) return;
