@@ -5,7 +5,7 @@ import { whenLabel } from "./when.ts";
 export type Row = { text: string; strand?: StrandView; tone?: Tone };
 export type Tone = "you" | "agent" | "waiting" | "quiet" | "heading" | "dim";
 
-export const untilNeeded = { key: "u", until: Number.MAX_SAFE_INTEGER, said: "something under it needs you" };
+export const untilNeeded = { key: "u", until: Number.MAX_SAFE_INTEGER, said: "it moves or a strand under it is done" };
 
 export function snoozedLabel(strand: { snoozedUntil?: number; untilNeeded?: boolean }, now: number): string {
   return strand.untilNeeded ? `till ${untilNeeded.said}` : `till ${whenLabel(strand.snoozedUntil ?? now, now)}`;

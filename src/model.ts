@@ -80,8 +80,10 @@ function applyFact(model: Model, event: Recorded): void {
       });
       return;
     case "strand.done":
-      withStrand(model, event.strand, (strand) => void (strand.done = event.at));
-      wakeAbove(model, event.strand);
+      withStrand(model, event.strand, (strand) => {
+        strand.done = event.at;
+        if (strand.parent !== undefined) wake(model, strand.parent);
+      });
       return;
     case "strand.reopened":
       withStrand(model, event.strand, (strand) => void (strand.done = undefined));
@@ -132,10 +134,7 @@ function applyFact(model: Model, event: Recorded): void {
     case "move.opened":
       if (!model.strands.has(event.strand)) return;
       model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, from: event.at, source: event.source });
-      if (event.player === you) {
-        wake(model, event.strand);
-        wakeAbove(model, event.strand);
-      }
+      wake(model, event.strand);
       return;
     case "move.described": {
       const move = model.moves.get(event.move);
@@ -273,10 +272,6 @@ export function rolled(model: Model, strand: Strand): Standing {
   const standing = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0] ?? { since: strand.made, why: "", moves: [] };
   index.rolled.set(strand.id, standing);
   return standing;
-}
-
-function wakeAbove(model: Model, id: string): void {
-  for (const above of ancestors(model, id)) wake(model, above);
 }
 
 function wake(model: Model, id: string): void {
