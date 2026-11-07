@@ -43,6 +43,14 @@ describe("strands", () => {
     ]);
   });
 
+  test("a new name is made under the strand an agent is on, or at the top when it starts with ›", () => {
+    const { core, shown } = setup();
+    core.status({ self: "tool:1", strand: "ptyparty", text: "looking around" });
+    core.status({ self: "tool:1", strand: "ponpoko", text: "building" });
+    core.split({ self: "tool:1", strand: "› sc-9" }, ["a"]);
+    expect(shown()).toBe(["sc-9 you", "  a you no one on it", "ptyparty agent", "  ponpoko agent building"].join("\n"));
+  });
+
   test("names resolve near the strand an agent is on before the top", () => {
     const { core } = setup();
     core.add(undefined, "ptyparty › review findings");

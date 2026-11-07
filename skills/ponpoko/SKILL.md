@@ -9,7 +9,7 @@ ponpoko tracks the user's work as **strands**, lines of work that nest: a projec
 
 ## When to report
 
-- **You start on a piece of work, or switch to another:** call `status` with one line on what you're doing now and `strand` set to its path, plus the notebook page with the detail if there is one. Missing strands on the path are made. A path resolves near the strand you're on first, so `review findings › 4` finds the one in your project.
+- **You start on a piece of work, or switch to another:** call `status` with one line on what you're doing now and `strand` set to its path, plus the notebook page with the detail if there is one. A path resolves near the strand you're on first, so `review findings › 4` finds the one in your project. A path that matches nothing is made under the strand you're on; start it with `›`, as in `› sc-1250`, to make it at the top.
 - **You move between steps:** call `status` again, leaving `strand` out. Each call is a move in the strand's record, so keep them to real steps, not every edit.
 - **You're waiting on someone or something other than the user:** call `wait` with `who`, `kind` (`machine` or `person`) and `what`:
   - a Copilot or human review: `who: "Copilot"`, `kind: "machine"`, `what: "reviewing PR #821"`

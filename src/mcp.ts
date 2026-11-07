@@ -31,7 +31,7 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
   const server = new McpServer({ name: "ponpoko", version: "0.1.0" }, { instructions });
 
   const write = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
-  const strandParam = z.string().max(200).optional().describe("The strand as a path, such as \"ponpoko review findings › 4\"; leave out for the one you're on");
+  const strandParam = z.string().max(200).optional().describe("The strand as a path, such as \"ponpoko review findings › 4\"; leave out for the one you're on. A path that matches nothing is made under the strand you're on; start it with › to make it at the top");
 
   server.registerTool(
     "status",

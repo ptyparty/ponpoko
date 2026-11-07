@@ -396,13 +396,15 @@ export class Ponpoko {
   private resolve(text: string, facts: Fact[], near: string | undefined): string {
     const segments = splitPath(text);
     if (segments.length === 0) throw new Error("name a strand");
+    if (/^\s*[›>]/.test(text)) return this.resolveUnder(undefined, segments, facts);
     let best: { root: string | undefined; matched: number; at: string | undefined } = { root: undefined, matched: 0, at: undefined };
     for (const root of this.roots(near)) {
       const found = this.walk(root, segments);
       if (found.matched === segments.length) return found.at!;
       if (found.matched > best.matched) best = { root, ...found };
     }
-    const base = best.matched > 0 ? best.at : undefined;
+    const home = near && this.model.strands.get(near)?.kind !== "loose" ? near : undefined;
+    const base = best.matched > 0 ? best.at : home;
     return this.resolveUnder(base, segments.slice(best.matched), facts);
   }
 
