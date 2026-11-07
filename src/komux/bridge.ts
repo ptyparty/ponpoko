@@ -21,7 +21,7 @@ export class Bridge {
   private readonly badgesSent = new Map<number, string>();
   private behind = false;
   private cached: Knowledge | undefined;
-  private last: Knowledge = { strands: [], players: [], open: [], links: [], on: {}, spoke: [] };
+  private last: Knowledge = { strands: [], players: [], open: [], links: [], on: {}, resumed: {}, spoke: [] };
 
   constructor(
     private readonly service: Service,

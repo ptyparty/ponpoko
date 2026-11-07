@@ -113,6 +113,16 @@ describe("the komux bridge", () => {
     expect(core.model.players.get("pane:s1:5")!.gone).toBeDefined();
   });
 
+  test("a conversation resumed in a new pane carries on with the strand it was on", async () => {
+    const { core, hear } = harness();
+    await hear(snapshot);
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
+    core.status({ self: "komux:s1:2", strand: "importer", text: "fixing the importer" });
+    await hear({ server: "s2", type: "snapshot", tabs: snapshot.tabs, agents: [{ paneId: 8, tabId: 1, state: "working", sessionId: "c1" }], jobs: [] });
+    expect(line(core, "sc-1234")).toBe("sc-1234 -");
+    expect(line(core, "  importer")).toBe("  importer agent pane:s2:8: working");
+  });
+
   test("reconnecting or replaying a snapshot records nothing new", async () => {
     const { hear, store } = harness();
     await hear(snapshot);

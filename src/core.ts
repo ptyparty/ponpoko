@@ -43,7 +43,7 @@ export type StrandView = Strand & {
   dir?: string;
 };
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
-export type Knowledge = { strands: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; spoke: string[] };
+export type Knowledge = { strands: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
 export type StatusReport = Where & { text: string; page?: string };
@@ -104,13 +104,21 @@ export class Ponpoko {
   knowledge(): Knowledge {
     const moves = [...this.model.moves.values()];
     const on: Record<string, string> = {};
-    for (const move of [...moves].sort((a, b) => a.from - b.from)) on[move.with ?? move.player] = move.strand;
+    const resumed: Record<string, string> = {};
+    for (const move of [...moves].sort((a, b) => a.from - b.from)) {
+      const player = move.with ?? move.player;
+      on[player] = move.strand;
+      const resume = this.model.players.get(player)?.resume;
+      const strand = this.model.strands.get(move.strand);
+      if (resume && strand && isLive(this.model, strand)) resumed[resume] = move.strand;
+    }
     return {
       strands: [...this.model.strands.values()].filter((strand) => isLive(this.model, strand)),
       players: [...this.model.players.values()].filter((player) => player.gone === undefined),
       open: moves.filter((move) => move.until === undefined),
       links: [...this.model.links.values()].filter((link) => link.adapter === "dir"),
       on,
+      resumed,
       spoke: [...new Set(moves.filter((move) => move.source === "agent" || (move.described !== undefined && move.player !== you)).map((move) => move.strand))],
     };
   }

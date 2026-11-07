@@ -5,7 +5,7 @@ import type { KomuxAgent, KomuxJob, KomuxLine, KomuxTab } from "./stream.ts";
 
 export type KomuxPlace = { adapter: "komux"; handle: string; session: string; server: string; tabId: number; paneId: number; dir: string; sessionId?: string; state?: string; asking?: boolean };
 
-export type Known = { strands: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; spoke: Set<string> };
+export type Known = { strands: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string> };
 type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob> };
 
 const yourMoves: Record<string, string> = {
@@ -35,6 +35,7 @@ export function known(knowledge: Knowledge): Known {
     open: [...knowledge.open],
     links: [...knowledge.links],
     on: new Map(Object.entries(knowledge.on)),
+    resumed: new Map(Object.entries(knowledge.resumed ?? {})),
     spoke: new Set(knowledge.spoke),
   };
 }
@@ -171,7 +172,7 @@ export class Translator {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
     }
     if (wanted === ready && yours.length > 0) return;
-    const strand = () => out.strandFor(id, tab, entry.name ?? "claude");
+    const strand = () => out.strandFor(id, tab, entry.name ?? "claude", entry.sessionId);
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
       if (mine.length === 0) out.open(strand(), id, "working");
@@ -226,8 +227,8 @@ class Facts {
     this.model.on.set(answers ?? player, strand);
   }
 
-  strandFor(player: string, tab: KomuxTab, who: string): string {
-    const on = this.model.on.get(player);
+  strandFor(player: string, tab: KomuxTab, who: string, resume?: string): string {
+    const on = this.model.on.get(player) ?? (resume ? this.model.resumed.get(resume) : undefined);
     if (on && this.model.strands.has(on)) return on;
     const found = tabStrand(tab, this.model);
     if (found?.id) return found.id;
