@@ -53,8 +53,8 @@ export function pluginText(places: Places): string {
 export type PonpokoOptions = { deal?: string; catchUp?: string; leader?: string };
 
 export default function ponpoko(options: PonpokoOptions = {}) {
-  const deal = { popup: [...command, "deal"], name: "your move", width: 90, height: 40 };
-  const catchUp = { popup: [...command, "deal", "--unseen"], name: "catch up", width: 90, height: 40 };
+  const deal = { popup: [...command, "deal"], name: "your move", width: 90, height: 60 };
+  const catchUp = { popup: [...command, "deal", "--unseen"], name: "catch up", width: 90, height: 60 };
   return {
     name: "ponpoko",
     run: [[...command, "komux"]],
