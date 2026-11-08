@@ -26,6 +26,14 @@ async function setup() {
 }
 
 describe("the ponpoko MCP", () => {
+  test("agents can title the strands status and split make", async () => {
+    const { core, call } = await setup();
+    await call("status", { text: "starting", strand: "titles", title: "Let agents title strands" });
+    await call("split", { names: [{ name: "status", title: "Title from status" }, "split"] });
+    const titles = Object.fromEntries(core.snapshot().strands.map((entry) => [entry.name, entry.title]));
+    expect(titles).toEqual({ "sc-7": "Widget CSV import", titles: "Let agents title strands", status: "Title from status", split: undefined });
+  });
+
   test("agents say what they're doing on which strand, split it, wait on others, and ask what needs the user", async () => {
     const { core, call } = await setup();
     await call("status", { text: "warming up" });

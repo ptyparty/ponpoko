@@ -50,6 +50,7 @@ export function recordingActions() {
     block: record("block"),
     unblock: record("unblock"),
     rename: record("rename"),
+    title: record("title"),
     done: record("done"),
     open: async (link: { ref: string }) => void calls.push(["open", link.ref]),
   } as Actions;

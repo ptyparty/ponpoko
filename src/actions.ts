@@ -18,6 +18,7 @@ export type Actions = {
   block: (strand: string, on: string) => Promise<unknown>;
   unblock: (strand: string, on?: string) => Promise<unknown>;
   rename: (strand: string, name: string) => Promise<unknown>;
+  title: (strand: string, title: string) => Promise<unknown>;
   done: (strand: string) => Promise<unknown>;
   open: (link: Link) => Promise<unknown>;
 };
@@ -40,6 +41,7 @@ export const serviceActions: Actions = {
   block: (strand, on) => ask({ method: "block", params: { strand, on } }),
   unblock: (strand, on) => ask({ method: "unblock", params: { strand, ...(on ? { on } : {}) } }),
   rename: (strand, name) => ask({ method: "rename", params: { strand, name } }),
+  title: (strand, title) => ask({ method: "title", params: { strand, title } }),
   done: (strand) => ask({ method: "done", params: { strand } }),
   open: async (link) => {
     if (link.adapter !== "quoll") throw new Error(`ponpoko can't open ${link.adapter} links yet`);

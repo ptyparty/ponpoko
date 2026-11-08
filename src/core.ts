@@ -48,7 +48,8 @@ export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; mov
 export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
-export type StatusReport = Where & { text: string; page?: string };
+export type StatusReport = Where & { text: string; page?: string; title?: string };
+export type Named = string | { name: string; title?: string };
 export type WaitReport = Where & { who: string; kind: "you" | "person" | "machine"; what: string; over?: boolean };
 export type BlockReport = Where & { on: string; over?: boolean };
 
@@ -200,6 +201,7 @@ export class Ponpoko {
     const facts: Fact[] = [];
     const target = report.strand ? this.resolve(report.strand, facts, this.strandOf(agent.id)) : this.strandOf(agent.id);
     if (!target) throw new Error("name the strand you're working on, such as \"ponpoko review findings › 4\"");
+    this.titleFacts(target, report.title, facts);
     const loose = current ? this.model.strands.get(current.strand) : undefined;
     const merging = loose?.kind === "loose" && loose.id !== target;
     if (merging) facts.push({ type: "strand.merged", strand: loose!.id, into: target });
@@ -284,12 +286,17 @@ export class Ponpoko {
     return name;
   }
 
-  split(where: Where, names: string[], source: Source = "agent"): string[] {
+  split(where: Where, names: Named[], source: Source = "agent"): string[] {
     const agent = this.agentOf(where.self);
     const facts: Fact[] = [];
     const parent = where.strand ? this.resolve(where.strand, facts, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(where, agent);
     if (!parent) throw new Error("name the strand to split, such as \"ponpoko review findings\"");
-    const made = names.map((name) => this.resolveUnder(parent, [name.trim()], facts));
+    const made = names.map((named) => {
+      const { name, title } = typeof named === "string" ? { name: named, title: undefined } : named;
+      const id = this.resolveUnder(parent, [name.trim()], facts);
+      this.titleFacts(id, title, facts);
+      return id;
+    });
     this.record(source, facts);
     return made.map((id) => path(this.model, id).join(" › "));
   }
@@ -306,6 +313,11 @@ export class Ponpoko {
     const trimmed = name.trim();
     if (trimmed === "" || splitPath(trimmed).length !== 1) throw new Error("name the strand with a single name, without ›");
     this.record("you", [{ type: "strand.renamed", strand, name: trimmed }]);
+  }
+
+  title(strand: string, title: string): void {
+    const trimmed = title.trim();
+    if (trimmed !== (this.mustHave(strand).title ?? "")) this.record("you", [{ type: "strand.titled", strand, title: trimmed }]);
   }
 
   reparent(strand: string, to: string): string {
@@ -490,6 +502,11 @@ export class Ponpoko {
       at = id;
     }
     return at!;
+  }
+
+  private titleFacts(strand: string, title: string | undefined, facts: Fact[]): void {
+    const trimmed = title?.trim();
+    if (trimmed && trimmed !== this.model.strands.get(strand)?.title) facts.push({ type: "strand.titled", strand, title: trimmed });
   }
 
   private childNamed(parent: string | undefined, name: string, pending: Fact[] = []): string | undefined {

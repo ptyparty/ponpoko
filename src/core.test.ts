@@ -51,6 +51,21 @@ describe("strands", () => {
     expect(shown()).toBe(["sc-9 you", "  a you no one on it", "ptyparty agent", "  ponpoko agent building"].join("\n"));
   });
 
+  test("an agent can title the strands it makes and retitle them later, and you can clear a title", () => {
+    const { core } = setup();
+    core.status({ self: "tool:1", strand: "ptyparty › titles", text: "starting", title: "Let agents title strands" });
+    core.status({ self: "tool:1", text: "still going" });
+    expect(strandNamed(core, "ptyparty › titles").title).toBe("Let agents title strands");
+    core.status({ self: "tool:1", text: "still going", title: "Let agents title strands any time" });
+    core.split({ self: "tool:1" }, [{ name: "status", title: "Title from status" }, "split"]);
+    expect(strandNamed(core, "ptyparty").title).toBeUndefined();
+    expect(strandNamed(core, "ptyparty › titles").title).toBe("Let agents title strands any time");
+    expect(strandNamed(core, "ptyparty › titles › status").title).toBe("Title from status");
+    expect(strandNamed(core, "ptyparty › titles › split").title).toBeUndefined();
+    core.title(strandNamed(core, "ptyparty › titles").id, " ");
+    expect(strandNamed(core, "ptyparty › titles").title).toBeUndefined();
+  });
+
   test("names resolve near the strand an agent is on before the top", () => {
     const { core } = setup();
     core.add(undefined, "ptyparty › review findings");

@@ -69,7 +69,8 @@ function applyFact(model: Model, event: Recorded): void {
     case "strand.titled":
       withStrand(model, event.strand, (strand) => {
         if (event.kind) strand.kind = event.kind;
-        strand.title = event.title;
+        if (event.title) strand.title = event.title;
+        else delete strand.title;
       });
       return;
     case "strand.parented":

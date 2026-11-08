@@ -27,16 +27,17 @@ export const request = z.discriminatedUnion("method", [
     }),
   }),
   z.object({ method: z.literal("absent"), params: z.object({ adapter: z.string(), scope: z.string() }) }),
-  z.object({ method: z.literal("status"), params: z.object({ ...where, text: z.string().min(1).max(120), page: z.string().max(200).optional() }) }),
+  z.object({ method: z.literal("status"), params: z.object({ ...where, text: z.string().min(1).max(120), page: z.string().max(200).optional(), title: z.string().max(200).optional() }) }),
   z.object({ method: z.literal("wait"), params: z.object({ ...where, who: z.string().min(1).max(80), kind: z.enum(["you", "person", "machine"]), what: z.string().min(1).max(200), over: z.boolean().optional() }) }),
   z.object({ method: z.literal("block-by"), params: z.object({ ...where, on: z.string().min(1).max(200), over: z.boolean().optional() }) }),
   z.object({ method: z.literal("block"), params: z.object({ strand: z.string(), on: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("unblock"), params: z.object({ strand: z.string(), on: z.string().optional() }) }),
   z.object({ method: z.literal("done-by"), params: z.object({ ...where, why: z.string().min(1).max(200) }) }),
-  z.object({ method: z.literal("split"), params: z.object({ ...where, names: z.array(z.string().min(1).max(120)).min(1).max(50) }) }),
+  z.object({ method: z.literal("split"), params: z.object({ ...where, names: z.array(z.union([z.string().min(1).max(120), z.object({ name: z.string().min(1).max(120), title: z.string().max(200).optional() })])).min(1).max(50) }) }),
   z.object({ method: z.literal("add"), params: z.object({ parent: z.string().optional(), name: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("reparent"), params: z.object({ strand: z.string(), to: z.string().max(200) }) }),
   z.object({ method: z.literal("rename"), params: z.object({ strand: z.string(), name: z.string().min(1).max(200) }) }),
+  z.object({ method: z.literal("title"), params: z.object({ strand: z.string(), title: z.string().max(200) }) }),
   z.object({ method: z.literal("done"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("close-move"), params: z.object({ move: z.string() }) }),
   z.object({ method: z.literal("seen"), params: z.object({ strand: z.string() }) }),
@@ -152,6 +153,9 @@ export function handle(core: Ponpoko, request: Request): Response {
         return { ok: true, result: { strand: core.reparent(request.params.strand, request.params.to) } };
       case "rename":
         core.rename(request.params.strand, request.params.name);
+        return { ok: true };
+      case "title":
+        core.title(request.params.strand, request.params.title);
         return { ok: true };
       case "done":
         core.done(request.params.strand);

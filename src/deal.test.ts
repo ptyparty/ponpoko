@@ -257,6 +257,10 @@ describe("the deck", () => {
     expect(deck[3]).toMatch(/^ 3     ● ask +yours · no one on it/);
     expect(deck.join("\n")).not.toContain("side");
     expect(dealer.card()?.name).toBe("sc-1");
+    await dealer.key({ name: "t" });
+    expect(plain(dealer.view(120, 40))).toContain("title (empty to clear): Widget CSV import▏");
+    for (const _ of "Widget CSV import") await dealer.key({ name: "backspace" });
+    await dealer.key({ name: "return" });
     await dealer.key({ name: "j" });
     for (const [key, text] of [["a", "tests"], ["n", "waiting on Sam"], ["m", "ptyparty"]] as const) {
       await dealer.key({ name: key });
@@ -269,6 +273,7 @@ describe("the deck", () => {
     await dealer.key({ name: "return" });
     const pr = strandNamed(core, "sc-1 › pr").id;
     expect(calls).toEqual([
+      ["title", strandNamed(core, "sc-1").id, ""],
       ["add", pr, "tests"],
       ["note", pr, "waiting on Sam"],
       ["reparent", pr, "ptyparty"],

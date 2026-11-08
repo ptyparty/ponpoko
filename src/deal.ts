@@ -8,7 +8,7 @@ import { cells, keyLine, openScreen, style, visible, type Key, type Part } from 
 import { parseWhen, whenLabel } from "./when.ts";
 
 type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | Purpose;
-type Purpose = "add" | "note" | "move" | "rename" | "wait";
+type Purpose = "add" | "note" | "move" | "rename" | "title" | "wait";
 export type TabRef = { server: string; tabId: number };
 
 const prompts: Record<Purpose, string> = {
@@ -16,9 +16,10 @@ const prompts: Record<Purpose, string> = {
   note: "note",
   move: "move under (empty for the top)",
   rename: "rename to",
+  title: "title (empty to clear)",
   wait: "waits on (empty to stop waiting)",
 };
-const purposeKeys: Record<string, Purpose> = { a: "add", n: "note", m: "move", r: "rename", w: "wait" };
+const purposeKeys: Record<string, Purpose> = { a: "add", n: "note", m: "move", r: "rename", t: "title", w: "wait" };
 
 export class Dealer {
   private snapshot: Snapshot | undefined;
@@ -159,10 +160,11 @@ export class Dealer {
       case "n":
       case "m":
       case "r":
+      case "t":
       case "w":
         if (card) {
           this.mode = purposeKeys[key.name]!;
-          this.typed = this.mode === "rename" ? card.name : "";
+          this.typed = this.mode === "rename" ? card.name : this.mode === "title" ? (card.title ?? "") : "";
         }
         return undefined;
       case "x":
@@ -201,11 +203,12 @@ export class Dealer {
     else if (key.name === "return") {
       this.mode = "card";
       const text = this.typed.trim();
-      if (!card || (text === "" && purpose !== "move" && purpose !== "wait")) return undefined;
+      if (!card || (text === "" && purpose !== "move" && purpose !== "wait" && purpose !== "title")) return undefined;
       if (purpose === "add") await this.act(() => this.actions.add(card.id, text), `Added ${text} under ${card.name}`);
       else if (purpose === "note") await this.act(() => this.actions.note(card.id, text), "Note added");
       else if (purpose === "move") await this.act(() => this.actions.reparent(card.id, text), text === "" ? `${card.name} is at the top` : `${card.name} is under ${text}`);
       else if (purpose === "wait") await this.act(() => (text === "" ? this.actions.unblock(card.id) : this.actions.block(card.id, text)), text === "" ? `${card.name} no longer waits on other strands` : `${card.name} waits on ${text}`);
+      else if (purpose === "title") await this.act(() => this.actions.title(card.id, text), text === "" ? `${card.name} has no title` : `Titled ${text}`);
       else await this.act(() => this.actions.rename(card.id, text), `Renamed to ${text}`);
     } else if (key.text) this.typed += key.text;
     return undefined;
@@ -306,7 +309,7 @@ export class Dealer {
               ? ask(pickupLine(options, this.snapshot.now))
               : this.mode in prompts
                 ? ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`)
-                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["w", "wait on"], ["esc", "close"]]);
+                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["t", "title"], ["w", "wait on"], ["esc", "close"]]);
     const body = [...list, "", ...detail];
     while (body.length < height - 3) body.push("");
     return [...body, "", this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(where))}`, footer];
