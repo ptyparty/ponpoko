@@ -75,16 +75,16 @@ export class Translator {
         live.tabs = new Map(line.tabs.map((entry) => [entry.id, entry]));
         for (const entry of line.tabs) out.labelled(entry, false);
         const agents = new Set(line.agents.map((entry) => agentPlayerId(line.server, entry.paneId)));
-        const failing = new Set(line.jobs.filter((entry) => entry.state === "failed" && !entry.agent).map((entry) => jobPlayerId(line.server, entry.id)));
+        const failing = new Set(line.jobs.filter((entry) => (entry.state === "failed" && !entry.agent) || awaited(entry)).map((entry) => jobPlayerId(line.server, entry.id)));
         for (const player of model.players.values()) {
           const place = komuxPlace(player);
           if (!place || place.session !== line.session) continue;
           if (player.kind === "agent" && !agents.has(player.id)) out.leave(player.id, "its komux session ended", false);
           if (player.kind === "job" && !failing.has(player.id)) out.leave(player.id, "no longer failing", true);
         }
-        for (const entry of line.agents) this.agentState(live, entry, out);
         live.jobs = new Map(line.jobs.map((entry) => [entry.id, entry]));
-        for (const entry of line.jobs) if (entry.state === "failed") this.jobFailed(live, entry, out);
+        for (const entry of line.agents) this.agentState(live, entry, out);
+        for (const entry of line.jobs) if (entry.state === "failed" && entry.startedBy === undefined) this.jobFailed(live, entry, out);
         return out.list;
       }
       case "tab.opened":
@@ -112,11 +112,15 @@ export class Translator {
       case "job.started":
         live.jobs.set(line.job.id, line.job);
         return out.list;
-      case "job.finished":
+      case "job.finished": {
         live.jobs.set(line.job.id, line.job);
-        if (line.job.state === "failed") this.jobFailed(live, line.job, out);
+        const waiting = line.job.startedBy === undefined ? undefined : live.agents.get(line.job.startedBy);
+        if (line.job.startedBy !== undefined) out.leave(jobPlayerId(line.server, line.job.id), line.job.state === "failed" ? "failed" : "passed", false);
+        else if (line.job.state === "failed") this.jobFailed(live, line.job, out);
         else out.leave(jobPlayerId(line.server, line.job.id), "passed", true);
+        if (waiting) this.agentState(live, waiting, out);
         return out.list;
+      }
       case "job.closed":
         live.jobs.delete(line.jobId);
         out.leave(jobPlayerId(line.server, line.jobId), "job closed", true);
@@ -195,8 +199,15 @@ export class Translator {
     if (!player || old?.tabId !== place.tabId || old?.dir !== place.dir || old?.sessionId !== place.sessionId) {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
     }
-    if (wanted === ready && yours.length > 0) return;
     const strand = (reopen: boolean) => out.strandFor(id, tab, entry.name ?? "claude", reopen, entry.sessionId);
+    const running = [...live.jobs.values()].filter((job) => job.startedBy === entry.paneId && job.state === "running");
+    if (wanted !== undefined && wanted !== asking && running.length > 0) {
+      for (const move of [...mine, ...yours]) out.close(move);
+      const on = strand(false);
+      if (on) for (const job of running) this.awaitJob(live, job, on, id, out);
+      return;
+    }
+    if (wanted === ready && yours.length > 0) return;
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
       const on = mine.length === 0 ? strand(true) : undefined;
@@ -211,6 +222,17 @@ export class Translator {
     }
     const on = strand(false);
     if (on) out.open(on, "you", wanted, id);
+  }
+
+  private awaitJob(live: Live, entry: KomuxJob, strand: string, agent: string, out: Facts): void {
+    const id = jobPlayerId(live.server, entry.id);
+    if (out.openBy(id).length > 0) return;
+    const tab = live.tabs.get(entry.tabId);
+    if (!out.model.players.has(id)) {
+      const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tab?.dir ?? "" };
+      out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
+    }
+    out.open(strand, id, "running", agent);
   }
 
   private jobFailed(live: Live, entry: KomuxJob, out: Facts): void {
@@ -290,6 +312,11 @@ class Facts {
     this.model.links.push({ id: link, strand, adapter: "komux", ref, label: tab.name, at: Date.now() });
   }
 
+  close(move: Move): void {
+    this.push({ type: "move.closed", move: move.id });
+    this.model.open = this.model.open.filter((candidate) => candidate.id !== move.id);
+  }
+
   leave(player: string, why: string, closedByYou: boolean): void {
     const known = this.model.players.get(player);
     if (!known) return;
@@ -313,6 +340,10 @@ class Facts {
     this.model.strands.set(strand, { id: strand, name, ...(kind ? { kind } : {}), made: 0, seenAt: 0, dismissedAt: 0, notes: [] });
     return strand;
   }
+}
+
+function awaited(job: KomuxJob): boolean {
+  return job.state === "running" && job.startedBy !== undefined;
 }
 
 export function tabStrand(tab: KomuxTab, model: Pick<Known, "strands" | "links"> & Partial<Pick<Known, "closed">>): { id?: string; closed?: string; name: string } | undefined {

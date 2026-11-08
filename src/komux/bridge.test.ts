@@ -166,6 +166,22 @@ describe("the komux bridge", () => {
     expect(store.all().length).toBe(facts);
   });
 
+  test("a Claude whose turn ends while its own background job runs waits on the job, and is yours once the job is over", async () => {
+    const { core, hear, store } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    const build = { id: 9, tabId: 1, name: "gadgets build", state: "running", agent: false, startedBy: 2 };
+    await hear({ type: "job.started", job: build });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 machine job:s1:9: running");
+    expect(core.snapshot().moves.map((strand) => strand.name)).not.toContain("sc-1234");
+    expect(goTarget(strandNamed(core, "sc-1234"), [], { KOMUX_SESSION: "main", KOMUX_SERVER_ID: "s1" })?.player.id).toBe("pane:s1:2");
+    const facts = store.all().length;
+    await hear({ ...snapshot, agents: [{ paneId: 2, tabId: 1, state: "done", sessionId: "c1" }, ...snapshot.agents.slice(1)], jobs: [build] });
+    expect(store.all().length).toBe(facts);
+    await hear({ type: "job.finished", job: { ...build, state: "succeeded", code: 0 } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
+  });
+
   test("a failed job stays yours through a dismissed toast, until it passes", async () => {
     const { core, hear } = harness();
     await hear(snapshot);

@@ -10,7 +10,7 @@ const tab = z.object({
   args: z.record(z.string(), z.string()).optional(),
 });
 const agent = z.object({ paneId: z.number(), tabId: z.number(), state: z.string(), asking: z.boolean().optional(), name: z.string().optional(), sessionId: z.string().optional() });
-const job = z.object({ id: z.number(), tabId: z.number(), name: z.string(), state: z.string(), code: z.number().nullable().optional(), agent: z.boolean().optional() });
+const job = z.object({ id: z.number(), tabId: z.number(), name: z.string(), state: z.string(), code: z.number().nullable().optional(), agent: z.boolean().optional(), startedBy: z.number().optional() });
 const toast = z.object({ kind: z.string(), id: z.number(), tabId: z.number() });
 const envelope = { session: z.string(), server: z.string().default("unknown"), at: z.number().optional() };
 
