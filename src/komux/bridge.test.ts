@@ -233,6 +233,48 @@ describe("the komux bridge", () => {
   });
 });
 
+describe("Shortcut titles", () => {
+  test("the bridge titles top-level story strands once Shortcut answers, and leaves titled and nested ones alone", async () => {
+    const asked: string[] = [];
+    const { core, hear } = harness(1_000_000, undefined, undefined, async (name) => (asked.push(name), name === "sc-2" ? undefined : { kind: "epic", title: `title of ${name}` }));
+    core.add(undefined, "sc-1 › sc-3");
+    core.add(undefined, "sc-2");
+    core.add(undefined, "sc-4");
+    core.record("you", [{ type: "strand.titled", strand: strandNamed(core, "sc-4").id, title: "already" }]);
+    core.add(undefined, "ptyparty");
+    await hear(snapshot);
+    await Bun.sleep(0);
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    await Bun.sleep(0);
+    expect(asked.sort()).toEqual(["sc-1", "sc-2", "sc-1234"]);
+    expect(strandNamed(core, "sc-1")).toMatchObject({ kind: "epic", title: "title of sc-1" });
+    expect(strandNamed(core, "sc-1 › sc-3").title).toBeUndefined();
+    expect(strandNamed(core, "sc-2").title).toBeUndefined();
+    expect(strandNamed(core, "sc-4").title).toBe("already");
+  });
+
+  test("a lookup that fails is tried again ten minutes later", async () => {
+    let fail = true;
+    let asks = 0;
+    const { core, hear, tick } = harness(1_000_000, undefined, undefined, async () => {
+      asks++;
+      if (fail) throw new Error("offline");
+      return { kind: "story", title: "Widget CSV import" };
+    });
+    await hear(snapshot);
+    await Bun.sleep(0);
+    fail = false;
+    tick(5 * 60_000);
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    await Bun.sleep(0);
+    expect([asks, strandNamed(core, "sc-1234").title]).toEqual([1, undefined]);
+    tick(5 * 60_000);
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
+    await Bun.sleep(0);
+    expect([asks, strandNamed(core, "sc-1234").title]).toEqual([2, "Widget CSV import"]);
+  });
+});
+
 describe("go in komux", () => {
   const env = { KOMUX_SOCKET: "/run/main.control.sock", KOMUX_SESSION: "main", KOMUX_SERVER_ID: "s1" };
   const recorder = () => {

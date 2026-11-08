@@ -2,12 +2,13 @@ import type { Actions } from "./actions.ts";
 import { Ponpoko } from "./core.ts";
 import { Bridge } from "./komux/bridge.ts";
 import { komuxLine } from "./komux/stream.ts";
+import type { TitleLookup } from "./shortcut.ts";
 import { Store } from "./store.ts";
 
-export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko) {
+export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko, lookupTitle: TitleLookup = async () => ({ kind: "story", title: "Widget CSV import" })) {
   let now = start;
   let ids = 0;
-  const core = shared ?? new Ponpoko(store, async () => ({ kind: "story", title: "Widget CSV import" }), () => now, (prefix) => `${prefix}${++ids}`);
+  const core = shared ?? new Ponpoko(store, () => now, (prefix) => `${prefix}${++ids}`);
   const sent: unknown[] = [];
   const service = { down: false };
   const up = () => {
@@ -25,6 +26,7 @@ export function harness(start = 1_000_000, store = new Store(":memory:"), shared
       return { ok: true };
     },
     () => now,
+    lookupTitle,
   );
   const hear = (line: Record<string, unknown>) => bridge.line(komuxLine.parse({ session: "main", server: "s1", ...line }));
   core.onChange(() => bridge.changed());

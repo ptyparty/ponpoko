@@ -7,7 +7,7 @@ function setup() {
   let now = 1_000_000;
   let ids = 0;
   const store = new Store(":memory:");
-  const core = new Ponpoko(store, async () => undefined, () => now, (prefix) => `${prefix}${++ids}`);
+  const core = new Ponpoko(store, () => now, (prefix) => `${prefix}${++ids}`);
   core.record("tool", [
     { type: "player.joined", player: "a1", kind: "agent", who: "claude", adapter: "tool", place: { handle: "tool:1", dir: "/w/ptyparty" } },
     { type: "player.joined", player: "a2", kind: "agent", who: "claude", adapter: "tool", place: { handle: "tool:2", dir: "/w/ptyparty" } },
@@ -179,7 +179,7 @@ describe("strands", () => {
   test("a restarted service keeps what it knew", () => {
     const { core, store } = setup();
     core.add(undefined, "ptyparty › ponpoko");
-    expect(new Ponpoko(store, async () => undefined).snapshot().strands.map((strand) => strand.name)).toEqual(["ptyparty", "ponpoko"]);
+    expect(new Ponpoko(store).snapshot().strands.map((strand) => strand.name)).toEqual(["ptyparty", "ponpoko"]);
   });
 
   test("a rogue naming a strand it split off its own loose strand keeps the tree whole, and survives a restart", () => {
@@ -191,7 +191,7 @@ describe("strands", () => {
     core.split({ self: "tool:1" }, ["c"]);
     core.status({ self: "tool:1", strand: "c", text: "on c" });
     expect(shown()).toBe("c agent on c");
-    expect(new Ponpoko(store, async () => undefined).snapshot().strands.map((strand) => strand.name)).toEqual(["c"]);
+    expect(new Ponpoko(store).snapshot().strands.map((strand) => strand.name)).toEqual(["c"]);
   });
 
   test("marking a parent done finishes everything under it, so nothing hidden still counts as yours", () => {

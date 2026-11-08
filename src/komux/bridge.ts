@@ -2,6 +2,7 @@ import { ask, watch } from "../client.ts";
 import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
 import { pickWhose, whoseOf } from "../model.ts";
+import { shortcutTitle, storyNumber, type TitleLookup } from "../shortcut.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
 import { known, komuxPlace, tabStrand, Translator, type Known } from "./translate.ts";
 
@@ -15,6 +16,7 @@ export type Service = {
 export type Badge = { tabId: number; text: string | null; color?: string };
 
 const heartbeatMs = 30_000;
+const titleRetryMs = 10 * 60_000;
 
 export class Bridge {
   readonly translator = new Translator();
@@ -22,11 +24,15 @@ export class Bridge {
   private behind = false;
   private cached: Knowledge | undefined;
   private last: Knowledge = { strands: [], closed: [], players: [], open: [], links: [], on: {}, resumed: {}, spoke: [] };
+  private readonly titled = new Set<string>();
+  private readonly titling = new Set<string>();
+  private readonly titleFailed = new Map<string, number>();
 
   constructor(
     private readonly service: Service,
     private readonly control: (request: unknown) => Promise<{ ok: boolean }>,
     private readonly now: () => number = Date.now,
+    private readonly lookupTitle: TitleLookup = shortcutTitle,
   ) {}
 
   async line(line: KomuxLine): Promise<void> {
@@ -61,6 +67,7 @@ export class Bridge {
       const knowledge = await this.knowledge();
       const presence = this.translator.presence(known(knowledge));
       if (presence) await this.service.present({ adapter: "komux", ...presence });
+      this.askTitles(knowledge);
       await this.syncBadges(knowledge);
     } catch {
       this.behind = true;
@@ -82,6 +89,22 @@ export class Bridge {
     } catch {
       this.behind = true;
       return false;
+    }
+  }
+
+  private askTitles(knowledge: Knowledge): void {
+    for (const strand of knowledge.strands) {
+      if (strand.parent !== undefined || strand.title || storyNumber(strand.name) === undefined) continue;
+      if (this.titled.has(strand.id) || this.titling.has(strand.id) || this.now() < (this.titleFailed.get(strand.id) ?? 0) + titleRetryMs) continue;
+      this.titling.add(strand.id);
+      void this.lookupTitle(strand.name)
+        .then(async (found) => {
+          if (found) await this.service.record([{ type: "strand.titled", strand: strand.id, ...found }]);
+          this.titled.add(strand.id);
+          this.titleFailed.delete(strand.id);
+        })
+        .catch(() => void this.titleFailed.set(strand.id, this.now()))
+        .finally(() => this.titling.delete(strand.id));
     }
   }
 

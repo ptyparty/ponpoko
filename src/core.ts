@@ -56,12 +56,10 @@ const recentMoves = 12;
 export class Ponpoko {
   readonly model: Model;
   private readonly listeners = new Set<() => void>();
-  private readonly titleAsked = new Set<string>();
   private readonly presences = new Map<string, Presence & { until: number }>();
 
   constructor(
     private readonly store: Store,
-    private readonly lookupTitle: (name: string) => Promise<{ kind: "story" | "epic"; title: string } | undefined> = shortcutTitle,
     private readonly now: () => number = Date.now,
     private readonly newId: (prefix: string) => string = (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`,
   ) {
@@ -78,7 +76,6 @@ export class Ponpoko {
     for (const fact of facts) {
       const recorded = this.store.append(source, fact, this.now());
       apply(this.model, recorded);
-      if (fact.type === "strand.made" && fact.parent === undefined) this.askTitle(fact.strand);
     }
     this.changed();
   }
@@ -467,17 +464,6 @@ export class Ponpoko {
     if (!strand) throw new Error(`no strand ${id}`);
     return strand;
   }
-
-  private askTitle(strand: string): void {
-    const name = this.model.strands.get(strand)?.name;
-    if (!name || storyNumber(name) === undefined || this.titleAsked.has(strand) || this.model.strands.get(strand)?.title) return;
-    this.titleAsked.add(strand);
-    void this.lookupTitle(name)
-      .then((found) => {
-        if (found && this.model.strands.has(strand)) this.record("ponpoko", [{ type: "strand.titled", strand, ...found }]);
-      })
-      .catch(() => undefined);
-  }
 }
 
 function topOrder(model: Model, strand: Strand, now: number): number {
@@ -503,23 +489,3 @@ export function slug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9#]+/g, "-").replace(/^-|-$/g, "") || "someone";
 }
 
-export function storyNumber(name: string): number | undefined {
-  const match = /^sc-(\d+)$/i.exec(name);
-  return match ? Number(match[1]) : undefined;
-}
-
-export async function shortcutTitle(name: string): Promise<{ kind: "story" | "epic"; title: string } | undefined> {
-  const number = storyNumber(name);
-  const token = process.env.SHORTCUT_API_TOKEN;
-  if (number === undefined || !token) return undefined;
-  const headers = { "Shortcut-Token": token, "Content-Type": "application/json" };
-  for (const kind of ["story", "epic"] as const) {
-    const response = await fetch(`https://api.app.shortcut.com/api/v3/${kind === "story" ? "stories" : "epics"}/${number}`, { headers, signal: AbortSignal.timeout(10_000) });
-    if (response.ok) {
-      const body = (await response.json()) as { name?: string };
-      if (body.name) return { kind, title: body.name };
-    }
-    if (response.status !== 404) return undefined;
-  }
-  return undefined;
-}
