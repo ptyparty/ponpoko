@@ -1,9 +1,9 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
-import { goPlace, goTarget, pickupOffer, startsAt, tabStrands } from "./komux/go.ts";
+import { goPlace, goTarget, openTab, pickupOffer, startsAt, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
-import { age, cause, clock, fit, holder, snoozedLabel, strandGlyph, untilNeeded } from "./render.ts";
+import { age, cause, clock, fit, holder, snoozedLabel, strandGlyph } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -65,6 +65,7 @@ export class Dealer {
     this.others = [
       { title: "agents", strands: live.filter((strand) => strand.own.whose === "agent" && !asleep(strand)).sort(newest) },
       { title: "waiting on others", strands: live.filter((strand) => (strand.own.whose === "person" || strand.own.whose === "machine") && !asleep(strand)).sort(newest) },
+      { title: "waiting on other strands", strands: live.filter((strand) => strand.own.whose === undefined && !asleep(strand)).sort(newest) },
       { title: "snoozed", strands: live.filter(asleep).sort((a, b) => a.snoozedUntil! - b.snoozedUntil!) },
     ].filter((section) => section.strands.length > 0);
     const rows = this.rows();
@@ -94,7 +95,6 @@ export class Dealer {
       this.typed = "";
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
       if (choice && card) await this.act(() => this.actions.snooze(card.id, choice.until(this.now())), `Snoozed till ${clock(choice.until(this.now()))}`);
-      if (key.name === untilNeeded.key && card) await this.act(() => this.actions.snooze(card.id, untilNeeded.until, true), `Snoozed till ${untilNeeded.said}`);
       return undefined;
     }
     if (this.mode === "pickup") {
@@ -245,7 +245,8 @@ export class Dealer {
     const target = goTarget(card, this.strands())?.player;
     const options = pickupOffer(card, this.strands());
     const place = goPlace(card, aboveOf(this.strands(), card));
-    const where = target ? `→ ${target.who} in ${target.space ?? "its tab"}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
+    const open = target ? undefined : openTab(card);
+    const where = target ? `→ ${target.who} in ${target.space ?? "its tab"}` : open ? `→ ${open.label}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
     const now = this.snapshot.now;
     this.wide = width >= 100 && this.others.length > 0;
     const column = this.wide ? Math.floor((width - 3) / 2) : width;
@@ -308,8 +309,8 @@ export class Dealer {
   }
 
   private async finish(): Promise<"close"> {
-    if (this.unseen && this.snapshot) {
-      for (const strand of this.snapshot.moves) if (this.dealt.has(strand.id) && strand.unseen) await this.actions.seen(strand.id).catch(() => undefined);
+    if (this.snapshot) {
+      for (const strand of this.snapshot.moves) if (this.dealt.has(strand.id) && ((this.unseen && strand.unseen) || strand.own.finished)) await this.actions.seen(strand.id).catch(() => undefined);
     }
     return "close";
   }
@@ -378,7 +379,7 @@ function sideBySide(left: string[], right: string[], column: number): string[] {
 
 function standing(strand: StrandView, now: number): string {
   if ((strand.snoozedUntil ?? 0) > now) return snoozedLabel(strand, now);
-  return strand.own.whose ? `${othersCause(strand)} · ${age(now - strand.own.since)}` : "";
+  return strand.own.whose || strand.own.waitsOn ? `${othersCause(strand)} · ${age(now - strand.own.since)}` : "";
 }
 
 function othersCause(strand: StrandView): string {

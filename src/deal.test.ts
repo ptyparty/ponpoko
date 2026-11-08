@@ -34,6 +34,34 @@ describe("the deck", () => {
     expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
   });
 
+  test("every live strand shows somewhere, a parent with nothing of its own as waiting on the strand under it", async () => {
+    const { core, tick, now } = harness();
+    core.add(undefined, "sc-1 › sc-2 › gadgets PR › ask Sam");
+    core.add(undefined, "sc-1 › sc-3");
+    core.add(undefined, "side");
+    core.wait({ self: "tool:1", strand: "sc-1 › sc-2 › gadgets PR", who: "the team", kind: "person", what: "reviewing the PR" });
+    core.snooze(strandNamed(core, "sc-1 › sc-2 › gadgets PR › ask Sam").id, now() + 60 * 60_000);
+    core.wait({ self: "tool:1", strand: "side", who: "CI", kind: "machine", what: "build" });
+    tick(60_000);
+    const { actions, calls } = recordingActions();
+    const dealer = new Dealer(actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    const view = plain(dealer.view(160, 80));
+    for (const strand of core.snapshot().strands) expect(view).toContain(strand.name);
+    expect(view).toContain("waiting on other strands · 2");
+    expect(view).toContain("sc-2");
+    expect(view).toContain("waiting on gadgets PR");
+    core.done(strandNamed(core, "sc-1 › sc-3").id);
+    dealer.setSnapshot(core.snapshot());
+    expect(plain(dealer.view(160, 80))).toContain("sc-3 is done");
+    expect(dealer.card()?.name).toBe("sc-1");
+    await dealer.key({ name: "return" });
+    expect(calls).toEqual([
+      ["go", strandNamed(core, "sc-1").id],
+      ["seen", strandNamed(core, "sc-1").id],
+    ]);
+  });
+
   test("deals what's asking you first, then the newest, and an agent only ready for a prompt last", async () => {
     const { core, hear, tick, now } = harness();
     const tabs = ["a", "b", "c", "d"].map((name, index) => ({ id: index + 1, number: index + 1, name, dir: `/w/${name}` }));
@@ -191,7 +219,7 @@ describe("the deck", () => {
     while (dealer.card()?.name !== "sc-1") await dealer.key({ name: "j" });
     const card = plain(dealer.view(100)).split("\n");
     const tree = card.slice(card.findIndex((line) => line.includes("under it · 3")));
-    expect(tree.slice(1, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" | ● a", " | ● b | no one on it · now", " | ⊘ c | Copilot · PR review · now"]);
+    expect(tree.slice(1, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" | ● a | waiting on b · now", " | ● b | no one on it · now", " | ⊘ c | Copilot · PR review · now"]);
   });
 
   test("opened on a tab, lists its strands with the trees under them, and edits the picked one", async () => {
@@ -204,7 +232,7 @@ describe("the deck", () => {
     const dealer = new Dealer(actions, false, now, { server: "s1", tabId: 3 });
     dealer.setSnapshot(core.snapshot());
     const deck = plain(dealer.view(120, 40)).split("\n");
-    expect(deck.slice(0, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" tab 3 widgets · 3", " ▸ 1 | sc-1 | Widget CSV import | claude · turn ended · now", " | 2 | pr", " | 3 | ask | no one on it · now"]);
+    expect(deck.slice(0, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" tab 3 widgets · 3", " ▸ 1 | sc-1 | Widget CSV import | claude · turn ended · now", " | 2 | pr | waiting on ask · now", " | 3 | ask | no one on it · now"]);
     expect(deck.join("\n")).not.toContain("side");
     await dealer.key({ name: "s" });
     expect(dealer.card()?.name).toBe("sc-1");

@@ -43,6 +43,7 @@ describe("the command tab", () => {
     await type(tab, "sc-2");
     await tab.key({ name: "j" });
     await tab.key({ name: "m" });
+    await tab.key({ name: "/", text: "/" });
     await type(tab, "epic 9");
     await tab.key({ name: "d" });
     await tab.key({ name: "z" });
@@ -66,6 +67,33 @@ describe("the command tab", () => {
       ["forget", tests],
       ["note", sc1, "hi"],
       ["point", "/w/stories/sc-1", "SC-9"],
+    ]);
+  });
+
+  test("m moves a strand under the parent picked from the list, starting on its current parent", async () => {
+    const { core, tab, calls } = await setup();
+    core.add(undefined, "sc-2");
+    tab.setSnapshot(core.snapshot());
+    const tests = strandNamed(core, "sc-1 › tests").id;
+    await tab.key({ name: "j" });
+    await tab.key({ name: "m" });
+    expect(plain(tab.view(100, 20)).join("\n")).toContain("move tests stays under sc-1");
+    await tab.key({ name: "j" });
+    expect(plain(tab.view(100, 20)).join("\n")).toContain("move tests can't go under itself");
+    await tab.key({ name: "return" });
+    expect(calls).toEqual([]);
+    await tab.key({ name: "j" });
+    expect(plain(tab.view(100, 20)).join("\n")).toContain("move tests under sc-2");
+    await tab.key({ name: "return" });
+    expect(calls).toEqual([["reparent", tests, strandNamed(core, "sc-2").id]]);
+    expect(tab.current()?.strand?.id).toBe(tests);
+    await tab.key({ name: "m" });
+    await tab.key({ name: "escape" });
+    await tab.key({ name: "m" });
+    await tab.key({ name: "t", text: "t" });
+    expect(calls).toEqual([
+      ["reparent", tests, strandNamed(core, "sc-2").id],
+      ["reparent", tests, ""],
     ]);
   });
 

@@ -391,6 +391,20 @@ describe("go in komux", () => {
     expect(sent).toEqual([{ method: "tab.focus", params: { tabId: 1 } }]);
   });
 
+  test("a strand whose own tab is open goes to that tab, even with no Claude in it", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
+    const strand = strandNamed(core, "sc-1234");
+    const strands = core.snapshot().strands;
+    expect(pickup(strand)?.resume?.session).toBe("c1");
+    expect(pickupOffer(strand, strands, env)).toBeUndefined();
+    expect(pickupOffer(strand, strands, { ...env, KOMUX_SERVER_ID: "s2" })?.resume?.session).toBe("c1");
+    const { sent, control } = recorder();
+    expect(await goInKomux(strand, strands, env, control)).toBe("focused");
+    expect(sent).toEqual([{ method: "tab.focus", params: { tabId: 1 } }]);
+  });
+
   test("picking up falls back to a new pane when the tab's docked Claude is busy or missing", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });

@@ -11,7 +11,6 @@ export type Strand = {
   seenAt: number;
   dismissedAt: number;
   snoozedUntil?: number;
-  untilNeeded?: boolean;
   notes: { at: number; text: string }[];
 };
 export type Player = { id: string; kind: PlayerKind; who: string; adapter?: string; place?: Place; resume?: string; joined: number; gone?: number };
@@ -88,7 +87,6 @@ function applyFact(model: Model, event: Recorded): void {
     case "strand.done":
       withStrand(model, event.strand, (strand) => {
         strand.done = event.at;
-        if (strand.parent !== undefined) wake(model, strand.parent);
       });
       return;
     case "strand.reopened":
@@ -114,10 +112,7 @@ function applyFact(model: Model, event: Recorded): void {
       withStrand(model, event.strand, (strand) => void (strand.dismissedAt = event.at));
       return;
     case "strand.snoozed":
-      withStrand(model, event.strand, (strand) => {
-        strand.snoozedUntil = event.until;
-        strand.untilNeeded = event.untilNeeded || undefined;
-      });
+      withStrand(model, event.strand, (strand) => void (strand.snoozedUntil = event.untilNeeded ? undefined : event.until));
       return;
     case "player.joined": {
       const old = model.players.get(event.player);
@@ -140,7 +135,6 @@ function applyFact(model: Model, event: Recorded): void {
     case "move.opened":
       if (!model.strands.has(event.strand)) return;
       model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, from: event.at, source: event.source });
-      wake(model, event.strand);
       return;
     case "move.described": {
       const move = model.moves.get(event.move);
@@ -215,7 +209,7 @@ export function whoseOf(kind: PlayerKind): Whose {
 
 const rank: Record<Whose, number> = { you: 0, agent: 1, person: 2, machine: 2 };
 
-export type Standing = { whose?: Whose; since: number; why: string; moves: Move[] };
+export type Standing = { whose?: Whose; since: number; why: string; moves: Move[]; waitsOn?: string; finished?: string };
 
 export function pickWhose(whoses: Whose[]): Whose | undefined {
   return [...whoses].sort((a, b) => rank[a] - rank[b])[0];
@@ -263,8 +257,18 @@ export function own(model: Model, strand: Strand): Standing {
   if (whose) {
     const moves = open.filter((move) => moveWhose(model, move) === whose);
     standing = { whose, since: moves[0]!.from, why: moves[0]!.what, moves };
-  } else if (children(model, strand.id).some((child) => child.done === undefined)) standing = { since: strand.made, why: "", moves: [] };
-  else standing = { whose: "you", since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "no one on it", moves: [] };
+  } else {
+    const kids = children(model, strand.id);
+    const live = kids.filter((child) => child.done === undefined);
+    const seen = Math.max(strand.seenAt, ...ancestors(model, strand.id).map((id) => model.strands.get(id)?.seenAt ?? 0));
+    const quiet = Math.max(strand.made, seen, index.last.get(strand.id) ?? 0, ...live.map((child) => child.made));
+    const finished = kids.filter((child) => child.done !== undefined && child.done > quiet).sort((a, b) => b.done! - a.done!)[0];
+    const busiest = finished ? undefined : live.map((child) => ({ child, standing: rolled(model, child) })).filter((entry) => entry.standing.whose !== undefined).sort((a, b) => rank[a.standing.whose!] - rank[b.standing.whose!] || a.standing.since - b.standing.since)[0];
+    if (finished) standing = { whose: "you", since: finished.done!, why: `${finished.name} is done`, moves: [], finished: finished.id };
+    else if (busiest) standing = { since: busiest.standing.since, why: `waiting on ${busiest.child.name}`, moves: [], waitsOn: busiest.child.id };
+    else if (live.length > 0) standing = { since: strand.made, why: "", moves: [] };
+    else standing = { whose: "you", since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "no one on it", moves: [] };
+  }
   index.own.set(strand.id, standing);
   return standing;
 }
@@ -278,13 +282,6 @@ export function rolled(model: Model, strand: Strand): Standing {
   const standing = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0] ?? { since: strand.made, why: "", moves: [] };
   index.rolled.set(strand.id, standing);
   return standing;
-}
-
-function wake(model: Model, id: string): void {
-  const strand = model.strands.get(id);
-  if (!strand?.untilNeeded) return;
-  strand.snoozedUntil = undefined;
-  strand.untilNeeded = undefined;
 }
 
 export function snoozed(strand: Strand, now: number): boolean {

@@ -278,7 +278,7 @@ export class Ponpoko {
       this.record("you", facts);
       return strand;
     }
-    const target = this.resolve(to, facts, undefined);
+    const target = this.model.strands.has(to) ? to : this.resolve(to, facts, undefined);
     if (target === strand || ancestors(this.model, target).includes(strand)) throw new Error("a strand can't go under itself");
     facts.push(moving.kind === "loose" ? { type: "strand.merged", strand, into: target } : { type: "strand.parented", strand, parent: target });
     this.record("you", facts);
@@ -314,9 +314,9 @@ export class Ponpoko {
     this.record("you", [{ type: "strand.forgotten", strand }]);
   }
 
-  snooze(strand: string, until: number, untilNeeded = false): void {
+  snooze(strand: string, until: number): void {
     this.mustHave(strand);
-    this.record("you", [{ type: "strand.snoozed", strand, until, ...(untilNeeded ? { untilNeeded } : {}) }]);
+    this.record("you", [{ type: "strand.snoozed", strand, until }]);
   }
 
   note(strand: string, text: string): void {

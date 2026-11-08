@@ -1,6 +1,6 @@
 import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } from "../core.ts";
 import { sendKomux } from "./stream.ts";
-import { komuxPlace, komuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
+import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
 export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string }>;
 
@@ -17,6 +17,12 @@ export async function goInKomux(strand: StrandView, strands: StrandView[], env =
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
     return "focused";
   }
+  const open = openTab(strand, env);
+  if (open) {
+    const focused = await send({ method: "tab.focus", params: { tabId: open.tabId } });
+    if (!focused.ok) throw new Error(focused.error ?? "komux refused");
+    return "focused";
+  }
   const where = goPlace(strand, aboveOf(strands, strand));
   if (!where) throw new Error("ponpoko doesn't know where this strand lives");
   const opened = await send({ method: "project.open", params: { target: where.dir, ...layoutAt(where.tab, where.dir) } });
@@ -29,7 +35,7 @@ export function goTarget(strand: StrandView, strands: StrandView[] = [], env: Re
     const player = move.answers ?? move.by;
     if (player.live && komuxPlace(player)) return { player, move };
   }
-  if (strands.length === 0) return undefined;
+  if (strands.length === 0 || openTab(strand, env)) return undefined;
   const options = pickup(strand);
   const dir = options?.resume?.dir ?? options?.dir ?? goPlace(strand, aboveOf(strands, strand))?.dir;
   return dir ? claudeIn([...aboveOf(strands, strand), ...strands], dir, env) : undefined;
@@ -42,6 +48,14 @@ function claudeIn(strands: StrandView[], dir: string, env: Record<string, string
       const place = komuxPlace(player);
       if (player.kind === "agent" && player.live && place?.dir === dir && place.session === env.KOMUX_SESSION && place.server === env.KOMUX_SERVER_ID) return { player, move };
     }
+  }
+  return undefined;
+}
+
+export function openTab(strand: StrandView, env: Record<string, string | undefined> = process.env): { tabId: number; label: string } | undefined {
+  for (const space of strand.spaces) {
+    const tab = space.handle ? readKomuxTabHandle(space.handle) : undefined;
+    if (tab && tab.server === env.KOMUX_SERVER_ID) return { tabId: tab.tabId, label: space.label };
   }
   return undefined;
 }
@@ -107,7 +121,7 @@ export function startsAt(strand: StrandView): Pickup | undefined {
 }
 
 export function pickupOffer(strand: StrandView, strands: StrandView[], env: Record<string, string | undefined> = process.env): Pickup | undefined {
-  return goTarget(strand, strands, env) ? undefined : pickup(strand);
+  return goTarget(strand, strands, env) || openTab(strand, env) ? undefined : pickup(strand);
 }
 
 export function claudeCommand(env: Record<string, string | undefined> = process.env): string[] {

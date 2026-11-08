@@ -1,7 +1,7 @@
 import { ask } from "./client.ts";
 import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
-import { age, untilNeeded } from "./render.ts";
+import { age } from "./render.ts";
 import type { Link } from "./model.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -9,7 +9,7 @@ export type Actions = {
   go: (strand: StrandView, strands: StrandView[]) => Promise<unknown>;
   pickUp: (strand: StrandView, how: "resume" | "fresh") => Promise<unknown>;
   forget: (strand: string) => Promise<unknown>;
-  snooze: (strand: string, until: number, untilNeeded?: boolean) => Promise<unknown>;
+  snooze: (strand: string, until: number) => Promise<unknown>;
   note: (strand: string, text: string) => Promise<unknown>;
   point: (dir: string, to: string) => Promise<unknown>;
   seen: (strand: string) => Promise<unknown>;
@@ -29,7 +29,7 @@ export const serviceActions: Actions = {
   },
   pickUp: (strand, how) => pickUpInKomux(strand, how),
   forget: (strand) => ask({ method: "forget", params: { strand } }),
-  snooze: (strand, until, untilNeeded) => ask({ method: "snooze", params: { strand, until, ...(untilNeeded ? { untilNeeded } : {}) } }),
+  snooze: (strand, until) => ask({ method: "snooze", params: { strand, until } }),
   note: (strand, text) => ask({ method: "note", params: { strand, text } }),
   point: (dir, to) => ask({ method: "point", params: { dir, to } }),
   seen: (strand) => ask({ method: "seen", params: { strand } }),
@@ -63,7 +63,7 @@ export const snoozeChoices: SnoozeChoice[] = [
 ];
 
 export function snoozeLine(): string {
-  return `snooze  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("  ")}  t a time  ${untilNeeded.key} till needed  esc`;
+  return `snooze  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("  ")}  t a time  esc`;
 }
 
 export function timeLine(typed: string, now: number): string {

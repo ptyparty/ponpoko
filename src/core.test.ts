@@ -144,24 +144,47 @@ describe("strands", () => {
     expect(strandNamed(core, "sc-1 › a").unseen).toBe(false);
   });
 
-  test("a strand snoozed till needed wakes when it moves again or a strand right under it is done", () => {
+  test("a strand with nothing of its own waits on the strand under it, and a strand under it finishing is your move", () => {
     const { core, tick } = setup();
     core.add(undefined, "sc-1 › a › pr");
     core.add(undefined, "sc-1 › b");
-    core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "look" });
-    const epic = strandNamed(core, "sc-1").id;
-    const moves = () => core.snapshot().moves.map((strand) => strand.name);
-    core.snooze(epic, Number.MAX_SAFE_INTEGER, true);
-    expect(moves()).toEqual(["pr", "b"]);
+    core.wait({ self: "tool:1", strand: "sc-1 › a › pr", who: "the team", kind: "person", what: "review" });
+    const own = (path: string) => {
+      const { whose, why } = strandNamed(core, path).own;
+      return `${whose ?? "-"} ${why}`;
+    };
+    expect(own("sc-1")).toBe("- waiting on b");
+    expect(own("sc-1 › a")).toBe("- waiting on pr");
     tick(60_000);
-    core.wait({ self: "tool:1", strand: "sc-1 › b", who: "you", kind: "you", what: "try it" });
-    core.done(strandNamed(core, "sc-1 › a › pr").id);
-    expect(moves()).toEqual(["a", "b"]);
     core.done(strandNamed(core, "sc-1 › b").id);
-    expect(moves()).toEqual(["sc-1", "a"]);
-    core.snooze(epic, Number.MAX_SAFE_INTEGER, true);
-    core.status({ self: "tool:1", strand: "sc-1", text: "working" });
+    expect(own("sc-1")).toBe("you b is done");
+    expect(core.snapshot().moves.map((strand) => strand.name)).toEqual(["sc-1"]);
+    tick(60_000);
+    core.seen(strandNamed(core, "sc-1").id);
+    expect(own("sc-1")).toBe("- waiting on a");
+    tick(60_000);
+    core.done(strandNamed(core, "sc-1 › a").id);
+    expect(own("sc-1")).toBe("you a is done");
+    tick(60_000);
+    core.status({ self: "tool:1", strand: "sc-1", text: "planning what's next" });
+    expect(own("sc-1")).toBe("agent planning what's next");
+  });
+
+  test("a snooze till needed from before is no snooze at all", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1");
+    const strand = strandNamed(core, "sc-1").id;
+    core.record("you", [{ type: "strand.snoozed", strand, until: Number.MAX_SAFE_INTEGER, untilNeeded: true }]);
     expect(strandNamed(core, "sc-1").snoozedUntil).toBeUndefined();
+  });
+
+  test("a strand moves under the very strand named by its id, even when another shares its name", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1 › pr");
+    core.add(undefined, "sc-2 › pr");
+    core.add(undefined, "fix");
+    core.reparent(strandNamed(core, "fix").id, strandNamed(core, "sc-2 › pr").id);
+    expect(strandNamed(core, "sc-2 › pr › fix").id).toBeDefined();
   });
 
   test("renaming a strand renames the paths under it, and takes a single name", () => {

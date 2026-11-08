@@ -31,6 +31,11 @@ export function komuxTabHandle(server: string, tabId: number): string {
   return `komux:${server}:tab:${tabId}`;
 }
 
+export function readKomuxTabHandle(handle: string): { server: string; tabId: number } | undefined {
+  const match = /^komux:([^:]+):tab:(\d+)$/.exec(handle);
+  return match ? { server: match[1]!, tabId: Number(match[2]) } : undefined;
+}
+
 export function komuxHandle(server: string, paneId: number): string {
   return `komux:${server}:${paneId}`;
 }

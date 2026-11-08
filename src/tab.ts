@@ -1,13 +1,13 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
-import { goPlace, goTarget, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
+import { goPlace, goTarget, openTab, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { clock, rows, untilNeeded, type Row, type Tone } from "./render.ts";
+import { clock, rows, type Row, type Tone } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
 const keysLine = "␣ moves   f fresh   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
 
@@ -20,10 +20,10 @@ const help = [
   "   ␣         show or hide the strand's moves",
   "   a         add a strand under this one",
   "   A         add a strand at the top",
-  "   m         move the strand under another, named by its path, such as ptyparty › ponpoko; a rogue's loose strand merges into it",
+  "   m         move the strand: pick its new parent with j k ↑ ↓ and ⏎, t for the top, or / to type a path such as ptyparty › ponpoko; a rogue's loose strand merges into it",
   "   d         mark the strand done",
   "   o         open what the strand's latest move links to, such as a notebook page (📓) in quoll",
-  "   z         snooze the strand, then pick how long, t to type a time such as 14:30, mon 9, 2h or nov 12, or u till it moves again or a strand right under it is done",
+  "   z         snooze the strand, then pick how long, t to type a time such as 14:30, mon 9, 2h or nov 12",
   "   n         add a note to the strand",
   "   x         forget a strand ponpoko has wrong",
   "   p         point the strand's directory at a strand, so agents there work on it",
@@ -83,6 +83,7 @@ export class TabController {
       return undefined;
     }
     if (mode.kind === "text") return this.textKey(mode, key);
+    if (mode.kind === "moving") return this.movingKey(mode.strand, key);
     const strand = this.current()?.strand;
     if (mode.kind === "snooze") {
       this.mode = key.name === "t" && strand ? { kind: "text", purpose: "snooze", text: "" } : { kind: "list" };
@@ -91,13 +92,12 @@ export class TabController {
         const until = choice.until(this.now());
         await this.run(() => this.actions.snooze(strand.id, until), `Snoozed till ${clock(until)}`);
       }
-      if (key.name === untilNeeded.key && strand) await this.run(() => this.actions.snooze(strand.id, untilNeeded.until, true), `Snoozed till ${untilNeeded.said}`);
       return undefined;
     }
     if (mode.kind === "pickup") {
       this.mode = { kind: "list" };
       const how = pickupChoice(mode.options, key.name);
-      if (how && strand) await this.run(() => this.actions.pickUp(strand, how), how === "resume" ? "Resuming its last Claude" : "Starting a fresh Claude on it");
+      if (how && strand && (await this.run(() => this.actions.pickUp(strand, how), how === "resume" ? "Resuming its last Claude" : "Starting a fresh Claude on it"))) await this.caughtUpOnFinish(strand);
       return undefined;
     }
     if (mode.kind === "forget") {
@@ -126,7 +126,7 @@ export class TabController {
         const options = strand ? pickupOffer(strand, this.strands()) : undefined;
         if (!strand) this.message = "Nothing to go to here";
         else if (options) this.mode = { kind: "pickup", options };
-        else await this.run(() => this.actions.go(strand, this.strands()));
+        else if (await this.run(() => this.actions.go(strand, this.strands()))) await this.caughtUpOnFinish(strand);
         return undefined;
       }
       case "f":
@@ -153,8 +153,14 @@ export class TabController {
         this.mode = { kind: "text", purpose: "add", text: "", top: key.name === "A" || !strand };
         return undefined;
       case "m":
+        if (!strand) this.message = "Pick a strand first";
+        else {
+          this.mode = { kind: "moving", strand };
+          this.select(strand.parent ?? strand.id);
+        }
+        return undefined;
       case "n":
-        if (strand) this.mode = { kind: "text", purpose: key.name === "m" ? "move" : "note", text: "" };
+        if (strand) this.mode = { kind: "text", purpose: "note", text: "" };
         else this.message = "Pick a strand first";
         return undefined;
       case "d":
@@ -190,7 +196,9 @@ export class TabController {
     const at = chosen ? all.indexOf(chosen) : 0;
     if (at < this.top + 2) this.top = Math.max(0, at - 2);
     if (at >= this.top + room) this.top = at - room + 1;
-    const shown = all.slice(this.top, this.top + room).map((row) => paint(row, row === chosen, width));
+    const mode = this.mode;
+    const moving = mode.kind === "moving" ? all.find((row) => row.strand?.id === mode.strand.id) : undefined;
+    const shown = all.slice(this.top, this.top + room).map((row) => (row === moving && row !== chosen ? style.amber(style.bold(`»${row.text.slice(1)}`)) : paint(row, row === chosen, width)));
     while (shown.length < room) shown.push("");
     return [...shown, "", ...footer];
   }
@@ -199,6 +207,7 @@ export class TabController {
     const mode = this.mode;
     if (mode.kind === "snooze") return [style.amber(` ${snoozeLine()}`)];
     if (mode.kind === "pickup") return [style.amber(` no one is on it · ${pickupLine(mode.options, this.now())}`)];
+    if (mode.kind === "moving") return [style.amber(` move ${mode.strand.name} ${this.underWhat(mode.strand)}`), style.dim(" j k ↑ ↓ pick its new parent   ⏎ move   t top   / type a path   esc cancel")];
     if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.name}?  y yes   any other key no`)];
     if (mode.kind === "text" && mode.purpose === "snooze") return [style.amber(` ${timeLine(mode.text, this.now())}`)];
     if (mode.kind === "text") return [style.amber(` ${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`)];
@@ -228,6 +237,63 @@ export class TabController {
     return undefined;
   }
 
+  private async movingKey(moving: StrandView, key: Key): Promise<undefined> {
+    const count = this.selectable().length;
+    const target = this.current()?.strand;
+    switch (key.name) {
+      case "j":
+      case "down":
+        this.selected = Math.min(this.selected + 1, Math.max(0, count - 1));
+        return undefined;
+      case "k":
+      case "up":
+        this.selected = Math.max(this.selected - 1, 0);
+        return undefined;
+      case "escape":
+      case "q":
+      case "ctrl+c":
+        this.mode = { kind: "list" };
+        this.select(moving.id);
+        return undefined;
+      case "/":
+        this.mode = this.select(moving.id) ? { kind: "text", purpose: "move", text: "" } : { kind: "list" };
+        return undefined;
+      case "t":
+        this.mode = { kind: "list" };
+        this.select(moving.id);
+        await this.run(() => this.actions.reparent(moving.id, ""), `${moving.name} is at the top`);
+        return undefined;
+      case "return":
+        if (!target || this.cannotHold(moving, target)) return undefined;
+        this.mode = { kind: "list" };
+        this.select(moving.id);
+        if (target.id !== moving.parent) await this.run(() => this.actions.reparent(moving.id, target.id), `${moving.name} is under ${target.name}`);
+        return undefined;
+    }
+    return undefined;
+  }
+
+  private underWhat(moving: StrandView): string {
+    const target = this.current()?.strand;
+    if (!target) return "";
+    if (this.cannotHold(moving, target)) return `can't go under ${target.id === moving.id ? "itself" : "a strand under it"}`;
+    return target.id === moving.parent ? `stays under ${target.name}` : `under ${target.name}`;
+  }
+
+  private cannotHold(moving: StrandView, target: StrandView): boolean {
+    return target.id === moving.id || aboveOf(this.strands(), target).some((above) => above.id === moving.id);
+  }
+
+  private select(id: string): boolean {
+    const at = this.selectable().findIndex((row) => row.strand?.id === id);
+    if (at >= 0) this.selected = at;
+    return at >= 0;
+  }
+
+  private async caughtUpOnFinish(strand: StrandView): Promise<void> {
+    if (strand.own.finished) await this.actions.seen(strand.id).catch(() => undefined);
+  }
+
   private async snoozeUntil(strand: StrandView | undefined, text: string): Promise<undefined> {
     const until = parseWhen(text, this.now());
     if (until === undefined) {
@@ -249,12 +315,14 @@ export class TabController {
     return strand.dir;
   }
 
-  private async run(action: () => Promise<unknown>, done?: string): Promise<void> {
+  private async run(action: () => Promise<unknown>, done?: string): Promise<boolean> {
     try {
       await action();
       this.message = done;
+      return true;
     } catch (error) {
       this.message = (error as Error).message;
+      return false;
     }
   }
 
@@ -324,6 +392,8 @@ export async function runTab(): Promise<number> {
 function enterDoes(strand: StrandView, strands: StrandView[]): string {
   const target = goTarget(strand, strands);
   if (target) return `go to ${target.player.who} in ${target.player.space ?? "its tab"}`;
+  const open = openTab(strand);
+  if (open) return `go to ${open.label}`;
   const options = pickupOffer(strand, strands);
   if (options?.resume) return `resume ${options.resume.who} on ${strand.name}, or start a fresh Claude`;
   if (options) return `start a Claude on ${strand.name}`;
