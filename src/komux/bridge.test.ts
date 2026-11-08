@@ -281,7 +281,7 @@ describe("Shortcut titles", () => {
     await Bun.sleep(0);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
     await Bun.sleep(0);
-    expect(asked.sort()).toEqual(["sc-1", "sc-2", "sc-1234"]);
+    expect(asked.sort()).toEqual(["sc-1", "sc-1234", "sc-2"]);
     expect(strandNamed(core, "sc-1")).toMatchObject({ kind: "epic", title: "title of sc-1" });
     expect(strandNamed(core, "sc-1 › sc-3").title).toBeUndefined();
     expect(strandNamed(core, "sc-2").title).toBeUndefined();
