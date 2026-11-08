@@ -18,7 +18,7 @@ export function harness(start = 1_000_000, store = new Store(":memory:"), shared
   const bridge = new Bridge(
     {
       knowledge: async () => (up(), core.knowledge()),
-      record: async (facts) => (up(), core.record("komux", facts)),
+      record: async (facts, source = "komux") => (up(), core.record(source, facts)),
       present: async (presence) => (up(), void handle(core, request.parse({ method: "present", params: presence }))),
       absent: async (scope) => (up(), core.absent("komux", scope)),
     },
@@ -39,6 +39,7 @@ export function recordingActions() {
   const record = (name: string) => async (...args: unknown[]) => void calls.push([name, ...args]);
   const actions = {
     go: async (strand: { id: string }) => void calls.push(["go", strand.id]),
+    assign: async (strand: { id: string }) => void calls.push(["assign", strand.id]),
     pickUp: async (strand: { id: string }, how: string) => void calls.push(["pickUp", strand.id, how]),
     forget: record("forget"),
     snooze: record("snooze"),

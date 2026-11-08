@@ -1,14 +1,19 @@
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { join } from "node:path";
 import { ask, watch } from "../client.ts";
+import { ensurePrivateDir, runtimeDir } from "../paths.ts";
 import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
 import { pickWhose, whoseOf } from "../model.ts";
+import { fetchInbox, type Inbox } from "../github.ts";
+import { inboxFacts, source as githubSource } from "../inbox.ts";
 import { shortcutTitle, storyNumber, type TitleLookup } from "../shortcut.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
 import { known, komuxPlace, tabStrand, Translator, type Known } from "./translate.ts";
 
 export type Service = {
   knowledge: () => Promise<Knowledge>;
-  record: (facts: Fact[]) => Promise<void>;
+  record: (facts: Fact[], source?: string) => Promise<void>;
   present: (presence: Presence) => Promise<void>;
   absent: (scope: string) => Promise<void>;
 };
@@ -17,6 +22,7 @@ export type Badge = { tabId: number; text: string | null; color?: string };
 
 const heartbeatMs = 30_000;
 const titleRetryMs = 10 * 60_000;
+const inboxMs = 2 * 60_000;
 
 export class Bridge {
   readonly translator = new Translator();
@@ -27,13 +33,44 @@ export class Bridge {
   private readonly titled = new Set<string>();
   private readonly titling = new Set<string>();
   private readonly titleFailed = new Map<string, number>();
+  private inboxAt = Number.NEGATIVE_INFINITY;
+  private inboxing = false;
+  private inboxError: string | undefined;
 
   constructor(
     private readonly service: Service,
     private readonly control: (request: unknown) => Promise<{ ok: boolean }>,
     private readonly now: () => number = Date.now,
     private readonly lookupTitle: TitleLookup = shortcutTitle,
+    private readonly lookupInbox: (() => Promise<Inbox>) | undefined = undefined,
+    private readonly newId: (prefix: string) => string = (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`,
   ) {}
+
+  async pollInbox(inTurn: <T>(work: () => Promise<T>) => Promise<T> = (work) => work()): Promise<boolean> {
+    if (!this.lookupInbox || this.inboxing || this.now() < this.inboxAt + inboxMs) return false;
+    this.inboxing = true;
+    this.inboxAt = this.now();
+    try {
+      const inbox = await this.lookupInbox();
+      const recorded = await inTurn(async () => {
+        this.cached = undefined;
+        const facts = inboxFacts(await this.knowledge(), inbox, this.newId);
+        if (facts.length === 0) return false;
+        await this.service.record(facts, githubSource);
+        this.cached = undefined;
+        return true;
+      });
+      this.inboxError = undefined;
+      return recorded;
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message !== this.inboxError) console.error(`ponpoko: GitHub reviews and mentions: ${message}`);
+      this.inboxError = message;
+      return false;
+    } finally {
+      this.inboxing = false;
+    }
+  }
 
   async line(line: KomuxLine): Promise<void> {
     const knowledge = await this.knowledge().catch(() => undefined);
@@ -151,9 +188,48 @@ export class Bridge {
   }
 }
 
+export class PollLock {
+  constructor(
+    private readonly file: string,
+    private readonly pid = process.pid,
+    private readonly alive: (pid: number) => boolean = isAlive,
+  ) {}
+
+  take(): boolean {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const fd = openSync(this.file, "wx", 0o600);
+        writeSync(fd, `${this.pid}\n`);
+        closeSync(fd);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+      }
+      const holder = Number(readFileSync(this.file, "utf8").trim());
+      if (holder === this.pid) return true;
+      if (Number.isInteger(holder) && holder > 0 && this.alive(holder)) return false;
+      rmSync(this.file, { force: true });
+    }
+    return false;
+  }
+
+  release(): void {
+    if (existsSync(this.file) && Number(readFileSync(this.file, "utf8").trim()) === this.pid) rmSync(this.file, { force: true });
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 export const serviceForBridge: Service = {
   knowledge: async () => (await ask({ method: "knowledge" })) as Knowledge,
-  record: async (facts) => void (await ask({ method: "record", params: { source: "komux", facts } })),
+  record: async (facts, source = "komux") => void (await ask({ method: "record", params: { source, facts } })),
   present: async (presence) => void (await ask({ method: "present", params: presence })),
   absent: async (scope) => void (await ask({ method: "absent", params: { adapter: "komux", scope } })),
 };
@@ -165,10 +241,18 @@ export async function runBridge(env = process.env): Promise<number> {
     console.error("ponpoko komux runs as a komux helper: list it under the plugin's run, so komux gives it KOMUX_EVENTS_SOCKET and KOMUX_SOCKET");
     return 2;
   }
-  const bridge = new Bridge(serviceForBridge, (request) => sendKomux(control, request));
+  const bridge = new Bridge(serviceForBridge, (request) => sendKomux(control, request), Date.now, shortcutTitle, env.PONPOKO_GITHUB === "off" ? undefined : () => fetchInbox());
   let queue = Promise.resolve();
   const serial = (work: () => Promise<void>) => {
     queue = queue.then(work).catch(() => undefined);
+  };
+  const inTurn = <T>(work: () => Promise<T>): Promise<T> => {
+    const done = queue.then(work);
+    queue = done.then(
+      () => undefined,
+      () => undefined,
+    );
+    return done;
   };
   const closed = Promise.withResolvers<void>();
   await subscribe(events, (line) => serial(() => bridge.line(line)), () => closed.resolve());
@@ -183,14 +267,21 @@ export async function runBridge(env = process.env): Promise<number> {
     ).catch(() => undefined);
   };
   await keepWatching();
+  const lock = env.PONPOKO_GITHUB === "off" ? undefined : new PollLock(join(ensurePrivateDir(runtimeDir()), "github.lock"));
+  const pollInbox = async () => {
+    if (lock?.take() && (await bridge.pollInbox(inTurn))) serial(() => bridge.publish());
+  };
   const timer = setInterval(() => {
     void keepWatching();
     serial(() => bridge.heartbeat());
+    void pollInbox();
   }, heartbeatMs);
+  void pollInbox();
   const leave = async () => {
     clearInterval(timer);
     watching?.close();
     await queue;
+    lock?.release();
     await bridge.leave();
   };
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, () => void leave().then(() => process.exit(0)));

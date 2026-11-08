@@ -50,6 +50,24 @@ A strand ponpoko has no tab or directory for goes to the place of the nearest st
 
 When the tab a strand lives in already has a Claude in it, such as a story's Claude when you pick one of the story's smaller strands, Enter goes to that Claude instead of offering a new one. `f` starts a fresh Claude on a strand whenever you want one anyway, in the deck or the command tab.
 
+## Reviews and mentions from GitHub
+
+`ponpoko komux` asks GitHub through `gh` every two minutes, so `gh` must be logged in. Pull requests that want a review sit under a `reviews` strand, and open pull requests where someone mentioned you and you haven't answered sit under `mentions`.
+
+- A review nobody has taken waits on GitHub and stays out of the deck. Enter on it asks whether to assign yourself first (`y`), or just open it (`o`).
+- A review assigned to you, or one asking for your review, is yours. Once you request changes it waits on the author until they push, and approving it finishes it. So does someone else taking it, or the pull request closing.
+- Enter on a review opens its repository in komux's `pr-review` layout with the `pr` and `strand` arguments, and goes back to that tab while it's open. Set `PONPOKO_REVIEW_LAYOUT` to use another layout.
+- A mention is yours until you reply or react to it. Enter opens it on GitHub.
+- Marking a review or mention done keeps it done until it changes: a push, a new request for your review, or a new mention.
+
+Which pull requests count as waiting for a review comes from `~/.config/ponpoko/config.json` (or the file `PONPOKO_CONFIG` names):
+
+```json
+{ "github": { "reviewQuery": "is:open is:pr org:my-org draft:false -label:dependencies" } }
+```
+
+Without it, only reviews assigned to you or requesting you show up. Set `PONPOKO_GITHUB=off` in komux's `env` to stop asking GitHub.
+
 Glyphs: ● yours, ◐ an agent's, ⊘ waiting on someone or something, ◷ snoozed, ○ nothing to do.
 
 ## Where things live

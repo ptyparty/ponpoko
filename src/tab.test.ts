@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Actions } from "./actions.ts";
+import { inboxFacts } from "./inbox.ts";
 import { TabController } from "./tab.ts";
 import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
@@ -196,5 +197,39 @@ describe("the command tab", () => {
       ["pickUp", id, "fresh"],
       ["go", id],
     ]);
+  });
+});
+
+describe("reviews from GitHub in the command tab", () => {
+  async function pooled() {
+    const { core } = harness();
+    const pr = { repo: "acme/widgets", number: 1860, title: "Add a widget cache", url: "https://github.com/acme/widgets/pull/1860", author: "alice", assignees: [], requested: [], reviews: [], head: "c1" };
+    let ids = 0;
+    core.record("github", inboxFacts(core.knowledge(), { me: "octo", reviews: [pr], mentioned: [] }, (prefix) => `${prefix}gh${++ids}`));
+    const { actions, calls } = recordingActions();
+    const tab = new TabController(actions, () => 1_000_000);
+    tab.setSnapshot(core.snapshot());
+    await tab.key({ name: "j", text: "j" });
+    return { tab, calls };
+  }
+
+  test("asks before taking a review nobody has, and can open it without assigning", async () => {
+    const { tab, calls } = await pooled();
+    expect(plain(tab.view(120, 20)).join("\n")).toContain("take widgets#1860: assign yourself and open it in pr-review");
+    await tab.key({ name: "return" });
+    const asking = plain(tab.view(120, 20)).join("\n");
+    expect(asking).toContain("widgets#1860 has no reviewer yet");
+    expect(asking).toContain("assign yourself and open it");
+    await tab.key({ name: "o", text: "o" });
+    expect(calls).toEqual([["go", "github:review:acme/widgets#1860"]]);
+    await tab.key({ name: "return" });
+    await tab.key({ name: "y", text: "y" });
+    expect(calls.slice(1)).toEqual([
+      ["assign", "github:review:acme/widgets#1860"],
+      ["go", "github:review:acme/widgets#1860"],
+    ]);
+    await tab.key({ name: "return" });
+    await tab.key({ name: "escape" });
+    expect(calls).toHaveLength(3);
   });
 });

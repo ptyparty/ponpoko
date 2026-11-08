@@ -1,7 +1,8 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
-import { goPlace, goTarget, openTab, pickupOffer, startsAt, tabStrands } from "./komux/go.ts";
+import { isPooled, mentionLink, mentionsId, reviewsId } from "./inbox.ts";
+import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
 import { blockersOf, fit, snoozedLabel, standingOf } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
@@ -58,7 +59,7 @@ export class Dealer {
     const wanted = this.unseen ? new Set(snapshot.unseen) : undefined;
     const moves = snapshot.moves.filter((strand) => !wanted || wanted.has(strand.id)).sort((a, b) => urgency(a) - urgency(b) || b.own.since - a.own.since);
     this.hand = moves;
-    const live = this.unseen ? [] : snapshot.strands;
+    const live = this.unseen ? [] : snapshot.strands.filter((strand) => !isPooled(strand) && strand.id !== reviewsId && strand.id !== mentionsId);
     const asleep = (strand: StrandView) => (strand.snoozedUntil ?? 0) > snapshot.now;
     const newest = (a: StrandView, b: StrandView) => b.own.since - a.own.since;
     this.others = [
@@ -243,7 +244,8 @@ export class Dealer {
     const options = pickupOffer(card, this.strands());
     const place = goPlace(card, aboveOf(this.strands(), card));
     const open = target ? undefined : openTab(card);
-    const where = target ? `go to ${target.who} in ${target.space ?? "its tab"}` : open ? `go to ${open.label}` : options?.resume ? `no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `no one is on it; start a Claude at ${options.dir}` : place ? `open a tab at ${place.dir}` : "nowhere ponpoko knows of";
+    const github = mentionLink(card) ? "open the mention on GitHub" : !target && !open && reviewOf(card) && !tabOf(card) ? `open ${card.name} in ${reviewLayout()}` : undefined;
+    const where = github ? github : target ? `go to ${target.who} in ${target.space ?? "its tab"}` : open ? `go to ${open.label}` : options?.resume ? `no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `no one is on it; start a Claude at ${options.dir}` : place ? `open a tab at ${place.dir}` : "nowhere ponpoko knows of";
     const now = this.snapshot.now;
     this.wide = width >= 130 && this.others.length > 0;
     const column = this.wide ? Math.floor((width - 3) / 2) : width;
@@ -287,7 +289,7 @@ export class Dealer {
     const kept = card.own.whose === "you" && !standing.text.startsWith("snoozed") ? (card.unseen ? "new" : card.dismissedAt >= card.own.since ? "toast dismissed" : "seen") : "";
     const detail = [
       stripe([[card.name, (text) => style.text(style.bold(text))], ...(card.title ? ["  ", [card.title, style.muted] as Part] : [])]),
-      ...(card.above ?? []).map((above) => stripe([[`in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, style.faint]])),
+      ...(card.above ?? []).map((above) => stripe([[`in ${above.kind && above.kind !== "loose" && above.kind !== "inbox" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, style.faint]])),
       stripe(),
       stripe([[`${standing.glyph} `, standing.paint], [standing.text, standing.paint], [[standing.age, kept].filter(Boolean).map((text) => `  ·  ${text}`).join(""), style.faint]]),
       ...(blockers.length > 0 ? [stripe([[`waits on ${blockers.join(", ")}`, style.wait]])] : []),

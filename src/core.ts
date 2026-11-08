@@ -6,6 +6,8 @@ import {
   children,
   counts,
   descendants,
+  inboxRank,
+  isBookkeeping,
   isLive,
   isUnseen,
   openMoves,
@@ -119,7 +121,7 @@ export class Ponpoko {
       closed: [...this.model.strands.values()].filter((strand) => strand.done !== undefined),
       players: [...this.model.players.values()].filter((player) => player.gone === undefined),
       open: moves.filter((move) => move.until === undefined),
-      links: [...this.model.links.values()].filter((link) => link.adapter === "dir" || link.adapter === "komux"),
+      links: [...this.model.links.values()].filter((link) => link.adapter === "dir" || link.adapter === "komux" || link.adapter.startsWith("github")),
       on,
       resumed,
       spoke: [...new Set(moves.filter((move) => move.source === "agent" || (move.described !== undefined && move.player !== you)).map((move) => move.strand))],
@@ -176,14 +178,16 @@ export class Ponpoko {
     const tree: StrandView[] = [];
     const walk = (strand: Strand, depth: number) => {
       tree.push(view(strand, depth));
-      for (const child of children(this.model, strand.id).filter((candidate) => candidate.done === undefined).sort((a, b) => a.made - b.made)) walk(child, depth + 1);
+      const kids = children(this.model, strand.id).filter((candidate) => candidate.done === undefined);
+      kids.sort(strand.kind === "inbox" ? (a, b) => inboxRank(this.model, a) - inboxRank(this.model, b) || a.made - b.made : (a, b) => a.made - b.made);
+      for (const child of kids) walk(child, depth + 1);
     };
     const top = children(this.model, undefined).filter((strand) => strand.done === undefined);
     top.sort((a, b) => topOrder(this.model, a, now) - topOrder(this.model, b, now) || a.name.localeCompare(b.name));
     for (const strand of top) walk(strand, 0);
     const byId = new Map(tree.map((strand) => [strand.id, strand]));
     const moves = yourStrands(this.model, now).flatMap((strand) => byId.get(strand.id) ?? []);
-    const heard = recentHeard(this.model, 100);
+    const heard = recentHeard(this.model, 100).filter((event) => event.type !== "link.removed" && !(event.type === "link.added" && isBookkeeping(event)));
     return {
       now,
       counts: counts(this.model, now),

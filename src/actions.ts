@@ -3,11 +3,14 @@ import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
 import { age } from "./render.ts";
 import { dormant, type Link } from "./model.ts";
+import { assignMe, prRef } from "./github.ts";
+import { assignFacts, mentionLink, prAdapter, source as githubSource } from "./inbox.ts";
 import { showTour, strandTour } from "./remax.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
 export type Actions = {
   go: (strand: StrandView, strands: StrandView[]) => Promise<unknown>;
+  assign: (strand: StrandView) => Promise<unknown>;
   pickUp: (strand: StrandView, how: "resume" | "fresh") => Promise<unknown>;
   forget: (strand: string) => Promise<unknown>;
   snooze: (strand: string, until: number) => Promise<unknown>;
@@ -26,12 +29,24 @@ export type Actions = {
 
 export const serviceActions: Actions = {
   go: async (strand, strands) => {
+    const mention = mentionLink(strand);
+    if (mention) {
+      openUrl(mention.ref);
+      if (strand.unseen) await ask({ method: "seen", params: { strand: strand.id } });
+      return;
+    }
     const landing = await goInKomux(strand, strands);
     const tour = strandTour(strand);
     if (tour) await showTour(tour, landing.tabDir);
     const target = goTarget(strand, strands);
     if (target?.player.kind === "job") await ask({ method: "close-move", params: { move: target.move.id } });
     else if (strand.unseen) await ask({ method: "seen", params: { strand: strand.id } });
+  },
+  assign: async (strand) => {
+    const link = strand.links.find((candidate) => candidate.adapter === prAdapter && prRef(candidate.ref));
+    if (!link) throw new Error("this strand doesn't link to a pull request");
+    await assignMe(link.ref);
+    await ask({ method: "record", params: { source: githubSource, facts: assignFacts(strand, (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`) } });
   },
   pickUp: (strand, how) => pickUpInKomux(strand, how),
   forget: (strand) => ask({ method: "forget", params: { strand } }),
@@ -48,11 +63,17 @@ export const serviceActions: Actions = {
   done: (strand) => ask({ method: "done", params: { strand } }),
   open: async (link) => {
     if (link.adapter === "remax") return showTour(link, process.env.KOMUX_TAB_DIR);
+    if (link.adapter === prAdapter) return openUrl(link.ref);
     if (link.adapter !== "quoll") throw new Error(`ponpoko can't open ${link.adapter} links yet`);
     const shown = Bun.spawnSync(["quoll", "show", link.ref], { stdout: "pipe", stderr: "pipe" });
     if (shown.exitCode !== 0) throw new Error(`quoll show: ${shown.stderr.toString().trim() || shown.stdout.toString().trim()}`);
   },
 };
+
+export function openUrl(url: string): void {
+  if (!/^https:\/\//.test(url)) throw new Error(`ponpoko only opens https links, not ${url}`);
+  Bun.spawn(["xdg-open", url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+}
 
 export type SnoozeChoice = { key: string; label: string; until: (now: number) => number };
 

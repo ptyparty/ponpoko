@@ -218,6 +218,10 @@ function remove(model: Model, id: string, into: string | undefined): void {
   model.strands.delete(id);
 }
 
+export function isBookkeeping(link: { adapter: string }): boolean {
+  return link.adapter.endsWith("-state");
+}
+
 export function descendants(model: Model, id: string, seen = new Set<string>([id])): string[] {
   return children(model, id).flatMap((child) => {
     if (seen.has(child.id)) return [];
@@ -320,13 +324,14 @@ export function own(model: Model, strand: Strand): Standing {
       const blocker = model.strands.get(on);
       return blocker ? [{ blocker, since, ended: endedAt(model, blocker) }] : [];
     });
-    const finished = [
+    const finished = strand.kind === "inbox" ? undefined : [
       ...kids.filter((child) => child.done !== undefined && child.done > quiet).map((child) => ({ strand: child, at: child.done! })),
       ...blocking.filter(({ since, ended }) => ended !== undefined && ended > since && ended > quiet).map(({ blocker, ended }) => ({ strand: blocker, at: ended! })),
     ].sort((a, b) => b.at - a.at)[0];
     const holding = finished ? undefined : blocking.filter(({ ended }) => ended === undefined).sort((a, b) => a.since - b.since)[0];
     const busiest = finished || holding ? undefined : live.map((child) => ({ child, standing: rolled(model, child) })).filter((entry) => entry.standing.whose !== undefined).sort((a, b) => rank[a.standing.whose!] - rank[b.standing.whose!] || a.standing.since - b.standing.since)[0];
-    if (finished) standing = { whose: "you", since: finished.at, why: `${finished.strand.name} is done`, moves: [], finished: finished.strand.id };
+    if (strand.kind === "inbox" && live.length > 0) standing = { since: Math.max(...live.map((child) => child.made)), why: inboxSummary(model, live), moves: [] };
+    else if (finished) standing = { whose: "you", since: finished.at, why: `${finished.strand.name} is done`, moves: [], finished: finished.strand.id };
     else if (holding) standing = { since: holding.since, why: `waiting on ${holding.blocker.name}`, moves: [], waitsOn: holding.blocker.id };
     else if (busiest) standing = { since: busiest.standing.since, why: `waiting on ${busiest.child.name}`, moves: [], waitsOn: busiest.child.id };
     else if (live.length > 0) standing = { since: strand.made, why: "", moves: [] };
@@ -334,6 +339,21 @@ export function own(model: Model, strand: Strand): Standing {
   }
   index.own.set(strand.id, standing);
   return standing;
+}
+
+function inboxSummary(model: Model, kids: Strand[]): string {
+  const tally = new Map<string, number>();
+  for (const kid of kids) {
+    const whose = rolled(model, kid).whose;
+    const label = whose === "you" ? "yours" : whose === "agent" ? "with agents" : whose === undefined ? "quiet" : "waiting";
+    tally.set(label, (tally.get(label) ?? 0) + 1);
+  }
+  return ["yours", "with agents", "waiting", "quiet"].flatMap((label) => (tally.has(label) ? [`${tally.get(label)} ${label}`] : [])).join(" · ");
+}
+
+export function inboxRank(model: Model, strand: Strand): number {
+  const whose = rolled(model, strand).whose;
+  return whose === undefined ? 4 : rank[whose] + (whose === "machine" ? 1 : 0);
 }
 
 export function rolled(model: Model, strand: Strand): Standing {

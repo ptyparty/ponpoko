@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { harness, strandNamed } from "../test-harness.ts";
+import { inboxFacts } from "../inbox.ts";
 import { brief, goInKomux, goTarget, pickup, pickupOffer, pickUpInKomux } from "./go.ts";
 
 const story = "/home/me/work/stories/sc-1234/widgets";
@@ -315,6 +316,21 @@ describe("go in komux", () => {
     const sent: unknown[] = [];
     return { sent, control: async (request: unknown) => (sent.push(request), { ok: true }) };
   };
+
+  test("opens a review's pull request in the pr-review layout by repo, and comes back to that tab once it's open", async () => {
+    const { core, hear } = harness();
+    const pr = { repo: "acme/widgets", number: 1860, title: "Add a widget cache", url: "https://github.com/acme/widgets/pull/1860", author: "alice", assignees: ["octo"], requested: [], reviews: [], head: "c1" };
+    let ids = 0;
+    core.record("github", inboxFacts(core.knowledge(), { me: "octo", reviews: [pr], mentioned: [] }, (prefix) => `${prefix}gh${++ids}`));
+    const review = () => core.snapshot().strands.find((strand) => strand.name === "widgets#1860")!;
+    const { sent, control } = recorder();
+    await goInKomux(review(), core.snapshot().strands, env, control);
+    expect(sent).toEqual([{ method: "project.open", params: { repo: "acme/widgets", layout: "pr-review", args: { pr: "1860", strand: "reviews › widgets#1860" } } }]);
+    await hear({ type: "snapshot", tabs: [{ id: 4, number: 4, name: "widgets #1860", dir: "/w/acme/widgets", layout: "pr-review", args: { pr: "1860", strand: "reviews › widgets#1860" }, labels: { strand: "reviews › widgets#1860" } }], agents: [], jobs: [] });
+    sent.length = 0;
+    expect((await goInKomux(review(), core.snapshot().strands, env, control)).how).toBe("focused");
+    expect(sent).toEqual([{ method: "tab.focus", params: { tabId: 4 } }]);
+  });
 
   test("focuses the tab a strand waits on in this session, and opens a tab here for anything else", async () => {
     const { core, hear } = harness();

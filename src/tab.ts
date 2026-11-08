@@ -1,5 +1,6 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
-import { goPlace, goTarget, openTab, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
+import { isBookkeeping, isPooled, mentionLink } from "./inbox.ts";
+import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { blockersOf, clock, header, isWaitingOn, rows, snoozedLabel, standingOf, type Row } from "./render.ts";
@@ -8,7 +9,7 @@ import { LogView } from "./log.ts";
 import { parseWhen } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "log" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
 const keys: [string, string][] = [["␣", "moves"], ["a", "add"], ["m", "move"], ["w", "wait on"], ["d", "done"], ["z", "snooze"], ["n", "note"], ["f", "fresh Claude"], ["l", "log"], ["?", "all keys"], ["q", "quit"]];
 
@@ -17,6 +18,7 @@ const help = [
   "",
   "   j k ↑ ↓   move between strands",
   "   ⏎         go to the strand: its agent's tab, a Claude already in the tab it lives in, or a tab opened at its directory",
+  "             a review opens its pull request in the pr-review layout, asking first whether to assign yourself, and a mention opens on GitHub",
   "   f         start a fresh Claude on the strand, even when one is already in its tab",
   "   ␣         show or hide the strand's moves",
   "   a         add a strand under this one",
@@ -112,6 +114,14 @@ export class TabController {
       if (how && strand && (await this.run(() => this.actions.pickUp(strand, how), how === "resume" ? "Resuming its last Claude" : "Starting a fresh Claude on it"))) await this.caughtUpOnFinish(strand);
       return undefined;
     }
+    if (mode.kind === "assign") {
+      this.mode = { kind: "list" };
+      const pooled = mode.strand;
+      if (key.name === "y" || key.name === "return") {
+        if (await this.run(() => this.actions.assign(pooled), `Assigned you to ${pooled.name}`)) await this.run(() => this.actions.go(pooled, this.strands()), `Assigned you to ${pooled.name}`);
+      } else if (key.name === "o") await this.run(() => this.actions.go(pooled, this.strands()));
+      return undefined;
+    }
     if (mode.kind === "forget") {
       this.mode = { kind: "list" };
       if (key.name === "y" && strand) await this.run(() => this.actions.forget(strand.id), `Forgot ${strand.name}`);
@@ -137,6 +147,7 @@ export class TabController {
       case "return": {
         const options = strand ? pickupOffer(strand, this.strands()) : undefined;
         if (!strand) this.message = "Nothing to go to here";
+        else if (isPooled(strand)) this.mode = { kind: "assign", strand };
         else if (options) this.mode = { kind: "pickup", options };
         else if (await this.run(() => this.actions.go(strand, this.strands()))) await this.caughtUpOnFinish(strand);
         return undefined;
@@ -152,7 +163,7 @@ export class TabController {
       case "o": {
         const link = strand
           ? [...strand.recent.flatMap((move) => move.links), ...strand.links]
-              .filter((candidate) => candidate.adapter !== "dir")
+              .filter((candidate) => candidate.adapter !== "dir" && !isBookkeeping(candidate))
               .sort((a, b) => a.at - b.at)
               .at(-1)
           : undefined;
@@ -235,7 +246,7 @@ export class TabController {
     const waits = blockersOf(strand, this.strands()).map((other) => other.name);
     const moves = strand.recent.slice(-2).map((move) => {
       const until = move.until === undefined ? "     " : clock(move.until);
-      return stripe([[`${clock(move.from)}–${until}  ${(move.player === "you" ? "you" : move.by.who).padEnd(8)}  ${move.what}`, style.faint]]);
+      return stripe([[`${clock(move.from)}–${until}  ${(move.player === "you" ? (move.answers?.kind === "person" ? move.answers.who : "you") : move.by.who).padEnd(8)}  ${move.what}`, style.faint]]);
     });
     return [
       stripe([[strand.name, (text) => style.text(style.bold(text))], ...(strand.title ? ["  ", [strand.title, style.muted] as [string, (text: string) => string]] : [])]),
@@ -255,6 +266,7 @@ export class TabController {
     if (mode.kind === "pickup") return ask(`no one is on it · ${pickupLine(mode.options, this.now())}`);
     if (mode.kind === "moving") return [style.you(` move ${mode.strand.name} ${this.underWhat(mode.strand)}`), keyLine([["j k", "pick its new parent"], ["⏎", "move"], ["t", "top"], ["/", "type a path"], ["esc", "cancel"]])];
     if (mode.kind === "waiting") return [style.you(` ${mode.strand.name} ${this.waitsWhat(mode.strand)}`), keyLine([["j k", "pick the strand it waits on"], ["⏎", "wait on it"], ["/", "type a path"], ["c", "stop waiting"], ["esc", "cancel"]])];
+    if (mode.kind === "assign") return [style.you(` ${mode.strand.name} has no reviewer yet`), keyLine([["y ⏎", "assign yourself and open it"], ["o", "open it without assigning"], ["esc", "cancel"]])];
     if (mode.kind === "forget") return ask(`forget ${this.current()?.strand?.name}?  y yes   any other key no`);
     if (mode.kind === "text" && mode.purpose === "snooze") return ask(timeLine(mode.text, this.now()));
     if (mode.kind === "text") return ask(`${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`);
@@ -466,11 +478,14 @@ export function runTab(): Promise<number> {
   return runLive(new TabController(serviceActions));
 }
 
-function enterDoes(strand: StrandView, strands: StrandView[]): string {
+export function enterDoes(strand: StrandView, strands: StrandView[]): string {
+  if (mentionLink(strand)) return "open the mention on GitHub";
+  if (isPooled(strand)) return `take ${strand.name}: assign yourself and open it in ${reviewLayout()}`;
   const target = goTarget(strand, strands);
   if (target) return `go to ${target.player.who} in ${target.player.space ?? "its tab"}`;
   const open = openTab(strand);
   if (open) return `go to ${open.label}`;
+  if (reviewOf(strand) && !tabOf(strand)) return `open ${strand.name} in ${reviewLayout()}`;
   const options = pickupOffer(strand, strands);
   if (options?.resume) return `resume ${options.resume.who} on ${strand.name}, or start a fresh Claude`;
   if (options) return `start a Claude on ${strand.name}`;

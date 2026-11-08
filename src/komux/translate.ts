@@ -363,14 +363,23 @@ export function tabStrand(tab: KomuxTab, model: Pick<Known, "strands" | "links">
   const label = tab.labels?.strand;
   if (label && !/\{[\w-]+\}/.test(label)) {
     const wanted = label.toLowerCase();
+    const parts = wanted.split("›").map((part) => part.trim()).filter((part) => part !== "");
+    const all = parts.length > 1 ? new Map([...(model.closed?.values() ?? []), ...model.strands.values()].map((strand) => [strand.id, strand])) : new Map<string, Strand>();
+    const pathOf = (strand: Strand) => {
+      const names = [strand.name.toLowerCase()];
+      for (let at = strand.parent ? all.get(strand.parent) : undefined; at && names.length <= parts.length; at = at.parent ? all.get(at.parent) : undefined) names.unshift(at.name.toLowerCase());
+      return names;
+    };
+    const matches = (strand: Strand) => (parts.length > 1 ? pathOf(strand).join(" › ") === parts.join(" › ") : strand.name.toLowerCase() === wanted);
     const pick = (strands: Iterable<Strand>) => {
-      const named = [...strands].filter((strand) => strand.name.toLowerCase() === wanted);
+      const named = [...strands].filter(matches);
       return named.find((strand) => strand.parent === undefined) ?? (named.length === 1 ? named[0] : undefined);
     };
     const found = pick([...model.strands.values()].filter((strand) => strand.done === undefined));
     if (found) return { id: found.id, name: found.name };
     const closed = pick(model.closed?.values() ?? []);
-    return closed ? { closed: closed.id, name: closed.name } : { name: label.toLowerCase() };
+    if (closed) return { closed: closed.id, name: closed.name };
+    if (parts.length === 1) return { name: label.toLowerCase() };
   }
   let best: Link | undefined;
   for (const link of model.links) {

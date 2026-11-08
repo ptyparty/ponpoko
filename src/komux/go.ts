@@ -1,4 +1,6 @@
 import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } from "../core.ts";
+import { prRef } from "../github.ts";
+import { isBookkeeping, mentionLink, prAdapter } from "../inbox.ts";
 import { sendKomux } from "./stream.ts";
 import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
@@ -25,6 +27,12 @@ export async function goInKomux(strand: StrandView, strands: StrandView[], env =
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
     return landed("focused", focused.result);
   }
+  const review = reviewOf(strand);
+  if (review && !tabOf(strand)) {
+    const opened = await send({ method: "project.open", params: { repo: review.repo, layout: reviewLayout(env), args: { pr: String(review.number), strand: strand.path.join(" › ") } } });
+    if (!opened.ok) throw new Error(opened.error ?? "komux refused");
+    return landed("opened", opened.result);
+  }
   const where = goPlace(strand, aboveOf(strands, strand));
   if (!where) throw new Error("ponpoko doesn't know where this strand lives");
   const opened = await send({ method: "project.open", params: { target: where.dir, ...layoutAt(where.tab, where.dir) } });
@@ -35,6 +43,16 @@ export async function goInKomux(strand: StrandView, strands: StrandView[], env =
 function landed(how: Landing["how"], result: unknown): Landing {
   const tabDir = typeof result === "object" && result !== null && "tabDir" in result && typeof result.tabDir === "string" ? result.tabDir : undefined;
   return { how, ...(tabDir ? { tabDir } : {}) };
+}
+
+export function reviewOf(strand: StrandView): { repo: string; number: number } | undefined {
+  if (strand.kind !== "review") return undefined;
+  const link = strand.links.find((candidate) => candidate.adapter === prAdapter);
+  return link ? prRef(link.ref) : undefined;
+}
+
+export function reviewLayout(env: Record<string, string | undefined> = process.env): string {
+  return env.PONPOKO_REVIEW_LAYOUT || "pr-review";
 }
 
 export function goTarget(strand: StrandView, strands: StrandView[] = [], env: Record<string, string | undefined> = process.env): { player: PlayerView; move: MoveView } | undefined {
@@ -128,6 +146,7 @@ export function startsAt(strand: StrandView): Pickup | undefined {
 }
 
 export function pickupOffer(strand: StrandView, strands: StrandView[], env: Record<string, string | undefined> = process.env): Pickup | undefined {
+  if (mentionLink(strand) || (reviewOf(strand) && !tabOf(strand))) return undefined;
   return goTarget(strand, strands, env) || openTab(strand, env) ? undefined : pickup(strand);
 }
 
@@ -139,7 +158,7 @@ export function claudeCommand(env: Record<string, string | undefined> = process.
 export function brief(strand: StrandView): string {
   const path = strand.path.join(" › ");
   const moves = strand.recent.map((move) => `- ${move.player === "you" ? "you" : move.by.who}: ${move.what}${move.links.map((link) => ` (${link.adapter} ${link.ref})`).join("")}`);
-  const links = strand.links.filter((link) => link.adapter !== "dir").map((link) => `- ${link.adapter} ${link.ref}`);
+  const links = strand.links.filter((link) => link.adapter !== "dir" && !isBookkeeping(link)).map((link) => `- ${link.adapter} ${link.ref}`);
   return [
     `You're picking up the strand "${path}" in ponpoko${strand.title ? `: ${strand.title}` : ""}.`,
     ...(moves.length > 0 ? ["", "Its moves so far, oldest first:", ...moves] : []),
