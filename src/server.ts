@@ -33,7 +33,7 @@ export const request = z.discriminatedUnion("method", [
   z.object({ method: z.literal("block"), params: z.object({ strand: z.string(), on: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("unblock"), params: z.object({ strand: z.string(), on: z.string().optional() }) }),
   z.object({ method: z.literal("done-by"), params: z.object({ ...where, why: z.string().min(1).max(200) }) }),
-  z.object({ method: z.literal("split"), params: z.object({ ...where, names: z.array(z.union([z.string().min(1).max(120), z.object({ name: z.string().min(1).max(120), title: z.string().max(200).optional() })])).min(1).max(50) }) }),
+  z.object({ method: z.literal("split"), params: z.object({ ...where, names: z.array(z.union([z.string().min(1).max(120), z.object({ name: z.string().min(1).max(120), title: z.string().max(200).optional(), tour: z.object({ repo: z.string().min(1).max(400), name: z.string().min(1).max(120) }).optional() })])).min(1).max(50) }) }),
   z.object({ method: z.literal("add"), params: z.object({ parent: z.string().optional(), name: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("reparent"), params: z.object({ strand: z.string(), to: z.string().max(200) }) }),
   z.object({ method: z.literal("rename"), params: z.object({ strand: z.string(), name: z.string().min(1).max(200) }) }),

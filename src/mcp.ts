@@ -16,6 +16,7 @@ const instructions = `ponpoko tracks the user's work as strands, lines of work t
 - The user must do something komux can't see, such as a live test: call wait with kind "you".
 - A strand can't go on until another strand lands, such as a story blocked on another story: call wait with on, the other strand's path. When it no longer waits, call wait with on and over true.
 - A strand is finished: call done. A list of work to share out: call split with the names, each with a title if you like.
+- You prepared a remax tour for the user to review: call split under the strand you're on with a name for the review and tour set to the repository and the tour's name. It becomes the user's move, and going to it opens the tour.
 
 When the user asks what needs them or what to do next, call moves. Keep lines short, with no code, customer data or secrets.`;
 
@@ -90,8 +91,29 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
     "split",
     {
       title: "Split a strand",
-      description: "Add strands under a strand, one per name, such as the items of a list in a notebook page. Give a name with a title to title its strand.",
-      inputSchema: { names: z.array(z.union([z.string().min(1).max(120), z.object({ name: z.string().min(1).max(120), title: titleParam })])).min(1).max(50), strand: strandParam },
+      description: "Add strands under a strand, one per name, such as the items of a list in a notebook page. Give a name with a title to title its strand, and with a tour to make it the user's move to review a remax tour you prepared; going to the strand in ponpoko opens the tour.",
+      inputSchema: {
+        names: z
+          .array(
+            z.union([
+              z.string().min(1).max(120),
+              z.object({
+                name: z.string().min(1).max(120),
+                title: titleParam,
+                tour: z
+                  .object({
+                    repo: z.string().min(1).max(400).describe("The repository's checkout, as the -C path you gave remax tour begin"),
+                    name: z.string().min(1).max(120).describe("The tour's name, as given to remax tour begin --name"),
+                  })
+                  .optional()
+                  .describe("A remax tour waiting for the user's review"),
+              }),
+            ]),
+          )
+          .min(1)
+          .max(50),
+        strand: strandParam,
+      },
       annotations: write,
     },
     async (input) => attempt(async () => (await send({ method: "split", params: { ...caller, ...input } })) as { strands: string[] }, (result) => `Made ${result.strands.join("; ")}.`),

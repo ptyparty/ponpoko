@@ -157,7 +157,7 @@ export class TabController {
               .at(-1)
           : undefined;
         if (!link) this.message = "Nothing on this strand links anywhere";
-        else await this.run(() => this.actions.open(link), `Opened ${link.ref}`);
+        else await this.run(() => this.actions.open(link), `Opened ${link.label ?? link.ref}`);
         return undefined;
       }
       case "a":

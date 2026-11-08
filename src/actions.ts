@@ -3,6 +3,7 @@ import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
 import { age } from "./render.ts";
 import { dormant, type Link } from "./model.ts";
+import { showTour, strandTour } from "./remax.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
 export type Actions = {
@@ -25,7 +26,9 @@ export type Actions = {
 
 export const serviceActions: Actions = {
   go: async (strand, strands) => {
-    await goInKomux(strand, strands);
+    const landing = await goInKomux(strand, strands);
+    const tour = strandTour(strand);
+    if (tour) await showTour(tour, landing.tabDir);
     const target = goTarget(strand, strands);
     if (target?.player.kind === "job") await ask({ method: "close-move", params: { move: target.move.id } });
     else if (strand.unseen) await ask({ method: "seen", params: { strand: strand.id } });
@@ -44,6 +47,7 @@ export const serviceActions: Actions = {
   title: (strand, title) => ask({ method: "title", params: { strand, title } }),
   done: (strand) => ask({ method: "done", params: { strand } }),
   open: async (link) => {
+    if (link.adapter === "remax") return showTour(link, process.env.KOMUX_TAB_DIR);
     if (link.adapter !== "quoll") throw new Error(`ponpoko can't open ${link.adapter} links yet`);
     const shown = Bun.spawnSync(["quoll", "show", link.ref], { stdout: "pipe", stderr: "pipe" });
     if (shown.exitCode !== 0) throw new Error(`quoll show: ${shown.stderr.toString().trim() || shown.stdout.toString().trim()}`);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Ponpoko } from "./core.ts";
+import { Ponpoko, readTourRef } from "./core.ts";
 import { dormant } from "./model.ts";
 import { Store } from "./store.ts";
 import { strandNamed } from "./test-harness.ts";
@@ -109,6 +109,18 @@ describe("strands", () => {
     core.done(strandNamed(core, "review findings").id);
     expect(shown()).toBe("");
     expect(core.snapshot().counts.agents).toBe(0);
+  });
+
+  test("a strand split with a tour links to it and asks you to review it, once however often it is split", () => {
+    const { core } = setup();
+    core.status({ self: "tool:1", strand: "› sc-1", text: "preparing tours" });
+    const tour = { repo: "/w/sc-1/gadgets", name: "caching toggle" };
+    core.split({ self: "tool:1" }, [{ name: "review gadgets", tour }]);
+    core.split({ self: "tool:1" }, [{ name: "review gadgets", tour }]);
+    const review = strandNamed(core, "sc-1 › review gadgets");
+    expect(review.links.filter((link) => link.adapter === "remax").map((link) => [readTourRef(link.ref), link.label])).toEqual([[tour, "caching toggle"]]);
+    expect(review.open.filter((move) => move.player === "you").map((move) => move.what)).toEqual(["review the caching toggle tour in remax"]);
+    expect(review.own.whose).toBe("you");
   });
 
   test("a rogue's loose strand merges into the strand it names, moves and all", () => {

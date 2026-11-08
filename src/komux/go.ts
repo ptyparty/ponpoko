@@ -2,9 +2,11 @@ import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } fro
 import { sendKomux } from "./stream.ts";
 import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
-export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string }>;
+export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string; result?: unknown }>;
 
-export async function goInKomux(strand: StrandView, strands: StrandView[], env = process.env, control?: Control): Promise<"focused" | "opened"> {
+export type Landing = { how: "focused" | "opened"; tabDir?: string };
+
+export async function goInKomux(strand: StrandView, strands: StrandView[], env = process.env, control?: Control): Promise<Landing> {
   const socket = env.KOMUX_SOCKET;
   if (!socket) throw new Error("go works from inside komux");
   const send = control ?? ((request: unknown) => sendKomux(socket, request));
@@ -12,22 +14,27 @@ export async function goInKomux(strand: StrandView, strands: StrandView[], env =
   const place = target ? komuxPlace(target.player) : undefined;
   if (target && place && target.player.live && place.session === env.KOMUX_SESSION && place.server === env.KOMUX_SERVER_ID) {
     const tab = target.player.kind === "agent" ? await send({ method: "tab.focus", params: { tabId: place.tabId } }) : undefined;
-    if (tab?.ok) return "focused";
+    if (tab?.ok) return landed("focused", tab.result);
     const focused = await send({ method: "pane.focus", params: { paneId: place.paneId } });
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
-    return "focused";
+    return landed("focused", focused.result);
   }
   const open = openTab(strand, env);
   if (open) {
     const focused = await send({ method: "tab.focus", params: { tabId: open.tabId } });
     if (!focused.ok) throw new Error(focused.error ?? "komux refused");
-    return "focused";
+    return landed("focused", focused.result);
   }
   const where = goPlace(strand, aboveOf(strands, strand));
   if (!where) throw new Error("ponpoko doesn't know where this strand lives");
   const opened = await send({ method: "project.open", params: { target: where.dir, ...layoutAt(where.tab, where.dir) } });
   if (!opened.ok) throw new Error(opened.error ?? "komux refused");
-  return "opened";
+  return landed("opened", opened.result);
+}
+
+function landed(how: Landing["how"], result: unknown): Landing {
+  const tabDir = typeof result === "object" && result !== null && "tabDir" in result && typeof result.tabDir === "string" ? result.tabDir : undefined;
+  return { how, ...(tabDir ? { tabDir } : {}) };
 }
 
 export function goTarget(strand: StrandView, strands: StrandView[] = [], env: Record<string, string | undefined> = process.env): { player: PlayerView; move: MoveView } | undefined {

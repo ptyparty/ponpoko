@@ -320,8 +320,8 @@ describe("go in komux", () => {
     const { core, hear } = harness();
     await hear(snapshot);
     const { sent, control } = recorder();
-    expect(await goInKomux(strandNamed(core, "claude in ptyparty"), [], env, control)).toBe("focused");
-    expect(await goInKomux(strandNamed(core, "claude in ptyparty"), [], { ...env, KOMUX_SESSION: "other", KOMUX_SERVER_ID: "s9" }, control)).toBe("opened");
+    expect((await goInKomux(strandNamed(core, "claude in ptyparty"), [], env, control)).how).toBe("focused");
+    expect((await goInKomux(strandNamed(core, "claude in ptyparty"), [], { ...env, KOMUX_SESSION: "other", KOMUX_SERVER_ID: "s9" }, control)).how).toBe("opened");
     expect(sent).toEqual([
       { method: "tab.focus", params: { tabId: 2 } },
       { method: "project.open", params: { target: side } },
@@ -435,7 +435,7 @@ describe("go in komux", () => {
     expect(pickupOffer(strand, strands, env)).toBeUndefined();
     expect(pickupOffer(strand, strands, { ...env, KOMUX_SERVER_ID: "s2" })?.resume?.session).toBe("c1");
     const { sent, control } = recorder();
-    expect(await goInKomux(strand, strands, env, control)).toBe("focused");
+    expect((await goInKomux(strand, strands, env, control)).how).toBe("focused");
     expect(sent).toEqual([{ method: "tab.focus", params: { tabId: 1 } }]);
   });
 

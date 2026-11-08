@@ -49,7 +49,8 @@ export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]
 
 export type Where = { self?: string; dir?: string; strand?: string };
 export type StatusReport = Where & { text: string; page?: string; title?: string };
-export type Named = string | { name: string; title?: string };
+export type Tour = { repo: string; name: string };
+export type Named = string | { name: string; title?: string; tour?: Tour };
 export type WaitReport = Where & { who: string; kind: "you" | "person" | "machine"; what: string; over?: boolean };
 export type BlockReport = Where & { on: string; over?: boolean };
 
@@ -292,13 +293,23 @@ export class Ponpoko {
     const parent = where.strand ? this.resolve(where.strand, facts, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(where, agent);
     if (!parent) throw new Error("name the strand to split, such as \"ponpoko review findings\"");
     const made = names.map((named) => {
-      const { name, title } = typeof named === "string" ? { name: named, title: undefined } : named;
+      const { name, title, tour } = typeof named === "string" ? { name: named, title: undefined, tour: undefined } : named;
       const id = this.resolveUnder(parent, [name.trim()], facts);
       this.titleFacts(id, title, facts);
+      if (tour) this.tourFacts(id, tour, facts);
       return id;
     });
     this.record(source, facts);
     return made.map((id) => path(this.model, id).join(" › "));
+  }
+
+  private tourFacts(strand: string, tour: Tour, facts: Fact[]): void {
+    const ref = tourRef(tour);
+    const linked = [...this.model.links.values()].some((link) => link.strand === strand && link.adapter === "remax" && link.ref === ref);
+    if (!linked) facts.push({ type: "link.added", link: this.newId("l"), strand, adapter: "remax", ref, label: tour.name });
+    const what = `review the ${tour.name} tour in remax`;
+    const asked = [...this.model.moves.values()].some((move) => move.player === you && move.strand === strand && move.until === undefined && move.what === what);
+    if (!asked) facts.push({ type: "move.opened", move: this.newId("m"), strand, player: you, what });
   }
 
   add(parent: string | undefined, name: string): string {
@@ -571,3 +582,15 @@ export function slug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9#]+/g, "-").replace(/^-|-$/g, "") || "someone";
 }
 
+export function tourRef(tour: Tour): string {
+  return JSON.stringify({ repo: tour.repo, name: tour.name });
+}
+
+export function readTourRef(ref: string): Tour | undefined {
+  try {
+    const parsed = JSON.parse(ref) as Partial<Tour>;
+    return typeof parsed.repo === "string" && typeof parsed.name === "string" ? { repo: parsed.repo, name: parsed.name } : undefined;
+  } catch {
+    return undefined;
+  }
+}

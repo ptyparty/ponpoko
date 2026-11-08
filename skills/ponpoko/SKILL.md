@@ -20,6 +20,7 @@ ponpoko tracks the user's work as **strands**, lines of work that nest: a projec
 - **A strand can't go on until another strand lands,** such as a story blocked on another story, and the user tells you so: call `wait` with `on` set to the other strand's path, such as `on: "sc-1240"`, and no `who`, `kind` or `what`. The strand waits on it until it's done and then becomes the user's move. If it stops waiting before then, call `wait` with the same `on` and `over: true`. When your turn ends while a wait you reported is open, on a person, a machine or a strand, the strand keeps waiting rather than becoming the user's move.
 - **A strand is finished:** call `done`.
 - **The work splits,** such as the items of a list in a notebook page: call `split` with the names, under the strand they belong to. A name can be `{ name, title }` to title its strand.
+- **A review is waiting on the user,** such as a repo in the story whose changes they haven't reviewed in remax yet: prepare a named tour of it for later, as `remax guide tour` describes, then call `split` under the strand you're on with `{ name, tour: { repo, name } }`, where `repo` is the checkout you passed to remax with `-C` and `name` is the tour's name. Name the strand for what the user does, such as `review gadgets`. It becomes the user's move, and going to it from ponpoko opens the tour in the remax in the tab it takes them to. The user marks it done once they've reviewed it, so don't call `done` on it yourself.
 
 Keep lines short and free of code, customer data and secrets: ponpoko keeps them.
 
