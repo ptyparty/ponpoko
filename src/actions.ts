@@ -2,7 +2,7 @@ import { ask } from "./client.ts";
 import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
 import { age } from "./render.ts";
-import type { Link } from "./model.ts";
+import { dormant, type Link } from "./model.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
 export type Actions = {
@@ -66,6 +66,7 @@ export const snoozeChoices: SnoozeChoice[] = [
       return date.getTime();
     },
   },
+  { key: "0", label: "till woken", until: () => dormant },
 ];
 
 export function snoozeLine(): string {

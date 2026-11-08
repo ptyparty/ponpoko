@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Ponpoko } from "./core.ts";
+import { dormant } from "./model.ts";
 import { Store } from "./store.ts";
 import { strandNamed } from "./test-harness.ts";
 
@@ -259,6 +260,34 @@ describe("strands", () => {
     expect(strandNamed(core, "sc-1").own.why).toBe("waiting on sc-3");
     core.forget(strandNamed(core, "sc-3").id);
     expect(strandNamed(core, "sc-1").blockedOn).toEqual({});
+  });
+
+  test("a strand snoozed till woken sleeps until something happens on it", () => {
+    const { core, tick } = setup();
+    core.add(undefined, "ptyparty");
+    const ptyparty = strandNamed(core, "ptyparty").id;
+    const asleep = () => (strandNamed(core, "ptyparty").snoozedUntil ?? 0) > core.snapshot().now;
+    core.snooze(ptyparty, dormant);
+    tick(365 * 24 * 60 * 60_000);
+    expect(core.snapshot().moves).toEqual([]);
+    core.add(undefined, "ptyparty › komux › keys");
+    expect(asleep()).toBe(false);
+    core.snooze(ptyparty, dormant);
+    core.done(strandNamed(core, "ptyparty › komux › keys").id);
+    expect(asleep()).toBe(true);
+    core.done(strandNamed(core, "ptyparty › komux").id);
+    expect(asleep()).toBe(false);
+    core.snooze(ptyparty, dormant);
+    core.wait({ self: "tool:1", strand: "ptyparty", who: "the team", kind: "person", what: "review" });
+    expect(asleep()).toBe(false);
+    core.add(undefined, "kowari");
+    core.block(ptyparty, "kowari");
+    core.snooze(ptyparty, dormant);
+    core.done(strandNamed(core, "kowari").id);
+    expect(asleep()).toBe(false);
+    core.snooze(ptyparty, 1_000_000);
+    core.add(undefined, "ptyparty › quoll");
+    expect(strandNamed(core, "ptyparty").snoozedUntil).toBe(1_000_000);
   });
 
   test("a snooze till needed from before is no snooze at all", () => {

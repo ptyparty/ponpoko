@@ -1,12 +1,13 @@
 import type { MoveView, Snapshot, StrandView } from "./core.ts";
 import type { Recorded } from "./events.ts";
 import { cells, style, type Part } from "./screen.ts";
+import { dormant } from "./model.ts";
 import { whenLabel } from "./when.ts";
 
 export type Row = { text: string; strand?: StrandView };
 
 export function snoozedLabel(strand: { snoozedUntil?: number }, now: number): string {
-  return `till ${whenLabel(strand.snoozedUntil ?? now, now)}`;
+  return strand.snoozedUntil === dormant ? "till woken" : `till ${whenLabel(strand.snoozedUntil ?? now, now)}`;
 }
 
 export function age(ms: number): string {
@@ -199,7 +200,7 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
     case "strand.dismissed":
       return `${name(event.strand)} toast dismissed`;
     case "strand.snoozed":
-      return `${name(event.strand)} ${event.untilNeeded ? "snoozed till needed" : `snoozed till ${clock(event.until)}`}`;
+      return `${name(event.strand)} ${event.untilNeeded ? "snoozed till needed" : event.until === dormant ? "snoozed till woken" : `snoozed till ${clock(event.until)}`}`;
     case "player.joined":
       return `${event.who} joined`;
     case "player.gone":

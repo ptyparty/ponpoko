@@ -29,6 +29,7 @@ export type Model = {
 };
 
 export const you = "you";
+export const dormant = Number.MAX_SAFE_INTEGER;
 const heardKept = 200;
 
 export function emptyModel(): Model {
@@ -65,6 +66,7 @@ function applyFact(model: Model, event: Recorded): void {
       if (model.strands.has(event.strand)) return;
       model.strands.set(event.strand, { id: event.strand, name: event.name, parent: event.parent, kind: event.kind, made: event.at, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
       model.names.set(event.strand, path(model, event.strand).join(" › "));
+      wake(model, ancestors(model, event.strand));
       return;
     case "strand.titled":
       withStrand(model, event.strand, (strand) => {
@@ -78,6 +80,7 @@ function applyFact(model: Model, event: Recorded): void {
         if (event.parent !== undefined && (event.parent === strand.id || ancestors(model, event.parent).includes(strand.id))) return;
         strand.parent = event.parent;
         for (const id of [strand.id, ...descendants(model, strand.id)]) model.names.set(id, path(model, id).join(" › "));
+        wake(model, ancestors(model, strand.id));
       });
       return;
     case "strand.renamed":
@@ -89,10 +92,13 @@ function applyFact(model: Model, event: Recorded): void {
     case "strand.done":
       withStrand(model, event.strand, (strand) => {
         strand.done = event.at;
+        if (strand.parent) wake(model, [strand.parent]);
+        wake(model, [...model.strands.values()].filter((other) => strand.id in other.blockedOn).map((other) => other.id));
       });
       return;
     case "strand.reopened":
       withStrand(model, event.strand, (strand) => void (strand.done = undefined));
+      wake(model, [event.strand]);
       return;
     case "strand.forgotten":
       remove(model, event.strand, undefined);
@@ -102,6 +108,7 @@ function applyFact(model: Model, event: Recorded): void {
       if (!into || event.into === event.strand || !model.strands.has(event.strand)) return;
       if (ancestors(model, event.into).includes(event.strand)) into.parent = model.strands.get(event.strand)!.parent;
       remove(model, event.strand, event.into);
+      wake(model, [event.into]);
       return;
     }
     case "strand.note":
@@ -146,10 +153,12 @@ function applyFact(model: Model, event: Recorded): void {
     case "move.opened":
       if (!model.strands.has(event.strand)) return;
       model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, from: event.at, source: event.source });
+      wake(model, [event.strand]);
       return;
     case "move.described": {
       const move = model.moves.get(event.move);
       if (move) Object.assign(move, { what: event.what, described: event.at });
+      if (move) wake(model, [move.strand]);
       return;
     }
     case "move.closed": {
@@ -163,6 +172,13 @@ function applyFact(model: Model, event: Recorded): void {
     case "link.removed":
       model.links.delete(event.link);
       return;
+  }
+}
+
+function wake(model: Model, ids: string[]): void {
+  for (const id of ids) {
+    const strand = model.strands.get(id);
+    if (strand?.snoozedUntil === dormant) strand.snoozedUntil = undefined;
   }
 }
 

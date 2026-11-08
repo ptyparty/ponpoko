@@ -3,9 +3,9 @@ import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
 import { goPlace, goTarget, openTab, pickupOffer, startsAt, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
-import { blockersOf, clock, fit, standingOf } from "./render.ts";
+import { blockersOf, fit, snoozedLabel, standingOf } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
-import { parseWhen, whenLabel } from "./when.ts";
+import { parseWhen } from "./when.ts";
 
 type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | Purpose;
 type Purpose = "add" | "note" | "move" | "rename" | "title" | "wait";
@@ -93,7 +93,8 @@ export class Dealer {
       this.mode = key.name === "t" ? "time" : "card";
       this.typed = "";
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
-      if (choice && card) await this.act(() => this.actions.snooze(card.id, choice.until(this.now())), `Snoozed till ${clock(choice.until(this.now()))}`);
+      const until = choice?.until(this.now());
+      if (until !== undefined && card) await this.act(() => this.actions.snooze(card.id, until), `Snoozed ${snoozedLabel({ snoozedUntil: until }, this.now())}`);
       return undefined;
     }
     if (this.mode === "pickup") {
@@ -223,7 +224,7 @@ export class Dealer {
       if (until === undefined) this.message = `ponpoko can't read "${this.typed.trim()}" as a time to come`;
       else {
         this.mode = "card";
-        if (card) await this.act(() => this.actions.snooze(card.id, until), `Snoozed till ${whenLabel(until, this.now())}`);
+        if (card) await this.act(() => this.actions.snooze(card.id, until), `Snoozed ${snoozedLabel({ snoozedUntil: until }, this.now())}`);
       }
     } else if (key.text) this.typed += key.text;
     return undefined;

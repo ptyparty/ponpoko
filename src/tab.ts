@@ -2,10 +2,10 @@ import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snooze
 import { goPlace, goTarget, openTab, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { blockersOf, clock, header, isWaitingOn, rows, standingOf, type Row } from "./render.ts";
+import { blockersOf, clock, header, isWaitingOn, rows, snoozedLabel, standingOf, type Row } from "./render.ts";
 import { cells, keyLine, openScreen, style, type Key } from "./screen.ts";
 import { LogView } from "./log.ts";
-import { parseWhen, whenLabel } from "./when.ts";
+import { parseWhen } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait";
 type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "log" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
@@ -25,7 +25,7 @@ const help = [
   "   w         make the strand wait on another strand: pick it with j k ↑ ↓ and ⏎ (⏎ again stops waiting on it), / to type a path, or c to stop waiting on every strand; when that strand is done, this one is yours again",
   "   d         mark the strand done",
   "   o         open what the strand's latest move links to, such as a notebook page (📓) in quoll",
-  "   z         snooze the strand, then pick how long, t to type a time such as 14:30, mon 9, 2h or nov 12",
+  "   z         snooze the strand, then pick how long, t to type a time such as 14:30, mon 9, 2h or nov 12, or 0 till woken",
   "   n         add a note to the strand",
   "   x         forget a strand ponpoko has wrong",
   "   p         point the strand's directory at a strand, so agents there work on it",
@@ -102,7 +102,7 @@ export class TabController {
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
       if (choice && strand) {
         const until = choice.until(this.now());
-        await this.run(() => this.actions.snooze(strand.id, until), `Snoozed till ${clock(until)}`);
+        await this.run(() => this.actions.snooze(strand.id, until), `Snoozed ${snoozedLabel({ snoozedUntil: until }, this.now())}`);
       }
       return undefined;
     }
@@ -387,7 +387,7 @@ export class TabController {
       return undefined;
     }
     this.mode = { kind: "list" };
-    if (strand) await this.run(() => this.actions.snooze(strand.id, until), `Snoozed till ${whenLabel(until, this.now())}`);
+    if (strand) await this.run(() => this.actions.snooze(strand.id, until), `Snoozed ${snoozedLabel({ snoozedUntil: until }, this.now())}`);
     return undefined;
   }
 
