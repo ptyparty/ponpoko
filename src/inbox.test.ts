@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Ponpoko } from "./core.ts";
-import { fetchInbox, mentionsUser, pendingMentions, reviewState, type Gh, type Inbox, type Mentioned, type PullRequest } from "./github.ts";
+import { assignMe, fetchInbox, mentionsUser, pendingMentions, reviewState, type Gh, type Inbox, type Mentioned, type PullRequest } from "./github.ts";
 import { assignFacts, inboxFacts, isBookkeeping, isPooled, reviewsId } from "./inbox.ts";
 import { PollLock } from "./komux/bridge.ts";
 import { tabStrand } from "./komux/translate.ts";
@@ -283,6 +283,27 @@ describe("fetching the inbox", () => {
     const inbox = await fetchInbox(gh, "is:open is:pr org:acme");
     expect(pendingMentions(inbox.mentioned[0]!, me).map((mention) => mention.url).sort()).toEqual(["review", "thread"]);
     expect(inbox.complete).toEqual({ reviews: false, mentioned: true });
+  });
+});
+
+describe("assigning yourself", () => {
+  test("looks up the pull request and you by URL, then adds you as an assignee, as q-space does", async () => {
+    const calls: string[][] = [];
+    const gh: Gh = async (args) => {
+      calls.push(args);
+      if (args.some((arg) => arg.startsWith("query=query"))) return JSON.stringify({ data: { viewer: { id: "U_me" }, resource: { id: "PR_1" } } });
+      return JSON.stringify({ data: { addAssigneesToAssignable: { clientMutationId: null } } });
+    };
+    await assignMe("https://github.com/acme/widgets/pull/1860", gh);
+    expect(calls[0]).toContain("url=https://github.com/acme/widgets/pull/1860");
+    expect(calls[1]).toEqual(expect.arrayContaining(["id=PR_1", "userId=U_me"]));
+    expect(calls[1]!.find((arg) => arg.startsWith("query="))).toContain("addAssigneesToAssignable");
+    expect(calls.flat()).not.toContain("edit");
+  });
+
+  test("says what GitHub said when it refuses", async () => {
+    const gh: Gh = async (args) => (args.some((arg) => arg.startsWith("query=query")) ? JSON.stringify({ data: { viewer: { id: "U_me" }, resource: { id: "PR_1" } } }) : JSON.stringify({ errors: [{ message: "Must have push access" }] }));
+    await expect(assignMe("https://github.com/acme/widgets/pull/1860", gh)).rejects.toThrow("GitHub: Must have push access");
   });
 });
 

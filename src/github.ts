@@ -175,6 +175,15 @@ function readMentioned(raw: unknown): Mentioned | undefined {
   };
 }
 
+const lookupQuery = "query($url: URI!) { viewer { id } resource(url: $url) { ... on PullRequest { id } } }";
+const assignMutation = "mutation($id: ID!, $userId: ID!) { addAssigneesToAssignable(input: {assignableId: $id, assigneeIds: [$userId]}) { clientMutationId } }";
+
 export async function assignMe(url: string, gh: Gh = runGh): Promise<void> {
-  await gh(["pr", "edit", url, "--add-assignee", "@me"]);
+  const found = JSON.parse(await gh(["api", "graphql", "-F", `url=${url}`, "-f", `query=${lookupQuery}`])) as { data?: { viewer?: { id?: string }; resource?: { id?: string } | null }; errors?: { message: string }[] };
+  if (found.errors?.length) throw new Error(`GitHub: ${found.errors[0]!.message}`);
+  const userId = found.data?.viewer?.id;
+  const id = found.data?.resource?.id;
+  if (!userId || !id) throw new Error(`GitHub doesn't know the pull request ${url}`);
+  const done = JSON.parse(await gh(["api", "graphql", "-F", `id=${id}`, "-F", `userId=${userId}`, "-f", `query=${assignMutation}`])) as { errors?: { message: string }[] };
+  if (done.errors?.length) throw new Error(`GitHub: ${done.errors[0]!.message}`);
 }
