@@ -2,14 +2,15 @@ import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snooze
 import { goPlace, goTarget, openTab, pickupOffer, startsAt, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { clock, rows, type Row, type Tone } from "./render.ts";
-import { openScreen, style, type Key } from "./screen.ts";
+import { clock, header, rows, standingOf, type Row } from "./render.ts";
+import { cells, keyLine, openScreen, style, type Key } from "./screen.ts";
+import { LogView } from "./log.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "help" } | { kind: "log" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
-const keysLine = "␣ moves   f fresh   a/A add   m move   d done   o open   z snooze   n note   x forget   p point   c caught up   ? keys   q quit";
+const keys: [string, string][] = [["␣", "moves"], ["a", "add"], ["m", "move"], ["d", "done"], ["z", "snooze"], ["n", "note"], ["f", "fresh Claude"], ["l", "log"], ["?", "all keys"], ["q", "quit"]];
 
 const help = [
   " Keys",
@@ -27,10 +28,11 @@ const help = [
   "   n         add a note to the strand",
   "   x         forget a strand ponpoko has wrong",
   "   p         point the strand's directory at a strand, so agents there work on it",
-  "   c         mark the strand caught up, so its moves are no longer new (*)",
+  "   c         mark the strand caught up, so its moves are no longer new (•)",
+  "   l         show the log of what ponpoko heard, newest first; leader m l opens it as a popup",
   "   q         quit",
   "",
-  " Glyphs:  ● yours   ◐ an agent's   ⊘ waiting on someone or something   ◷ snoozed   ○ nothing to do",
+  " Glyphs:  ● yours   ◐ an agent's   ⊘ waiting on someone or something   ○ waiting on a strand under it   ◷ snoozed",
   "",
   " Any key goes back.",
 ];
@@ -50,6 +52,8 @@ export class TabController {
   selected = 0;
   readonly expanded = new Set<string>();
   private top = 0;
+  private readonly log = new LogView();
+  private height = 30;
   private down = false;
 
   constructor(
@@ -58,6 +62,7 @@ export class TabController {
   ) {}
 
   setSnapshot(snapshot: Snapshot | undefined): void {
+    this.log.setSnapshot(snapshot);
     const before = this.current();
     this.snapshot = snapshot;
     this.down = snapshot === undefined;
@@ -83,6 +88,10 @@ export class TabController {
       return undefined;
     }
     if (mode.kind === "text") return this.textKey(mode, key);
+    if (mode.kind === "log") {
+      if (this.log.key(key, this.height) === "close") this.mode = { kind: "list" };
+      return undefined;
+    }
     if (mode.kind === "moving") return this.movingKey(mode.strand, key);
     const strand = this.current()?.strand;
     if (mode.kind === "snooze") {
@@ -181,39 +190,67 @@ export class TabController {
       case "c":
         if (strand) await this.run(() => this.actions.seen(strand.id), `${strand.name} caught up`);
         return undefined;
+      case "l":
+        this.mode = { kind: "log" };
+        return undefined;
     }
     return undefined;
   }
 
   view(width: number, height: number): string[] {
+    this.height = height;
     if (this.mode.kind === "help") return help;
+    if (this.mode.kind === "log") return this.log.view(width, height);
     if (this.down || !this.snapshot) return [" ◆ ponpoko", "", style.red(" ponpoko ✗  the service isn't running. Start it with `systemctl --user start ponpoko`."), "", " q quit"];
-    const all = rows(this.snapshot, width, { expanded: this.expanded });
-    const selectable = all.filter(isSelectable);
-    const chosen = selectable[this.selected];
+    const mode = this.mode;
+    const strand = this.current()?.strand;
+    const all = rows(this.snapshot, width, { expanded: this.expanded, header: false, selected: strand?.id, logCount: 0 });
+    const chosen = all.find((row) => row.strand !== undefined && row.strand.id === strand?.id);
+    const moving = mode.kind === "moving" ? all.find((row) => row.strand?.id === mode.strand.id) : undefined;
+    const card = strand && mode.kind !== "moving" ? this.card(strand, width) : [];
     const footer = this.footer();
-    const room = Math.max(3, height - footer.length - 1);
+    const room = Math.max(3, height - 2 - (card.length > 0 ? card.length + 1 : 0) - footer.length - 1);
     const at = chosen ? all.indexOf(chosen) : 0;
     if (at < this.top + 2) this.top = Math.max(0, at - 2);
     if (at >= this.top + room) this.top = at - room + 1;
-    const mode = this.mode;
-    const moving = mode.kind === "moving" ? all.find((row) => row.strand?.id === mode.strand.id) : undefined;
-    const shown = all.slice(this.top, this.top + room).map((row) => (row === moving && row !== chosen ? style.amber(style.bold(`»${row.text.slice(1)}`)) : paint(row, row === chosen, width)));
-    while (shown.length < room) shown.push("");
-    return [...shown, "", ...footer];
+    const shown = all.slice(this.top, this.top + room).map((row) => (row === chosen ? style.selected(row.text) : row === moving ? style.you(style.bold(`»${row.text.slice(1)}`)) : row.text));
+    const body = [...shown, ...(card.length > 0 ? ["", ...card] : [])];
+    while (body.length < height - 3 - footer.length) body.push("");
+    return [header(this.snapshot, width), "", ...body, "", ...footer];
+  }
+
+  private card(strand: StrandView, width: number): string[] {
+    const now = this.snapshot?.now ?? this.now();
+    const standing = standingOf(strand, now);
+    const stripe = (parts: Parameters<typeof cells>[0] = []) => style.raised(cells([[" ▎", standing.paint], " ", ...parts], width));
+    const above = strand.path.slice(0, -1);
+    const note = strand.notes.at(-1);
+    const moves = strand.recent.slice(-2).map((move) => {
+      const until = move.until === undefined ? "     " : clock(move.until);
+      return stripe([[`${clock(move.from)}–${until}  ${(move.player === "you" ? "you" : move.by.who).padEnd(8)}  ${move.what}`, style.faint]]);
+    });
+    return [
+      stripe([[strand.name, (text) => style.text(style.bold(text))], ...(strand.title ? ["  ", [strand.title, style.muted] as [string, (text: string) => string]] : [])]),
+      ...(above.length > 0 ? [stripe([[`in ${above.join(" › ")}`, style.faint]])] : []),
+      stripe(),
+      stripe([[`${standing.glyph} `, standing.paint], [standing.text, standing.paint], [standing.age ? `  ·  ${standing.age}` : "", style.faint]]),
+      ...(note ? [stripe([[`✎ ${note.text}`, style.muted]])] : []),
+      ...moves,
+    ];
   }
 
   private footer(): string[] {
     const mode = this.mode;
-    if (mode.kind === "snooze") return [style.amber(` ${snoozeLine()}`)];
-    if (mode.kind === "pickup") return [style.amber(` no one is on it · ${pickupLine(mode.options, this.now())}`)];
-    if (mode.kind === "moving") return [style.amber(` move ${mode.strand.name} ${this.underWhat(mode.strand)}`), style.dim(" j k ↑ ↓ pick its new parent   ⏎ move   t top   / type a path   esc cancel")];
-    if (mode.kind === "forget") return [style.amber(` forget ${this.current()?.strand?.name}?  y yes   any other key no`)];
-    if (mode.kind === "text" && mode.purpose === "snooze") return [style.amber(` ${timeLine(mode.text, this.now())}`)];
-    if (mode.kind === "text") return [style.amber(` ${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`)];
-    if (this.message) return [style.amber(` ${this.message}`)];
+    const ask = (text: string) => [style.you(` ${text}`)];
+    if (mode.kind === "snooze") return ask(snoozeLine());
+    if (mode.kind === "pickup") return ask(`no one is on it · ${pickupLine(mode.options, this.now())}`);
+    if (mode.kind === "moving") return [style.you(` move ${mode.strand.name} ${this.underWhat(mode.strand)}`), keyLine([["j k", "pick its new parent"], ["⏎", "move"], ["t", "top"], ["/", "type a path"], ["esc", "cancel"]])];
+    if (mode.kind === "forget") return ask(`forget ${this.current()?.strand?.name}?  y yes   any other key no`);
+    if (mode.kind === "text" && mode.purpose === "snooze") return ask(timeLine(mode.text, this.now()));
+    if (mode.kind === "text") return ask(`${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`);
     const strand = this.current()?.strand;
-    return [`${style.bold(` ⏎ ${strand ? enterDoes(strand, this.strands()) : "nothing to go to"}`)}`, style.dim(` ${keysLine}`)];
+    const first = this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(strand ? enterDoes(strand, this.strands()) : "nothing to go to"))}`;
+    return [first, keyLine(keys)];
   }
 
   private async textKey(mode: Extract<Mode, { kind: "text" }>, key: Key): Promise<undefined> {
@@ -327,7 +364,7 @@ export class TabController {
   }
 
   private selectable(): Row[] {
-    return this.snapshot ? rows(this.snapshot, 100, { expanded: this.expanded, heardCount: 0 }).filter(isSelectable) : [];
+    return this.snapshot ? rows(this.snapshot, 100, { expanded: this.expanded, logCount: 0 }).filter(isSelectable) : [];
   }
 }
 
@@ -335,22 +372,9 @@ function isSelectable(row: Row): boolean {
   return row.strand !== undefined;
 }
 
-const tones: Record<Tone, (text: string) => string> = {
-  you: style.amber,
-  agent: style.cyan,
-  waiting: style.magenta,
-  quiet: style.dim,
-  heading: style.bold,
-  dim: style.dim,
-};
+export type Live = { setSnapshot: (snapshot: Snapshot | undefined) => void; view: (width: number, height: number) => string[]; key: (key: Key, height: number) => Promise<"quit" | "close" | undefined> | "quit" | "close" | undefined };
 
-function paint(row: Row, selected: boolean, width: number): string {
-  if (selected) return style.reverse(row.text.padEnd(width));
-  return row.tone ? tones[row.tone](row.text) : row.text;
-}
-
-export async function runTab(): Promise<number> {
-  const controller = new TabController(serviceActions);
+export async function runLive(controller: Live): Promise<number> {
   let connection: { close: () => void } | undefined;
   let closed = false;
   const draw = () => screen.draw(controller.view(screen.width, screen.height));
@@ -369,8 +393,8 @@ export async function runTab(): Promise<number> {
   const done = Promise.withResolvers<void>();
   const screen = openScreen(
     (key) =>
-      void controller.key(key).then(async (outcome) => {
-        if (outcome === "quit") return done.resolve();
+      void Promise.resolve(controller.key(key, screen.height)).then(async (outcome) => {
+        if (outcome === "quit" || outcome === "close") return done.resolve();
         await reload();
       }),
     draw,
@@ -387,6 +411,10 @@ export async function runTab(): Promise<number> {
   connection?.close();
   screen.close();
   return 0;
+}
+
+export function runTab(): Promise<number> {
+  return runLive(new TabController(serviceActions));
 }
 
 function enterDoes(strand: StrandView, strands: StrandView[]): string {

@@ -3,8 +3,8 @@ import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
 import { goPlace, goTarget, openTab, pickupOffer, startsAt, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
-import { age, cause, clock, fit, holder, snoozedLabel, strandGlyph } from "./render.ts";
-import { openScreen, style, type Key } from "./screen.ts";
+import { clock, fit, standingOf } from "./render.ts";
+import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
 type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | Purpose;
@@ -236,76 +236,86 @@ export class Dealer {
 
   view(width = 80, height = 40): string[] {
     const hand = this.tab ? this.tabLabel() : this.unseen ? "since you last caught up" : "your move";
-    if (!this.snapshot) return ["", style.red(" ponpoko ✗  the service isn't running"), "", style.dim(" esc close")];
+    const closing = keyLine([["esc", "close"]]);
+    if (!this.snapshot) return ["", style.red(" ponpoko ✗  the service isn't running"), "", closing];
     const card = this.card();
-    if (!card && this.tab) return ["", style.bold(` ${hand}`), "", style.dim(" ponpoko knows of no strand in this tab; ask its Claude to call ponpoko's status, or label the tab"), "", style.dim(" esc close")];
+    if (!card && this.tab) return ["", style.text(style.bold(` ${hand}`)), "", style.muted(" ponpoko knows of no strand in this tab; ask its Claude to call ponpoko's status, or label the tab"), "", closing];
     if (!card) {
-      return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is going on"), "", style.dim(" esc close")];
+      return ["", style.text(style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`)), "", style.muted(this.unseen ? " nothing new is yours since you last caught up" : " nothing is going on"), "", closing];
     }
     const target = goTarget(card, this.strands())?.player;
     const options = pickupOffer(card, this.strands());
     const place = goPlace(card, aboveOf(this.strands(), card));
     const open = target ? undefined : openTab(card);
-    const where = target ? `→ ${target.who} in ${target.space ?? "its tab"}` : open ? `→ ${open.label}` : options?.resume ? `→ no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `→ no one is on it; start a Claude at ${options.dir}` : place ? `→ open a tab at ${place.dir}` : "→ nowhere ponpoko knows of";
+    const where = target ? `go to ${target.who} in ${target.space ?? "its tab"}` : open ? `go to ${open.label}` : options?.resume ? `no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `no one is on it; start a Claude at ${options.dir}` : place ? `open a tab at ${place.dir}` : "nowhere ponpoko knows of";
     const now = this.snapshot.now;
-    this.wide = width >= 100 && this.others.length > 0;
+    this.wide = width >= 130 && this.others.length > 0;
     const column = this.wide ? Math.floor((width - 3) / 2) : width;
-    const mine: Listed[] = [{ line: style.dim(` ${hand} · ${this.hand.length}${this.hand.length === 0 ? "  ✓ nothing is waiting on you" : ""}`) }];
+    const heading = (title: string, count: number, paint: (text: string) => string) => cells([[` ${title} `, style.faint], [`${count}`, paint], [count === 0 && !this.tab ? "   ✓ nothing is waiting on you" : "", style.muted]], column);
+    const mine: Listed[] = [{ line: heading(hand, this.hand.length, style.you) }];
     const ids = new Set(this.hand.map((strand) => strand.id));
     const indent = (strand: StrandView) => (this.tab ? "  ".repeat(aboveOf(this.strands(), strand).filter((above) => ids.has(above.id)).length) : "");
     const theirs: Listed[] = [];
     let index = 0;
-    const row = (into: Listed[], strand: StrandView, what: string, yours: boolean) => {
+    const row = (into: Listed[], strand: StrandView, yours: boolean) => {
       const at = index++;
-      const label = strand.title ? `${strand.name}  ${strand.title}` : strand.name;
-      const nested = indent(strand);
-      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${nested}${fit(label, Math.max(24, Math.floor(column * 0.5)) - nested.length)}  ${what}`, column - 2).trimEnd();
-      into.push({ row: at, line: yours && urgency(strand) === 0 ? style.amber(` ${text}`) : at === this.selected ? ` ${text}` : style.dim(` ${text}`) });
+      const picked = at === this.selected;
+      const standing = standingOf(strand, now);
+      const asleep = (strand.snoozedUntil ?? 0) > now;
+      const parent = strand.above?.at(-1);
+      const context = !yours && !this.tab && parent ? [`in ${parent.name}`, style.faint] : strand.title ? [strand.title, asleep ? style.faint : style.muted] : ["", undefined];
+      const statusW = Math.max(16, Math.min(34, Math.floor(column * 0.42)));
+      const name = cells(
+        [[picked ? "▎" : " ", style.accent], [at < 9 ? `${at + 1} ` : "  ", style.faint], indent(strand), [`${standing.glyph} `, standing.paint], [strand.name, (text) => (asleep ? style.faint(text) : style.text(picked ? style.bold(text) : text))], "  ", context as [string, ((text: string) => string)?]],
+        column - statusW - 8,
+      );
+      const urgent = yours && urgency(strand) === 0;
+      const line = name + "  " + cells([[standing.text, (text) => standing.paint(urgent ? style.bold(text) : text)]], statusW) + cells([[` ${standing.age.padStart(4)}`, style.faint]], 6);
+      into.push({ row: at, line: picked ? style.selected(line) : line });
     };
-    for (const strand of this.hand) row(mine, strand, this.tab ? standing(strand, now) : `${cause(strand)} · ${age(now - strand.own.since)}`, true);
+    for (const strand of this.hand) row(mine, strand, true);
     for (const section of this.others) {
-      theirs.push({ line: style.dim(` ${section.title} · ${section.strands.length}`) });
-      for (const strand of section.strands) row(theirs, strand, section.title === "snoozed" ? [snoozedLabel(strand, now), othersCause(strand)].filter(Boolean).join(" · ") : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
+      if (theirs.length > 0) theirs.push({ line: "" });
+      theirs.push({ line: heading(section.title, section.strands.length, style.muted) });
+      for (const strand of section.strands) row(theirs, strand, false);
     }
+    const standing = standingOf(card, now);
+    const stripe = (parts: Part[] = []) => style.raised(cells([[" ▎", standing.paint], " ", ...parts], width));
     const under = this.under(card);
-    const tree = under.slice(0, 12).map((strand) => {
-      const label = strand.title ? `${strand.name}  ${strand.title}` : strand.name;
-      const state = standing(strand, now);
+    const tree = under.slice(0, 10).map((strand) => {
+      const below = standingOf(strand, now);
       const indent = "  ".repeat(strand.depth - card.depth - 1);
-      const text = fit(`   ${indent}${strandGlyph(strand, now)} ${fit(label, Math.max(24, Math.floor(width * 0.4)) - indent.length)}  ${state}`, width - 1).trimEnd();
-      return strand.own.whose === "you" ? text : style.dim(text);
+      return stripe([indent, [`${below.glyph} `, below.paint], [fit(strand.name, Math.max(16, Math.floor(width * 0.3)) - indent.length), style.text], "  ", [below.text, below.paint], [below.age ? `  ·  ${below.age}` : "", style.faint]]);
     });
+    const kept = card.own.whose === "you" && !standing.text.startsWith("snoozed") ? (card.unseen ? "new" : card.dismissedAt >= card.own.since ? "toast dismissed" : "seen") : "";
     const detail = [
-      style.amber(style.bold(fit(` ● ${card.name}${card.title ? `  ${card.title}` : ""}`, width - 1).trimEnd())),
-      ...(card.above ?? []).map((above) => style.dim(fit(`   in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, width - 1).trimEnd())),
-      "",
-      `   ${cause(card)} · ${age(this.snapshot.now - card.own.since)}`,
-      style.dim(`   ${holder(card, this.snapshot.now)}, since ${clock(card.own.since)}`),
-      ...(card.notes.length > 0 ? wrap(`✎ ${card.notes.at(-1)!.text}`, width - 6).map((text) => style.dim(`   ${text}`)) : []),
-      `   ${where}`,
-      ...(under.length > 0 ? ["", style.dim(`   under it · ${under.length}`), ...tree, ...(under.length > tree.length ? [style.dim(`   +${under.length - tree.length} more`)] : [])] : []),
-      "",
+      stripe([[card.name, (text) => style.text(style.bold(text))], ...(card.title ? ["  ", [card.title, style.muted] as Part] : [])]),
+      ...(card.above ?? []).map((above) => stripe([[`in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, style.faint]])),
+      stripe(),
+      stripe([[`${standing.glyph} `, standing.paint], [standing.text, standing.paint], [[standing.age, kept].filter(Boolean).map((text) => `  ·  ${text}`).join(""), style.faint]]),
+      ...(card.notes.length > 0 ? wrap(`✎ ${card.notes.at(-1)!.text}`, width - 6).map((text) => stripe([[text, style.muted]])) : []),
+      ...(under.length > 0 ? [stripe(), stripe([[`under it · ${under.length}`, style.faint]]), ...tree, ...(under.length > tree.length ? [stripe([[`+${under.length - tree.length} more`, style.faint]])] : [])] : []),
     ];
-    const room = Math.max(6, height - detail.length - 3);
+    const room = Math.max(6, height - detail.length - 5);
     const list = this.wide
       ? sideBySide(scrolled(mine, this.selected, room), scrolled(theirs, this.selected, room), column)
-      : scrolled([...mine, ...theirs], this.selected, room);
-    const lines = [...list, ...(this.wide ? [style.dim(` ${"─".repeat(Math.max(0, width - 2))}`)] : [""]), ...detail];
+      : scrolled([...mine, ...(theirs.length > 0 ? [{ line: "" }] : []), ...theirs], this.selected, room);
+    const ask = (text: string) => style.you(` ${text}`);
     const footer =
       this.mode === "snooze"
-        ? style.amber(` ${snoozeLine()}`)
+        ? ask(snoozeLine())
         : this.mode === "time"
-          ? style.amber(` ${timeLine(this.typed, this.now())}`)
-        : this.mode === "forget"
-          ? style.amber(` forget ${card.name}?  y yes   any other key no`)
-          : this.mode === "pickup" && options
-            ? style.amber(` ${pickupLine(options, this.snapshot.now)}`)
-            : this.mode in prompts
-              ? style.amber(` ${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`)
-              : style.dim(` ⏎ go  j/k pick${this.wide ? "  tab side" : ""}${this.tab ? "" : "  s skip"}${startsAt(card) ? "  f fresh" : ""}  d done  z snooze  x forget  a add  n note  m move  r rename  esc`);
-    if (this.message) lines.push(style.amber(` ${this.message}`));
-    lines.push(footer);
-    return lines;
+          ? ask(timeLine(this.typed, this.now()))
+          : this.mode === "forget"
+            ? ask(`forget ${card.name}?  y yes   any other key no`)
+            : this.mode === "pickup" && options
+              ? ask(pickupLine(options, this.snapshot.now))
+              : this.mode in prompts
+                ? ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`)
+                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(this.tab ? [] : [["s", "skip"] as [string, string]]), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["esc", "close"]]);
+    const body = [...list, "", ...detail];
+    while (body.length < height - 3) body.push("");
+    return [...body, "", this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(where))}`, footer];
   }
 
   private async finish(): Promise<"close"> {
@@ -370,21 +380,10 @@ function scrolled(listed: Listed[], selected: number, room: number): string[] {
 }
 
 function sideBySide(left: string[], right: string[], column: number): string[] {
-  const visible = (line: string) => line.replace(/\x1b\[[0-9;]*m/g, "").length;
   return Array.from({ length: Math.max(left.length, right.length) }, (_, at) => {
     const line = left[at] ?? "";
-    return `${line}${" ".repeat(Math.max(0, column - visible(line)))}${style.dim(" │")}${right[at] ?? ""}`;
+    return `${line}${" ".repeat(Math.max(0, column - visible(line)))}${style.faint(" │ ")}${right[at] ?? ""}`;
   });
-}
-
-function standing(strand: StrandView, now: number): string {
-  if ((strand.snoozedUntil ?? 0) > now) return snoozedLabel(strand, now);
-  return strand.own.whose || strand.own.waitsOn ? `${othersCause(strand)} · ${age(now - strand.own.since)}` : "";
-}
-
-function othersCause(strand: StrandView): string {
-  const move = strand.open.find((candidate) => candidate.from === strand.own.since) ?? strand.open[0];
-  return move && move.player !== "you" ? `${move.by.who} · ${strand.own.why}` : cause(strand);
 }
 
 function urgency(strand: StrandView): number {

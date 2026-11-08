@@ -1,9 +1,9 @@
 import type { MoveView, Snapshot, StrandView } from "./core.ts";
-import type { Recorded, Whose } from "./events.ts";
+import type { Recorded } from "./events.ts";
+import { cells, style, type Part } from "./screen.ts";
 import { whenLabel } from "./when.ts";
 
-export type Row = { text: string; strand?: StrandView; tone?: Tone };
-export type Tone = "you" | "agent" | "waiting" | "quiet" | "heading" | "dim";
+export type Row = { text: string; strand?: StrandView };
 
 export function snoozedLabel(strand: { snoozedUntil?: number }, now: number): string {
   return `till ${whenLabel(strand.snoozedUntil ?? now, now)}`;
@@ -18,6 +18,14 @@ export function age(ms: number): string {
   return `${Math.floor(hours / 24)}d${hours % 24}h`;
 }
 
+export function shortAge(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+}
+
 export function clock(at: number): string {
   const date = new Date(at);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -27,32 +35,34 @@ function snoozed(strand: StrandView, now: number): boolean {
   return (strand.snoozedUntil ?? 0) > now;
 }
 
-export function glyph(whose: Whose | undefined, isSnoozed: boolean): string {
-  if (whose === "you") return isSnoozed ? "◷" : "●";
-  if (whose === "agent") return "◐";
-  if (whose === "machine" || whose === "person") return "⊘";
-  return "○";
+export type Standing = { glyph: string; paint: (text: string) => string; text: string; age: string };
+
+export function standingOf(strand: StrandView, now: number): Standing {
+  const own = strand.own;
+  const since = shortAge(now - own.since);
+  if (snoozed(strand, now)) return { glyph: "◷", paint: style.faint, text: `snoozed ${snoozedLabel(strand, now)}`, age: "" };
+  switch (own.whose) {
+    case "you": {
+      const said = cause(strand);
+      return { glyph: "●", paint: style.you, text: strand.open.some((move) => move.player === "you" && move.answers) ? said : `yours · ${said}`, age: since };
+    }
+    case "agent":
+      return { glyph: "◐", paint: style.agent, text: othersCause(strand), age: since };
+    case "person":
+    case "machine":
+      return { glyph: "⊘", paint: style.wait, text: othersCause(strand), age: since };
+    default:
+      return { glyph: "○", paint: style.muted, text: own.why, age: "" };
+  }
 }
 
-export function strandGlyph(strand: StrandView, now: number): string {
-  return glyph(strand.rolled.whose, strand.rolled.whose === "you" && strand.own.whose === "you" && snoozed(strand, now));
-}
-
-export function tone(strand: StrandView, now: number): Tone {
-  const whose = strand.rolled.whose;
-  if (whose === "you") return strand.own.whose === "you" && snoozed(strand, now) ? "quiet" : "you";
-  if (whose === "agent") return "agent";
-  if (whose === "machine" || whose === "person") return "waiting";
-  return "quiet";
+export function othersCause(strand: StrandView): string {
+  const move = strand.open.find((candidate) => candidate.from === strand.own.since) ?? strand.open[0];
+  return move && move.player !== "you" ? `${move.by.who} · ${strand.own.why}` : cause(strand);
 }
 
 export function pathText(strand: StrandView): string {
   return strand.path.join(" › ");
-}
-
-export function titled(strand: StrandView): string {
-  const kind = strand.kind === "epic" ? " (epic)" : "";
-  return strand.title ? `${strand.name}  ${strand.title}${kind}` : `${strand.name}${kind}`;
 }
 
 function who(move: MoveView): string {
@@ -85,51 +95,66 @@ export function cause(strand: StrandView): string {
   return `${answering}${by}${standing.why}`;
 }
 
-export function countsLine(snapshot: Snapshot): string {
+export function header(snapshot: Snapshot, width: number): string {
   const { yours, agents, snoozed: sleeping, waiting } = snapshot.counts;
-  return `● ${yours} yours · ◐ ${agents} agents · ◷ ${sleeping} · ⊘ ${waiting}`;
+  const counts: Part[] = [["● ", style.you], [`${yours} yours`, style.muted], ["   ◐ ", style.agent], [`${agents} agent${agents === 1 ? "" : "s"}`, style.muted], ["   ⊘ ", style.wait], [`${waiting} waiting`, style.muted], ["   ◷ ", style.faint], [`${sleeping} snoozed`, style.muted], " "];
+  const right = counts.reduce<number>((total, part) => total + [...(typeof part === "string" ? part : part[0])].length, 0);
+  return style.surface(cells([[" ◆ ", (text) => style.accent(style.bold(text))], ["ponpoko", (text) => style.text(style.bold(text))]], Math.max(12, width - right)) + cells(counts, right));
 }
 
-export function strandLine(strand: StrandView, now: number): string {
-  const indent = " ".repeat(1 + strand.depth * 2);
-  const head = `${indent}${strandGlyph(strand, now)}${strand.unseen ? "*" : " "}${strand.depth === 0 ? titled(strand) : strand.name}`;
-  const clockText = strand.own.whose === undefined ? "" : age(now - strand.own.since);
-  return `${fit(head, 34)} ${fit(holder(strand, now), 24)} ${clockText.padStart(6)}   ${cause(strand)}`;
+export function strandLine(strand: StrandView, now: number, width: number, selected = false): string {
+  const standing = standingOf(strand, now);
+  const asleep = snoozed(strand, now);
+  const tabW = 8;
+  const ageW = 5;
+  const statusW = Math.max(20, Math.min(48, Math.floor(width * 0.34)));
+  const nameW = Math.max(24, width - 2 - statusW - 2 - ageW - 3 - tabW);
+  const name: Part[] = ["  ".repeat(strand.depth), [standing.glyph, standing.paint], " ", [strand.name, (text) => (asleep ? style.faint(text) : style.text(selected ? style.bold(text) : text))]];
+  if (strand.title) name.push("  ", [strand.title, asleep ? style.faint : style.muted]);
+  const where = strand.spaces.map((space) => space.short).join(", ");
+  return cells(
+    [
+      [selected ? "▎" : " ", style.accent],
+      [strand.unseen && !asleep ? "•" : " ", (text) => style.you(style.bold(text))],
+      [cells(name, nameW)],
+      "  ",
+      [cells([[standing.text, standing.paint]], statusW - 1)],
+      [standing.age.padStart(ageW + 1), style.faint],
+      "   ",
+      [where, style.faint],
+    ],
+    width,
+  );
 }
 
 function moveLine(move: MoveView, depth: number): string {
   const until = move.until === undefined ? "     " : clock(move.until);
   const links = move.links.map((link) => `  ${link.adapter === "quoll" ? "📓" : "↗"} ${link.ref}`).join("");
-  return `${" ".repeat(3 + depth * 2)}${clock(move.from)}–${until}  ${fit(move.player === "you" ? "you" : move.by.who, 10)} ${move.what}${links}`;
+  return `${" ".repeat(4 + depth * 2)}${clock(move.from)}–${until}  ${fit(move.player === "you" ? "you" : move.by.who, 10)} ${move.what}${links}`;
 }
 
-export type RowOptions = { expanded?: Set<string>; heardCount?: number };
+export type RowOptions = { expanded?: Set<string>; logCount?: number; header?: boolean; selected?: string };
 
 export function rows(snapshot: Snapshot, width: number, options: RowOptions = {}): Row[] {
   const now = snapshot.now;
   const expanded = options.expanded ?? new Set<string>();
-  const heardCount = options.heardCount ?? 8;
+  const logCount = options.logCount ?? 8;
   const out: Row[] = [];
-  const title = " ◆ ponpoko";
-  const counts = countsLine(snapshot);
-  out.push({ text: `${title}${" ".repeat(Math.max(2, width - title.length - counts.length - 1))}${counts}`, tone: "heading" });
-  out.push({ text: "" });
-  if (snapshot.strands.length === 0) out.push({ text: "  Nothing yet. ponpoko fills in as agents take turns and you add strands.", tone: "dim" });
-  for (const strand of snapshot.strands) {
-    const where = strand.depth === 0 ? strand.spaces.map((space) => space.short).join(", ") : "";
-    const line = strandLine(strand, now);
-    out.push({ text: where ? `${fit(line, Math.max(20, width - where.length - 2))}  ${where}` : line, strand, tone: strand.depth === 0 ? "heading" : tone(strand, now) });
-    if (strand.open.length > 1) for (const move of strand.open) out.push({ text: `${" ".repeat(5 + strand.depth * 2)}↳ ${who(move)} · ${move.what}`, tone: "dim" });
+  if (options.header ?? true) out.push({ text: header(snapshot, width) }, { text: "" });
+  if (snapshot.strands.length === 0) out.push({ text: style.muted("  Nothing yet. ponpoko fills in as agents take turns and you add strands.") });
+  snapshot.strands.forEach((strand, index) => {
+    if (strand.depth === 0 && index > 0) out.push({ text: "" });
+    out.push({ text: strandLine(strand, now, width, strand.id === options.selected), strand });
+    if (strand.open.length > 1) for (const move of strand.open) out.push({ text: style.faint(`${" ".repeat(6 + strand.depth * 2)}↳ ${who(move)} · ${move.what}`) });
     if (expanded.has(strand.id)) {
-      if (strand.recent.length === 0) out.push({ text: `${" ".repeat(3 + strand.depth * 2)}no moves yet`, tone: "dim" });
-      for (const move of strand.recent) out.push({ text: moveLine(move, strand.depth), tone: "dim" });
+      if (strand.recent.length === 0) out.push({ text: style.faint(`${" ".repeat(4 + strand.depth * 2)}no moves yet`) });
+      for (const move of strand.recent) out.push({ text: style.faint(moveLine(move, strand.depth)) });
     }
-    for (const note of strand.notes.slice(-2)) out.push({ text: `${" ".repeat(5 + strand.depth * 2)}✎ ${note.text}  ${clock(note.at)}`, tone: "dim" });
-  }
-  if (heardCount > 0 && snapshot.heard.length > 0) {
+  });
+  if (logCount > 0 && snapshot.heard.length > 0) {
     out.push({ text: "" });
-    snapshot.heard.slice(0, heardCount).forEach((event, index) => {
-      out.push({ text: `${index === 0 ? " heard" : "      "}   ${clock(event.at)} ${event.source.padEnd(7)}  ${describe(event, snapshot.labels)}`, tone: "dim" });
+    snapshot.heard.slice(0, logCount).forEach((event, index) => {
+      out.push({ text: style.faint(`${index === 0 ? " log  " : "      "}  ${clock(event.at)}  ${event.source.padEnd(6)} ${describe(event, snapshot.labels)}`) });
     });
   }
   return out;

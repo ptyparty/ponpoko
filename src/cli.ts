@@ -4,7 +4,8 @@ import { age, cause, pathText, rows } from "./render.ts";
 import { serve } from "./server.ts";
 
 const usage = `Usage:
-  ponpoko                 The command tab: every strand, whose move it is, and what ponpoko heard
+  ponpoko                 The command tab: every strand and whose move it is
+  ponpoko log             What ponpoko heard, newest first, for a komux popup
   ponpoko list            Your moves, then everything else, printed once
   ponpoko tray [--stream] One line for komux's tray; --stream prints a new one as it changes
   ponpoko deal [--unseen] Deal your oldest move as a card, for a komux popup
@@ -23,6 +24,10 @@ async function main(args: string[]): Promise<number> {
     case undefined:
     case "tab":
       return (await import("./tab.ts")).runTab();
+    case "log": {
+      const [{ runLive }, { LogView }] = await Promise.all([import("./tab.ts"), import("./log.ts")]);
+      return runLive(new LogView());
+    }
     case "list":
       return list();
     case "deal":

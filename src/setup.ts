@@ -74,6 +74,7 @@ export default function ponpoko(options: PonpokoOptions = {}) {
           { key: "shift+m", ...catchUp },
           { key: "t", ...thisTab },
           { key: "o", popup: command, name: "overview" },
+          { key: "l", popup: [...command, "log"], name: "log", width: 90, height: 75 },
         ],
       },
     ],

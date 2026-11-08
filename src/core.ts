@@ -179,7 +179,7 @@ export class Ponpoko {
     for (const strand of top) walk(strand, 0);
     const byId = new Map(tree.map((strand) => [strand.id, strand]));
     const moves = yourStrands(this.model, now).flatMap((strand) => byId.get(strand.id) ?? []);
-    const heard = recentHeard(this.model, 30);
+    const heard = recentHeard(this.model, 100);
     return {
       now,
       counts: counts(this.model, now),

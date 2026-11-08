@@ -22,16 +22,20 @@ describe("the deck", () => {
   test("lists the hand with the picked card's details, and goes to the picked card", async () => {
     const { core, dealer, calls } = await setup();
     const hand = plain(dealer.view());
-    expect(hand).toContain("your move · 2");
-    expect(hand).toContain("▸ 1  claude in side");
-    expect(hand).toContain("  2  sc-1  Widget CSV import");
+    expect(hand).toContain("your move 2");
+    expect(hand).toContain("▎1 ● claude in side");
+    expect(hand).toContain(" 2 ● sc-1  Widget CSV import");
     await dealer.key({ name: "j" });
     const card = plain(dealer.view());
     expect(card).toContain("● sc-1");
-    expect(card).toContain("claude · turn ended · 2m");
-    expect(card).toContain("→ claude in tab 1 widgets");
+    expect(card).toContain("● claude · turn ended  ·  2m");
+    expect(card).toContain("⏎  go to claude in tab 1 widgets");
     expect(await dealer.key({ name: "return" })).toBe("close");
     expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
+    const tall = plain(dealer.view(90, 40)).split("\n");
+    expect(tall).toHaveLength(40);
+    expect(tall.at(-1)).toContain("esc  close");
+    expect(tall.at(-2)).toContain("⏎  go to");
   });
 
   test("every live strand shows somewhere, a parent with nothing of its own as waiting on the strand under it", async () => {
@@ -48,7 +52,7 @@ describe("the deck", () => {
     dealer.setSnapshot(core.snapshot());
     const view = plain(dealer.view(160, 80));
     for (const strand of core.snapshot().strands) expect(view).toContain(strand.name);
-    expect(view).toContain("waiting on other strands · 2");
+    expect(view).toContain("waiting on other strands 2");
     expect(view).toContain("sc-2");
     expect(view).toContain("waiting on gadgets PR");
     core.done(strandNamed(core, "sc-1 › sc-3").id);
@@ -76,7 +80,7 @@ describe("the deck", () => {
     tick(60_000);
     const dealer = new Dealer(recordingActions().actions, false, now);
     dealer.setSnapshot(core.snapshot());
-    expect(plain(dealer.view()).match(/\d  claude in \w/g)).toEqual(["1  claude in c", "2  claude in b", "3  claude in a", "4  claude in d"]);
+    expect(plain(dealer.view()).match(/\d ● claude in \w/g)).toEqual(["1 ● claude in c", "2 ● claude in b", "3 ● claude in a", "4 ● claude in d"]);
   });
 
   test("lists agents at work, strands waiting on others and snoozed strands under yours, and goes to any of them", async () => {
@@ -92,7 +96,7 @@ describe("the deck", () => {
     const dealer = new Dealer(actions, false, now);
     dealer.setSnapshot(core.snapshot());
     const deck = plain(dealer.view());
-    expect(deck).toMatch(/your move · 1\n.*1  claude in widgets[^\n]*\n agents · 1\n.*2  claude in side +claude · working[^\n]*\n waiting on others · 1\n.*3  sc-7 +Copilot · PR review[^\n]*\n snoozed · 1\n.*4  sc-8 +till /);
+    expect(deck).toMatch(/your move 1 *\n.*1 ● claude in widgets[^\n]*\n\n agents 1 *\n.*2 ◐ claude in side +claude · working[^\n]*\n\n waiting on others 1 *\n.*3 ⊘ sc-7 +Copilot · PR review[^\n]*\n\n snoozed 1 *\n.*4 ◷ sc-8 +snoozed till /);
     await dealer.key({ name: "3" });
     await dealer.key({ name: "s" });
     expect(dealer.card()?.name).toBe("sc-7");
@@ -110,11 +114,12 @@ describe("the deck", () => {
     tick(60_000);
     const dealer = new Dealer(recordingActions().actions, false, now);
     dealer.setSnapshot(core.snapshot());
-    const lines = plain(dealer.view(120, 40)).split("\n");
-    expect(lines[0]).toMatch(/^ your move · 2 +│ agents · 1$/);
-    expect(lines[1]).toMatch(/^ ▸ 1  claude in \w+ .*│   3  claude in side/);
-    expect(lines[2]).toMatch(/^   2  claude in \w+ .*│ waiting on others · 1$/);
-    expect(lines[3]).toMatch(/^ +│   4  sc-7 /);
+    const lines = plain(dealer.view(140, 40)).split("\n");
+    expect(lines[0]).toMatch(/^ your move 2 +│  agents 1 *$/);
+    expect(lines[1]).toMatch(/^▎1 ● claude in \w+ .*│  3 ◐ claude in side/);
+    expect(lines[2]).toMatch(/^ 2 ● claude in \w+ .*│ *$/);
+    expect(lines[3]).toMatch(/^ +│  waiting on others 1/);
+    expect(lines[4]).toMatch(/^ +│  4 ⊘ sc-7 /);
     await dealer.key({ name: "j" });
     await dealer.key({ name: "j" });
     expect(dealer.card()?.name).not.toBe("claude in side");
@@ -135,7 +140,7 @@ describe("the deck", () => {
     await dealer.key({ name: "j" });
     await dealer.key({ name: "j" });
     expect(dealer.card()?.name).toBe("sc-1");
-    expect(plain(dealer.view())).not.toContain("agents ·");
+    expect(plain(dealer.view())).not.toContain(" agents ");
   });
 
   test("scrolls the list to keep the picked card in view", async () => {
@@ -146,14 +151,14 @@ describe("the deck", () => {
     dealer.setSnapshot(core.snapshot());
     for (const _ of Array.from({ length: 25 })) await dealer.key({ name: "j" });
     const deck = plain(dealer.view(70, 30));
-    expect(deck).toContain(`▸    ${dealer.card()?.name}`);
+    expect(deck).toContain(`▎  ● ${dealer.card()?.name}`);
     expect(deck.split("\n").length).toBeLessThanOrEqual(30);
   });
 
   test("f starts a fresh Claude on the picked card even when one is in its tab", async () => {
     const { core, dealer, calls } = await setup();
     await dealer.key({ name: "2" });
-    expect(plain(dealer.view())).toContain("f fresh");
+    expect(plain(dealer.view())).toContain("f  fresh");
     expect(await dealer.key({ name: "f" })).toBe("close");
     expect(calls).toEqual([["pickUp", strandNamed(core, "sc-1").id, "fresh"]]);
   });
@@ -185,7 +190,7 @@ describe("the deck", () => {
 
   test("catching up marks each dealt strand seen", async () => {
     const { core, dealer, calls } = await setup(true);
-    expect(plain(dealer.view())).toContain("since you last caught up · 2");
+    expect(plain(dealer.view())).toContain("since you last caught up 2");
     await dealer.key({ name: "s" });
     expect(await dealer.key({ name: "escape" })).toBe("close");
     expect(calls).toEqual([["seen", strandNamed(core, "claude in side").id]]);
@@ -203,7 +208,7 @@ describe("the deck", () => {
     const dealer = new Dealer(recordingActions().actions, false, () => 1_000_000);
     dealer.setSnapshot(core.snapshot());
     const card = plain(dealer.view(100));
-    expect(card).toContain("● sc-101  Gadgets: tools for import and export widgets");
+    expect(card).toContain("▎ sc-101  Gadgets: tools for import and export widgets");
     expect(card).toContain("in epic sc-100  Smarter widget pricing");
     expect(card).toContain("✎ No PR yet; 15 uncommitted changes in gadgets.");
   });
@@ -219,7 +224,9 @@ describe("the deck", () => {
     while (dealer.card()?.name !== "sc-1") await dealer.key({ name: "j" });
     const card = plain(dealer.view(100)).split("\n");
     const tree = card.slice(card.findIndex((line) => line.includes("under it · 3")));
-    expect(tree.slice(1, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" | ● a | waiting on b · now", " | ● b | no one on it · now", " | ⊘ c | Copilot · PR review · now"]);
+    expect(tree[1]).toMatch(/▎ ○ a +waiting on b/);
+    expect(tree[2]).toMatch(/▎   ● b +yours · no one on it/);
+    expect(tree[3]).toMatch(/▎ ⊘ c +Copilot · PR review/);
   });
 
   test("opened on a tab, lists its strands with the trees under them, and edits the picked one", async () => {
@@ -232,7 +239,10 @@ describe("the deck", () => {
     const dealer = new Dealer(actions, false, now, { server: "s1", tabId: 3 });
     dealer.setSnapshot(core.snapshot());
     const deck = plain(dealer.view(120, 40)).split("\n");
-    expect(deck.slice(0, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" tab 3 widgets · 3", " ▸ 1 | sc-1 | Widget CSV import | claude · turn ended · now", " | 2 | pr | waiting on ask · now", " | 3 | ask | no one on it · now"]);
+    expect(deck[0]).toMatch(/^ tab 3 widgets 3/);
+    expect(deck[1]).toMatch(/^▎1 ● sc-1  Widget CSV import +claude · turn ended/);
+    expect(deck[2]).toMatch(/^ 2   ○ pr +waiting on ask/);
+    expect(deck[3]).toMatch(/^ 3     ● ask +yours · no one on it/);
     expect(deck.join("\n")).not.toContain("side");
     await dealer.key({ name: "s" });
     expect(dealer.card()?.name).toBe("sc-1");

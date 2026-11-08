@@ -23,15 +23,76 @@ export function parseKeys(data: string): Key[] {
   return keys;
 }
 
+const palette = {
+  text: "#e8ebf2",
+  muted: "#9298ab",
+  faint: "#565e72",
+  you: "#ffc45e",
+  agent: "#8fb0ff",
+  wait: "#c89dff",
+  warn: "#ffa863",
+  error: "#ff6b6b",
+  ground: "#0f1117",
+  surface: "#181b24",
+  raised: "#282e3d",
+  selection: "#2c3a68",
+};
+
+const rgb = (hex: string) => [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(";");
+const fg = (hex: string) => (text: string) => `\x1b[38;2;${rgb(hex)}m${text}\x1b[39m`;
+const bg = (hex: string) => (text: string) => `\x1b[48;2;${rgb(hex)}m${text.replaceAll("\x1b[49m", `\x1b[48;2;${rgb(hex)}m`)}\x1b[49m`;
+
 export const style = {
   bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
-  dim: (text: string) => `\x1b[2m${text}\x1b[22m`,
-  amber: (text: string) => `\x1b[38;5;214m${text}\x1b[39m`,
-  cyan: (text: string) => `\x1b[36m${text}\x1b[39m`,
-  magenta: (text: string) => `\x1b[35m${text}\x1b[39m`,
-  red: (text: string) => `\x1b[31m${text}\x1b[39m`,
+  dim: fg(palette.muted),
+  text: fg(palette.text),
+  muted: fg(palette.muted),
+  faint: fg(palette.faint),
+  amber: fg(palette.you),
+  you: fg(palette.you),
+  cyan: fg(palette.agent),
+  agent: fg(palette.agent),
+  accent: fg(palette.agent),
+  magenta: fg(palette.wait),
+  wait: fg(palette.wait),
+  warn: fg(palette.warn),
+  red: fg(palette.error),
   reverse: (text: string) => `\x1b[7m${text}\x1b[27m`,
+  surface: bg(palette.surface),
+  raised: bg(palette.raised),
+  selected: bg(palette.selection),
+  key: (key: string) => bg(palette.muted)(fg(palette.ground)(` ${key} `)),
+  enter: (key: string) => bg(palette.agent)(fg(palette.ground)(`\x1b[1m ${key} \x1b[22m`)),
 };
+
+export function visible(text: string): number {
+  return [...text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")].length;
+}
+
+export type Part = string | [string, ((text: string) => string)?];
+
+export function cells(parts: Part[], width: number): string {
+  let left = width;
+  let out = "";
+  for (const part of parts) {
+    const [text, paint] = typeof part === "string" ? [part, undefined] : part;
+    if (left <= 0) break;
+    if (text.includes("\x1b")) {
+      left -= visible(text);
+      out += paint ? paint(text) : text;
+      continue;
+    }
+    const chars = [...text];
+    const shown = chars.length > left ? `${chars.slice(0, Math.max(0, left - 1)).join("")}…` : text;
+    left -= [...shown].length;
+    out += paint ? paint(shown) : shown;
+  }
+  return out + " ".repeat(Math.max(0, left));
+}
+
+export function keyLine(keys: [string, string][]): string {
+  return ` ${keys.map(([key, label]) => `${style.key(key)} ${style.muted(label)}`).join("   ")}`;
+}
 
 export type Screen = { width: number; height: number; draw: (lines: string[]) => void; close: () => void };
 

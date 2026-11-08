@@ -23,9 +23,21 @@ describe("the command tab", () => {
   test("shows the tree of strands, opens a strand's moves, and goes to the selected strand", async () => {
     const { core, tab, calls } = await setup();
     const screen = plain(tab.view(120, 20)).join("\n");
-    expect(screen).toContain(" ●*sc-1");
-    expect(screen).toContain("   ●*tests");
-    expect(screen).toContain("heard");
+    expect(screen).toContain("▎•● sc-1  Widget CSV import");
+    expect(screen).toContain(" •  ● tests ");
+    expect(screen).toMatch(/ ▎ ● claude · turn ended/);
+    const lines = plain(tab.view(120, 20));
+    expect(lines).toHaveLength(20);
+    expect(lines[4]).toBe("");
+    expect(lines[5]).toMatch(/^ ▎ sc-1  Widget CSV import/);
+    expect(lines.at(-1)).toContain("q  quit");
+    expect(screen).not.toMatch(/\d\d:\d\d  \w+ +new strand/);
+    await tab.key({ name: "l", text: "l" });
+    const log = plain(tab.view(120, 20));
+    expect(log[0]).toMatch(/◆ log +newest first · \d+/);
+    expect(log.join("\n")).toMatch(/\d\d:\d\d  \w+ +new strand sc-1 › tests/);
+    await tab.key({ name: "escape" });
+    expect(plain(tab.view(120, 20))[0]).toContain("◆ ponpoko");
     await tab.key({ name: " ", text: " " });
     expect(plain(tab.view(120, 20)).join("\n")).toMatch(/\d\d:\d\d–\s+you\s+turn ended/);
     await tab.key({ name: "j" });
@@ -102,12 +114,12 @@ describe("the command tab", () => {
     core.add(undefined, "epic 9 › sc-2");
     tab.setSnapshot(core.snapshot());
     const footer = () => plain(tab.view(140, 30)).at(-2)!.trim();
-    expect(footer()).toBe("⏎ go to claude in tab 1 widgets");
+    expect(footer()).toBe("⏎  go to claude in tab 1 widgets");
     await tab.key({ name: "j" });
-    expect(footer()).toBe("⏎ open a tab at /w/stories/sc-1");
+    expect(footer()).toBe("⏎  open a tab at /w/stories/sc-1");
     for (const _ of [1, 2, 3]) await tab.key({ name: "k" });
     expect(tab.current()?.strand?.name).toBe("epic 9");
-    expect(footer()).toBe("⏎ nothing here; its work is in the strands under it");
+    expect(footer()).toBe("⏎  nothing here; its work is in the strands under it");
   });
 
   test("f starts a fresh Claude on the picked strand", async () => {
