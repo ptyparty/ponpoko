@@ -33,13 +33,13 @@ describe("strands", () => {
   test("an agent's moves make the strand its move, rolled up to the strands above", () => {
     const { core, shown, tick } = setup();
     core.present({ adapter: "tool", scope: "main", players: ["a1"], spaces: [] });
-    expect(core.status({ self: "tool:1", strand: "ptyparty › review findings › 4", text: "reading tabBraid" })).toBe("ptyparty › review findings › 4");
-    expect(shown()).toBe(["ptyparty agent", "  review findings agent", "    4 agent reading tabBraid"].join("\n"));
+    expect(core.status({ self: "tool:1", strand: "ptyparty › review findings › 4", text: "reading tabStrand" })).toBe("ptyparty › review findings › 4");
+    expect(shown()).toBe(["ptyparty agent", "  review findings agent", "    4 agent reading tabStrand"].join("\n"));
     tick(60_000);
     core.status({ self: "tool:1", text: "making a pointed directory beat a label", page: "ponpoko/review-findings.md" });
     const strand = strandNamed(core, "ptyparty › review findings › 4");
     expect(strand.recent.map((move) => [move.what, move.until !== undefined, move.links.map((link) => link.ref)])).toEqual([
-      ["reading tabBraid", true, []],
+      ["reading tabStrand", true, []],
       ["making a pointed directory beat a label", false, ["ponpoko/review-findings.md"]],
     ]);
   });

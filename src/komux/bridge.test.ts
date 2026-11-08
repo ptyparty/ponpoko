@@ -369,21 +369,21 @@ describe("go in komux", () => {
 
   test("picking up a strand reopens the layout and args its Claude's tab was opened with, such as a PR review", async () => {
     const { core, hear } = harness();
-    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", braid: "sc-1235" } };
+    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", strand: "sc-1235" } };
     await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [{ paneId: 9, tabId: 3, state: "done", sessionId: "r1" }], jobs: [] });
     await hear({ type: "agent.gone", paneId: 9, tabId: 3 });
     const { sent, control } = recorder();
     await pickUpInKomux(strandNamed(core, "sc-1235"), "resume", env, control);
     await pickUpInKomux(strandNamed(core, "sc-1235"), "fresh", env, control);
     expect(sent).toEqual([
-      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" }, resume: "r1" } },
-      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" }, prompt: brief(strandNamed(core, "sc-1235")) } },
+      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", strand: "sc-1235" }, resume: "r1" } },
+      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", strand: "sc-1235" }, prompt: brief(strandNamed(core, "sc-1235")) } },
     ]);
   });
 
   test("a PR review strand comes back as its PR review tab after komux restarts, even if its Claude was never prompted", async () => {
     const { core, hear, store } = harness();
-    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", braid: "sc-1235" } };
+    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", strand: "sc-1235" } };
     await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [], jobs: [] });
     const facts = store.all().length;
     await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [], jobs: [] });
@@ -393,14 +393,14 @@ describe("go in komux", () => {
     await goInKomux(strandNamed(core, "sc-1235"), [], { ...env, KOMUX_SERVER_ID: "s2" }, control);
     await pickUpInKomux(strandNamed(core, "sc-1235"), "fresh", { ...env, KOMUX_SERVER_ID: "s2" }, control);
     expect(sent).toEqual([
-      { method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" } } },
-      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" }, prompt: brief(strandNamed(core, "sc-1235")) } },
+      { method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", strand: "sc-1235" } } },
+      { method: "claude.start", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", strand: "sc-1235" }, prompt: brief(strandNamed(core, "sc-1235")) } },
     ]);
   });
 
   test("a strand with no place of its own goes to its nearest ancestor's tab", async () => {
     const { core, hear } = harness();
-    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", braid: "sc-1235" } };
+    const review = { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235" }, layout: "pr-review", args: { pr: "540", strand: "sc-1235" } };
     await hear({ ...snapshot, tabs: [...snapshot.tabs, review], agents: [], jobs: [] });
     core.add(strandNamed(core, "sc-1235").id, "fixups › rename");
     const strands = core.snapshot().strands;
@@ -408,7 +408,7 @@ describe("go in komux", () => {
     const { sent, control } = recorder();
     await goInKomux(rename, strands, env, control);
     await expect(goInKomux(rename, [], env, control)).rejects.toThrow("doesn't know where this strand lives");
-    expect(sent).toEqual([{ method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", braid: "sc-1235" } } }]);
+    expect(sent).toEqual([{ method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", strand: "sc-1235" } } }]);
   });
 
   test("a strand no one is on goes to a Claude already in the tab it lives in, rather than offering a new one", async () => {
