@@ -2,6 +2,7 @@ import type { Fact, PlayerKind, Recorded, Source } from "./events.ts";
 import {
   ancestors,
   apply,
+  blockers,
   children,
   counts,
   descendants,
@@ -49,6 +50,7 @@ export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]
 export type Where = { self?: string; dir?: string; strand?: string };
 export type StatusReport = Where & { text: string; page?: string };
 export type WaitReport = Where & { who: string; kind: "you" | "person" | "machine"; what: string; over?: boolean };
+export type BlockReport = Where & { on: string; over?: boolean };
 
 const presenceMs = 90_000;
 const recentMoves = 12;
@@ -235,6 +237,42 @@ export class Ponpoko {
     return path(this.model, strand).join(" › ");
   }
 
+  blockBy(report: BlockReport, source: Source = "agent"): string {
+    const agent = this.agentOf(report.self);
+    const facts: Fact[] = [];
+    const strand = report.strand ? this.resolve(report.strand, facts, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(report, agent);
+    if (!strand) throw new Error("name the strand that waits, such as \"sc-1234\"");
+    if (report.over) {
+      const on = this.named(report.on, strand);
+      if (!(on in (this.model.strands.get(strand)?.blockedOn ?? {}))) throw new Error(`${path(this.model, strand).join(" › ")} doesn't wait on ${report.on}`);
+      facts.push({ type: "strand.unblocked", strand, on });
+    } else this.blockFacts(strand, report.on, facts);
+    this.record(source, facts);
+    return path(this.model, strand).join(" › ");
+  }
+
+  block(strand: string, on: string): string {
+    this.mustHave(strand);
+    const facts: Fact[] = [];
+    const blocker = this.blockFacts(strand, on, facts);
+    for (const move of openMoves(this.model, strand)) if (move.player === you) facts.push({ type: "move.closed", move: move.id });
+    this.record("you", facts);
+    return blocker;
+  }
+
+  unblock(strand: string, on?: string): void {
+    const waiting = Object.keys(this.mustHave(strand).blockedOn).filter((id) => on === undefined || id === on);
+    this.record("you", waiting.map((id) => ({ type: "strand.unblocked", strand, on: id })));
+  }
+
+  private blockFacts(strand: string, on: string, facts: Fact[]): string {
+    const blocker = this.named(on, strand);
+    if (blocker === strand) throw new Error("a strand can't wait on itself");
+    if (blockers(this.model, blocker).includes(strand)) throw new Error("those strands would wait on each other");
+    facts.push({ type: "strand.blocked", strand, on: blocker });
+    return blocker;
+  }
+
   doneBy(where: Where, why: string, source: Source = "agent"): string {
     const agent = this.agentOf(where.self);
     const facts: Fact[] = [];
@@ -357,7 +395,7 @@ export class Ponpoko {
   labelsFor(heard: Recorded[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (const event of heard) {
-      for (const key of ["strand", "into", "parent"] as const) {
+      for (const key of ["strand", "into", "parent", "on"] as const) {
         const id = (event as Record<string, unknown>)[key];
         if (typeof id === "string") out[id] = this.model.names.get(id) ?? id;
       }
@@ -400,6 +438,19 @@ export class Ponpoko {
       if ((where.dir === link.ref || where.dir.startsWith(`${link.ref}/`)) && (!best || link.ref.length > best.length)) best = { length: link.ref.length, strand: link.strand };
     }
     return best?.strand;
+  }
+
+  private named(text: string, near: string | undefined): string {
+    if (this.model.strands.has(text)) return text;
+    const found = this.find(text, near);
+    if (found) return found;
+    const wanted = splitPath(text).map((name) => name.toLowerCase());
+    const ending = [...this.model.strands.values()].filter((strand) => {
+      const names = path(this.model, strand.id).slice(-wanted.length).map((name) => name.toLowerCase());
+      return isLive(this.model, strand) && names.length === wanted.length && names.every((name, at) => name === wanted[at]);
+    });
+    if (ending.length === 1) return ending[0]!.id;
+    throw new Error(ending.length === 0 ? `ponpoko knows of no strand ${text}` : `${text} could be ${ending.length} strands; give more of its path`);
   }
 
   private find(text: string, near: string | undefined): string | undefined {

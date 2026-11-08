@@ -170,6 +170,82 @@ describe("strands", () => {
     expect(own("sc-1")).toBe("agent planning what's next");
   });
 
+  test("a strand can wait on strands outside its own tree, and is your move when one of them is done", () => {
+    const { core, store, tick } = setup();
+    core.add(undefined, "sc-1");
+    core.add(undefined, "sc-2");
+    core.add(undefined, "sc-3");
+    const own = (path: string) => {
+      const { whose, why } = strandNamed(core, path).own;
+      return `${whose ?? "-"} ${why}`;
+    };
+    tick(60_000);
+    core.block(strandNamed(core, "sc-1").id, "sc-2");
+    tick(60_000);
+    core.block(strandNamed(core, "sc-1").id, "sc-3");
+    expect(own("sc-1")).toBe("- waiting on sc-2");
+    expect(core.snapshot().moves.map((strand) => strand.name)).toEqual(["sc-2", "sc-3"]);
+    expect(() => core.block(strandNamed(core, "sc-3").id, "sc-1")).toThrow("those strands would wait on each other");
+    expect(() => core.block(strandNamed(core, "sc-1").id, strandNamed(core, "sc-1").id)).toThrow("a strand can't wait on itself");
+    expect(new Ponpoko(store).snapshot().strands.find((strand) => strand.name === "sc-1")?.own.why).toBe("waiting on sc-2");
+    tick(60_000);
+    core.done(strandNamed(core, "sc-2").id);
+    expect(own("sc-1")).toBe("you sc-2 is done");
+    tick(60_000);
+    core.seen(strandNamed(core, "sc-1").id);
+    expect(own("sc-1")).toBe("- waiting on sc-3");
+    core.unblock(strandNamed(core, "sc-1").id);
+    expect(own("sc-1")).toBe("you no one on it");
+  });
+
+  test("a strand's own moves outrank what it waits on, and marking the wait closes your moves on it", () => {
+    const { core, tick } = setup();
+    core.add(undefined, "sc-2");
+    core.status({ self: "tool:1", strand: "› sc-1", text: "building" });
+    core.blockBy({ self: "tool:1", on: "sc-2" });
+    expect(strandNamed(core, "sc-1").own.why).toBe("building");
+    core.record("komux", [{ type: "move.opened", move: "m-turn", strand: strandNamed(core, "sc-1").id, player: "you", with: "a1", what: "turn ended" }]);
+    core.record("komux", [...core.model.moves.values()].filter((move) => move.player === "a1").map((move) => ({ type: "move.closed" as const, move: move.id })));
+    expect(strandNamed(core, "sc-1").own.why).toBe("turn ended");
+    tick(60_000);
+    core.block(strandNamed(core, "sc-1").id, strandNamed(core, "sc-2").id);
+    expect(strandNamed(core, "sc-1").own.why).toBe("waiting on sc-2");
+    core.blockBy({ self: "tool:1", strand: "sc-1", on: "sc-2", over: true });
+    expect(strandNamed(core, "sc-1").blockedOn).toEqual({});
+  });
+
+  test("a wait names a strand that exists, by the end of its path, and never makes one", () => {
+    const { core, tick } = setup();
+    core.add(undefined, "sc-1");
+    core.add(undefined, "epic › sc-2");
+    core.add(undefined, "a › pr");
+    core.add(undefined, "b › pr");
+    const sc1 = strandNamed(core, "sc-1").id;
+    expect(() => core.block(sc1, "sc-3")).toThrow("ponpoko knows of no strand sc-3");
+    expect(() => core.block(sc1, "pr")).toThrow("pr could be 2 strands; give more of its path");
+    expect(() => core.blockBy({ self: "tool:1", strand: "sc-1", on: "sc-2", over: true })).toThrow("sc-1 doesn't wait on sc-2");
+    expect(core.snapshot().strands.map((strand) => strand.name)).not.toContain("sc-3");
+    tick(60_000);
+    core.block(sc1, "sc-2");
+    expect(strandNamed(core, "sc-1").own.why).toBe("waiting on sc-2");
+    tick(60_000);
+    core.done(strandNamed(core, "epic").id);
+    expect(strandNamed(core, "sc-1").own.whose).toBe("you");
+    expect(strandNamed(core, "sc-1").own.why).toBe("sc-2 is done");
+  });
+
+  test("merging a strand others wait on moves the wait to the strand it merged into", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1");
+    core.add(undefined, "sc-2");
+    core.add(undefined, "sc-3");
+    core.block(strandNamed(core, "sc-1").id, "sc-2");
+    core.record("you", [{ type: "strand.merged", strand: strandNamed(core, "sc-2").id, into: strandNamed(core, "sc-3").id }]);
+    expect(strandNamed(core, "sc-1").own.why).toBe("waiting on sc-3");
+    core.forget(strandNamed(core, "sc-3").id);
+    expect(strandNamed(core, "sc-1").blockedOn).toEqual({});
+  });
+
   test("a snooze till needed from before is no snooze at all", () => {
     const { core } = setup();
     core.add(undefined, "sc-1");

@@ -47,6 +47,8 @@ export function recordingActions() {
     seen: record("seen"),
     add: record("add"),
     reparent: record("reparent"),
+    block: record("block"),
+    unblock: record("unblock"),
     rename: record("rename"),
     done: record("done"),
     open: async (link: { ref: string }) => void calls.push(["open", link.ref]),

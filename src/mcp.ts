@@ -14,6 +14,7 @@ const instructions = `ponpoko tracks the user's work as strands, lines of work t
 - You start on a piece of work, or move to another: call status with a line on what you're doing now, and the strand you're on as a path such as "ponpoko review findings › 4". Missing strands on the path are made. Leave the strand out to stay where you are. Call it again as you move between steps; each call is a move on the strand.
 - You stop to wait on someone or something other than the user (a Copilot or human PR review, CI, a deploy, a person's answer): call wait with who, kind "machine" or "person", and what you're waiting for. When the wait ends, call wait again with over true.
 - The user must do something komux can't see, such as a live test: call wait with kind "you".
+- A strand can't go on until another strand lands, such as a story blocked on another story: call wait with on, the other strand's path. When it no longer waits, call wait with on and over true.
 - A strand is finished: call done. A list of work to share out: call split with the names.
 
 When the user asks what needs them or what to do next, call moves. Keep lines short, with no code, customer data or secrets.`;
@@ -52,17 +53,23 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
     "wait",
     {
       title: "Hand a strand to someone",
-      description: "Say a strand now waits on someone other than you: a machine such as Copilot or CI, a person, or the user for something komux can't see. Call it with over true when the wait ends.",
+      description: "Say a strand now waits on someone other than you: a machine such as Copilot or CI, a person, or the user for something komux can't see. Or, with on, say it waits on another strand. Call it with over true when the wait ends.",
       inputSchema: {
-        who: z.string().min(1).max(80).describe("Copilot, CI, Sam, or you for the user"),
-        kind: z.enum(["machine", "person", "you"]),
-        what: z.string().min(1).max(200).describe("Short, such as \"reviewing PR #821\""),
+        who: z.string().min(1).max(80).optional().describe("Copilot, CI, Sam, or you for the user; leave out with on"),
+        kind: z.enum(["machine", "person", "you"]).optional().describe("Leave out with on"),
+        what: z.string().min(1).max(200).optional().describe("Short, such as \"reviewing PR #821\"; leave out with on"),
+        on: z.string().min(1).max(200).optional().describe("The strand this one waits on, as a path such as sc-1240; it shows as yours again when that strand is done"),
         over: z.boolean().optional().describe("true when the wait is over"),
         strand: strandParam,
       },
       annotations: write,
     },
-    async (input) => attempt(async () => (await send({ method: "wait", params: { ...caller, ...input } })) as { strand: string }, (result) => `${input.over ? "Wait over" : "Waiting"} on ${result.strand}.`),
+    async ({ who, kind, what, on, ...rest }) => {
+      if (on && (who || kind || what)) return reply("ponpoko: a wait is either on a strand (on) or on someone (who, kind and what), not both; make two calls", true);
+      if (on) return attempt(async () => (await send({ method: "block-by", params: { ...caller, ...rest, on } })) as { strand: string }, (result) => `${result.strand} ${rest.over ? "no longer waits" : "waits"} on ${on}.`);
+      if (!who || !kind || !what) return reply("ponpoko: name who, kind and what, or the strand it waits on with on", true);
+      return attempt(async () => (await send({ method: "wait", params: { ...caller, ...rest, who, kind, what } })) as { strand: string }, (result) => `${rest.over ? "Wait over" : "Waiting"} on ${result.strand}.`);
+    },
   );
 
   server.registerTool(

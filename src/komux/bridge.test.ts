@@ -182,6 +182,24 @@ describe("the komux bridge", () => {
     expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
   });
 
+  test("a Claude whose turn ends after reporting a wait on someone or on another strand leaves the strand waiting, not yours", async () => {
+    const { core, hear, tick } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    core.wait({ self: "komux:s1:2", who: "Copilot", kind: "machine", what: "reviewing PR #821" });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 machine machine:copilot: reviewing PR #821");
+    core.wait({ self: "komux:s1:2", who: "Copilot", kind: "machine", what: "reviewing PR #821", over: true });
+    core.add(undefined, "sc-2");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
+    core.blockBy({ self: "komux:s1:2", on: "sc-2" });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(strandNamed(core, "sc-1234").own.why).toBe("waiting on sc-2");
+    expect(core.snapshot().moves.map((strand) => strand.name)).not.toContain("sc-1234");
+    tick(60_000);
+    core.done(strandNamed(core, "sc-2").id);
+    expect(strandNamed(core, "sc-1234").own.why).toBe("sc-2 is done");
+  });
+
   test("a failed job stays yours through a dismissed toast, until it passes", async () => {
     const { core, hear } = harness();
     await hear(snapshot);

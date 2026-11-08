@@ -109,6 +109,36 @@ describe("the command tab", () => {
     ]);
   });
 
+  test("w makes a strand wait on the strand picked from the list, and Enter on it again stops the wait", async () => {
+    const { core, tab, calls } = await setup();
+    core.add(undefined, "sc-2");
+    tab.setSnapshot(core.snapshot());
+    const sc1 = strandNamed(core, "sc-1").id;
+    const sc2 = strandNamed(core, "sc-2").id;
+    await tab.key({ name: "w" });
+    expect(plain(tab.view(100, 20)).join("\n")).toContain("sc-1 can't wait on itself");
+    await tab.key({ name: "j" });
+    await tab.key({ name: "j" });
+    expect(plain(tab.view(100, 20)).join("\n")).toContain("sc-1 waits on sc-2");
+    await tab.key({ name: "return" });
+    expect(calls).toEqual([["block", sc1, sc2]]);
+    expect(tab.current()?.strand?.id).toBe(sc1);
+    core.block(sc1, sc2);
+    tab.setSnapshot(core.snapshot());
+    expect(plain(tab.view(100, 20)).join("\n")).toContain("⊘ waiting on sc-2");
+    await tab.key({ name: "w" });
+    await tab.key({ name: "j" });
+    await tab.key({ name: "j" });
+    expect(plain(tab.view(100, 20)).join("\n")).toContain("sc-1 stops waiting on sc-2");
+    await tab.key({ name: "return" });
+    await tab.key({ name: "w" });
+    await tab.key({ name: "c", text: "c" });
+    await tab.key({ name: "w" });
+    await tab.key({ name: "/", text: "/" });
+    await type(tab, "sc-9");
+    expect(calls.slice(1)).toEqual([["unblock", sc1, sc2], ["unblock", sc1], ["block", sc1, "sc-9"]]);
+  });
+
   test("the footer says what Enter will do on the picked strand", async () => {
     const { core, tab } = await setup();
     core.add(undefined, "epic 9 › sc-2");

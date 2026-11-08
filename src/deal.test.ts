@@ -173,6 +173,21 @@ describe("the deck", () => {
     expect(calls).toEqual([["done", strandNamed(core, "claude in side").id]]);
   });
 
+  test("w makes the card wait on a typed strand, or on none when left empty, and the card says what it waits on", async () => {
+    const { core, dealer, calls } = await setup();
+    const card = dealer.card()!;
+    await dealer.key({ name: "w" });
+    for (const char of "side") await dealer.key({ name: char, text: char });
+    await dealer.key({ name: "return" });
+    await dealer.key({ name: "w" });
+    await dealer.key({ name: "return" });
+    expect(calls).toEqual([["block", card.id, "side"], ["unblock", card.id]]);
+    core.block(strandNamed(core, "sc-1").id, strandNamed(core, "claude in side").id);
+    dealer.setSnapshot(core.snapshot());
+    for (let step = 0; step < 10 && dealer.card()?.name !== "sc-1"; step++) await dealer.key({ name: "j" });
+    expect(plain(dealer.view(100, 40))).toContain("waits on claude in side");
+  });
+
   test("snoozes until a typed time, and keeps asking until it reads one", async () => {
     const { core, dealer, calls, now } = await setup();
     await dealer.key({ name: "z" });

@@ -207,6 +207,13 @@ export class Translator {
       if (on) for (const job of running) this.awaitJob(live, job, on, id, out);
       return;
     }
+    if (wanted === yourMoves.done) {
+      const on = out.model.on.get(id);
+      if (on && reportedWait(on, out.model)) {
+        for (const move of [...mine, ...yours]) out.close(move);
+        return;
+      }
+    }
     if (wanted === ready && yours.length > 0) return;
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
@@ -247,6 +254,12 @@ export class Translator {
     const on = out.strandFor(id, tab, entry.name, true);
     if (on) out.open(on, "you", why, id);
   }
+}
+
+function reportedWait(strand: string, model: Known): boolean {
+  const waitsOnStrand = Object.keys(model.strands.get(strand)?.blockedOn ?? {}).some((on) => model.strands.has(on));
+  const waitsOnSomeone = model.open.some((move) => move.strand === strand && ["person", "machine"].includes(model.players.get(move.player)?.kind ?? ""));
+  return waitsOnStrand || waitsOnSomeone;
 }
 
 class Facts {
@@ -337,7 +350,7 @@ class Facts {
   private make(name: string, kind: string | undefined): string {
     const strand = this.newId("s");
     this.push({ type: "strand.made", strand, name, ...(kind ? { kind } : {}) });
-    this.model.strands.set(strand, { id: strand, name, ...(kind ? { kind } : {}), made: 0, seenAt: 0, dismissedAt: 0, notes: [] });
+    this.model.strands.set(strand, { id: strand, name, ...(kind ? { kind } : {}), made: 0, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
     return strand;
   }
 }

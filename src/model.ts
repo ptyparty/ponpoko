@@ -11,6 +11,7 @@ export type Strand = {
   seenAt: number;
   dismissedAt: number;
   snoozedUntil?: number;
+  blockedOn: Record<string, number>;
   notes: { at: number; text: string }[];
 };
 export type Player = { id: string; kind: PlayerKind; who: string; adapter?: string; place?: Place; resume?: string; joined: number; gone?: number };
@@ -62,7 +63,7 @@ function applyFact(model: Model, event: Recorded): void {
   switch (event.type) {
     case "strand.made":
       if (model.strands.has(event.strand)) return;
-      model.strands.set(event.strand, { id: event.strand, name: event.name, parent: event.parent, kind: event.kind, made: event.at, seenAt: 0, dismissedAt: 0, notes: [] });
+      model.strands.set(event.strand, { id: event.strand, name: event.name, parent: event.parent, kind: event.kind, made: event.at, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
       model.names.set(event.strand, path(model, event.strand).join(" › "));
       return;
     case "strand.titled":
@@ -104,6 +105,15 @@ function applyFact(model: Model, event: Recorded): void {
     }
     case "strand.note":
       withStrand(model, event.strand, (strand) => void strand.notes.push({ at: event.at, text: event.text }));
+      return;
+    case "strand.blocked":
+      withStrand(model, event.strand, (strand) => {
+        if (!model.strands.has(event.on) || event.on in strand.blockedOn || blockers(model, event.on).includes(strand.id)) return;
+        strand.blockedOn[event.on] = event.at;
+      });
+      return;
+    case "strand.unblocked":
+      withStrand(model, event.strand, (strand) => void delete strand.blockedOn[event.on]);
       return;
     case "strand.seen":
       withStrand(model, event.strand, (strand) => void (strand.seenAt = event.at));
@@ -177,7 +187,17 @@ function remove(model: Model, id: string, into: string | undefined): void {
     if (into) link.strand = into;
     else model.links.delete(link.id);
   }
-  if (into) model.strands.get(into)!.notes.push(...strand.notes);
+  for (const other of model.strands.values()) {
+    const since = other.blockedOn[id];
+    if (since === undefined) continue;
+    delete other.blockedOn[id];
+    if (into && into !== other.id && !blockers(model, into).includes(other.id)) other.blockedOn[into] = Math.min(since, other.blockedOn[into] ?? since);
+  }
+  if (into) {
+    const target = model.strands.get(into)!;
+    target.notes.push(...strand.notes);
+    for (const [on, since] of Object.entries(strand.blockedOn)) if (on !== into && !blockers(model, on).includes(into)) target.blockedOn[on] = Math.min(since, target.blockedOn[on] ?? since);
+  }
   model.strands.delete(id);
 }
 
@@ -187,6 +207,23 @@ export function descendants(model: Model, id: string, seen = new Set<string>([id
     seen.add(child.id);
     return [child.id, ...descendants(model, child.id, seen)];
   });
+}
+
+export function blockers(model: Model, id: string): string[] {
+  const out = new Set<string>();
+  const queue = [id];
+  for (let next = 0; next < queue.length; next++) {
+    for (const on of Object.keys(model.strands.get(queue[next]!)?.blockedOn ?? {})) {
+      if (out.has(on) || on === id) continue;
+      out.add(on);
+      queue.push(on);
+    }
+  }
+  return [...out];
+}
+
+function endedAt(model: Model, strand: Strand): number | undefined {
+  return strand.done ?? ancestors(model, strand.id).map((id) => model.strands.get(id)?.done).find((done) => done !== undefined);
 }
 
 export function ancestors(model: Model, id: string): string[] {
@@ -262,9 +299,18 @@ export function own(model: Model, strand: Strand): Standing {
     const live = kids.filter((child) => child.done === undefined);
     const seen = Math.max(strand.seenAt, ...ancestors(model, strand.id).map((id) => model.strands.get(id)?.seenAt ?? 0));
     const quiet = Math.max(strand.made, seen, index.last.get(strand.id) ?? 0, ...live.map((child) => child.made));
-    const finished = kids.filter((child) => child.done !== undefined && child.done > quiet).sort((a, b) => b.done! - a.done!)[0];
-    const busiest = finished ? undefined : live.map((child) => ({ child, standing: rolled(model, child) })).filter((entry) => entry.standing.whose !== undefined).sort((a, b) => rank[a.standing.whose!] - rank[b.standing.whose!] || a.standing.since - b.standing.since)[0];
-    if (finished) standing = { whose: "you", since: finished.done!, why: `${finished.name} is done`, moves: [], finished: finished.id };
+    const blocking = Object.entries(strand.blockedOn).flatMap(([on, since]) => {
+      const blocker = model.strands.get(on);
+      return blocker ? [{ blocker, since, ended: endedAt(model, blocker) }] : [];
+    });
+    const finished = [
+      ...kids.filter((child) => child.done !== undefined && child.done > quiet).map((child) => ({ strand: child, at: child.done! })),
+      ...blocking.filter(({ since, ended }) => ended !== undefined && ended > since && ended > quiet).map(({ blocker, ended }) => ({ strand: blocker, at: ended! })),
+    ].sort((a, b) => b.at - a.at)[0];
+    const holding = finished ? undefined : blocking.filter(({ ended }) => ended === undefined).sort((a, b) => a.since - b.since)[0];
+    const busiest = finished || holding ? undefined : live.map((child) => ({ child, standing: rolled(model, child) })).filter((entry) => entry.standing.whose !== undefined).sort((a, b) => rank[a.standing.whose!] - rank[b.standing.whose!] || a.standing.since - b.standing.since)[0];
+    if (finished) standing = { whose: "you", since: finished.at, why: `${finished.strand.name} is done`, moves: [], finished: finished.strand.id };
+    else if (holding) standing = { since: holding.since, why: `waiting on ${holding.blocker.name}`, moves: [], waitsOn: holding.blocker.id };
     else if (busiest) standing = { since: busiest.standing.since, why: `waiting on ${busiest.child.name}`, moves: [], waitsOn: busiest.child.id };
     else if (live.length > 0) standing = { since: strand.made, why: "", moves: [] };
     else standing = { whose: "you", since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "no one on it", moves: [] };

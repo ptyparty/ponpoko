@@ -3,12 +3,12 @@ import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
 import { goPlace, goTarget, openTab, pickupOffer, startsAt, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
-import { clock, fit, standingOf } from "./render.ts";
+import { blockersOf, clock, fit, standingOf } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
 type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | Purpose;
-type Purpose = "add" | "note" | "move" | "rename";
+type Purpose = "add" | "note" | "move" | "rename" | "wait";
 export type TabRef = { server: string; tabId: number };
 
 const prompts: Record<Purpose, string> = {
@@ -16,8 +16,9 @@ const prompts: Record<Purpose, string> = {
   note: "note",
   move: "move under (empty for the top)",
   rename: "rename to",
+  wait: "waits on (empty to stop waiting)",
 };
-const purposeKeys: Record<string, Purpose> = { a: "add", n: "note", m: "move", r: "rename" };
+const purposeKeys: Record<string, Purpose> = { a: "add", n: "note", m: "move", r: "rename", w: "wait" };
 
 export class Dealer {
   private snapshot: Snapshot | undefined;
@@ -169,6 +170,7 @@ export class Dealer {
       case "n":
       case "m":
       case "r":
+      case "w":
         if (card) {
           this.mode = purposeKeys[key.name]!;
           this.typed = this.mode === "rename" ? card.name : "";
@@ -210,10 +212,11 @@ export class Dealer {
     else if (key.name === "return") {
       this.mode = "card";
       const text = this.typed.trim();
-      if (!card || (text === "" && purpose !== "move")) return undefined;
+      if (!card || (text === "" && purpose !== "move" && purpose !== "wait")) return undefined;
       if (purpose === "add") await this.act(() => this.actions.add(card.id, text), `Added ${text} under ${card.name}`);
       else if (purpose === "note") await this.act(() => this.actions.note(card.id, text), "Note added");
       else if (purpose === "move") await this.act(() => this.actions.reparent(card.id, text), text === "" ? `${card.name} is at the top` : `${card.name} is under ${text}`);
+      else if (purpose === "wait") await this.act(() => (text === "" ? this.actions.unblock(card.id) : this.actions.block(card.id, text)), text === "" ? `${card.name} no longer waits on other strands` : `${card.name} waits on ${text}`);
       else await this.act(() => this.actions.rename(card.id, text), `Renamed to ${text}`);
     } else if (key.text) this.typed += key.text;
     return undefined;
@@ -287,12 +290,14 @@ export class Dealer {
       const indent = "  ".repeat(strand.depth - card.depth - 1);
       return stripe([indent, [`${below.glyph} `, below.paint], [fit(strand.name, Math.max(16, Math.floor(width * 0.3)) - indent.length), style.text], "  ", [below.text, below.paint], [below.age ? `  ·  ${below.age}` : "", style.faint]]);
     });
+    const blockers = blockersOf(card, this.strands()).map((strand) => strand.name);
     const kept = card.own.whose === "you" && !standing.text.startsWith("snoozed") ? (card.unseen ? "new" : card.dismissedAt >= card.own.since ? "toast dismissed" : "seen") : "";
     const detail = [
       stripe([[card.name, (text) => style.text(style.bold(text))], ...(card.title ? ["  ", [card.title, style.muted] as Part] : [])]),
       ...(card.above ?? []).map((above) => stripe([[`in ${above.kind && above.kind !== "loose" ? `${above.kind} ` : ""}${above.name}${above.title ? `  ${above.title}` : ""}`, style.faint]])),
       stripe(),
       stripe([[`${standing.glyph} `, standing.paint], [standing.text, standing.paint], [[standing.age, kept].filter(Boolean).map((text) => `  ·  ${text}`).join(""), style.faint]]),
+      ...(blockers.length > 0 ? [stripe([[`waits on ${blockers.join(", ")}`, style.wait]])] : []),
       ...(card.notes.length > 0 ? wrap(`✎ ${card.notes.at(-1)!.text}`, width - 6).map((text) => stripe([[text, style.muted]])) : []),
       ...(under.length > 0 ? [stripe(), stripe([[`under it · ${under.length}`, style.faint]]), ...tree, ...(under.length > tree.length ? [stripe([[`+${under.length - tree.length} more`, style.faint]])] : [])] : []),
     ];
@@ -312,7 +317,7 @@ export class Dealer {
               ? ask(pickupLine(options, this.snapshot.now))
               : this.mode in prompts
                 ? ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`)
-                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(this.tab ? [] : [["s", "skip"] as [string, string]]), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["esc", "close"]]);
+                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(this.tab ? [] : [["s", "skip"] as [string, string]]), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["w", "wait on"], ["esc", "close"]]);
     const body = [...list, "", ...detail];
     while (body.length < height - 3) body.push("");
     return [...body, "", this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(where))}`, footer];

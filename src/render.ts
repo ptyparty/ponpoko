@@ -52,8 +52,17 @@ export function standingOf(strand: StrandView, now: number): Standing {
     case "machine":
       return { glyph: "⊘", paint: style.wait, text: othersCause(strand), age: since };
     default:
+      if (isWaitingOn(strand, own.waitsOn)) return { glyph: "⊘", paint: style.wait, text: own.why, age: since };
       return { glyph: "○", paint: style.muted, text: own.why, age: "" };
   }
+}
+
+export function isWaitingOn(strand: StrandView, id: string | undefined): boolean {
+  return id !== undefined && strand.blockedOn?.[id] !== undefined;
+}
+
+export function blockersOf(strand: StrandView, strands: StrandView[]): StrandView[] {
+  return strands.filter((other) => isWaitingOn(strand, other.id));
 }
 
 export function othersCause(strand: StrandView): string {
@@ -181,6 +190,10 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
       return `${name(event.strand)} merged into ${name(event.into)}`;
     case "strand.note":
       return `${name(event.strand)} note added`;
+    case "strand.blocked":
+      return `${name(event.strand)} waits on ${name(event.on)}`;
+    case "strand.unblocked":
+      return `${name(event.strand)} no longer waits on ${name(event.on)}`;
     case "strand.seen":
       return `${name(event.strand)} caught up`;
     case "strand.dismissed":

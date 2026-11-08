@@ -17,6 +17,7 @@ ponpoko tracks the user's work as **strands**, lines of work that nest: a projec
   - a person's answer: `who: "Sam"`, `kind: "person"`
 - **The user has to do something komux can't see,** such as test in a browser: call `wait` with `who: "you"`, `kind: "you"` and what they need to do.
 - **The wait is over:** call `wait` again with the same `who` and `over: true`.
+- **A strand can't go on until another strand lands,** such as a story blocked on another story, and the user tells you so: call `wait` with `on` set to the other strand's path, such as `on: "sc-1240"`, and no `who`, `kind` or `what`. The strand waits on it until it's done and then becomes the user's move. If it stops waiting before then, call `wait` with the same `on` and `over: true`. When your turn ends while a wait you reported is open, on a person, a machine or a strand, the strand keeps waiting rather than becoming the user's move.
 - **A strand is finished:** call `done`.
 - **The work splits,** such as the items of a list in a notebook page: call `split` with the names, under the strand they belong to.
 

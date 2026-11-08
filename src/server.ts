@@ -29,6 +29,9 @@ export const request = z.discriminatedUnion("method", [
   z.object({ method: z.literal("absent"), params: z.object({ adapter: z.string(), scope: z.string() }) }),
   z.object({ method: z.literal("status"), params: z.object({ ...where, text: z.string().min(1).max(120), page: z.string().max(200).optional() }) }),
   z.object({ method: z.literal("wait"), params: z.object({ ...where, who: z.string().min(1).max(80), kind: z.enum(["you", "person", "machine"]), what: z.string().min(1).max(200), over: z.boolean().optional() }) }),
+  z.object({ method: z.literal("block-by"), params: z.object({ ...where, on: z.string().min(1).max(200), over: z.boolean().optional() }) }),
+  z.object({ method: z.literal("block"), params: z.object({ strand: z.string(), on: z.string().min(1).max(200) }) }),
+  z.object({ method: z.literal("unblock"), params: z.object({ strand: z.string(), on: z.string().optional() }) }),
   z.object({ method: z.literal("done-by"), params: z.object({ ...where, why: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("split"), params: z.object({ ...where, names: z.array(z.string().min(1).max(120)).min(1).max(50) }) }),
   z.object({ method: z.literal("add"), params: z.object({ parent: z.string().optional(), name: z.string().min(1).max(200) }) }),
@@ -132,6 +135,13 @@ export function handle(core: Ponpoko, request: Request): Response {
         return { ok: true, result: { strand: core.status(request.params) } };
       case "wait":
         return { ok: true, result: { strand: core.wait(request.params) } };
+      case "block-by":
+        return { ok: true, result: { strand: core.blockBy(request.params) } };
+      case "block":
+        return { ok: true, result: { strand: core.block(request.params.strand, request.params.on) } };
+      case "unblock":
+        core.unblock(request.params.strand, request.params.on);
+        return { ok: true };
       case "done-by":
         return { ok: true, result: { strand: core.doneBy(request.params, request.params.why) } };
       case "split":
