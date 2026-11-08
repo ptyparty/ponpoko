@@ -79,6 +79,12 @@ function applyFact(model: Model, event: Recorded): void {
         for (const id of [strand.id, ...descendants(model, strand.id)]) model.names.set(id, path(model, id).join(" › "));
       });
       return;
+    case "strand.renamed":
+      withStrand(model, event.strand, (strand) => {
+        strand.name = event.name;
+        for (const id of [strand.id, ...descendants(model, strand.id)]) model.names.set(id, path(model, id).join(" › "));
+      });
+      return;
     case "strand.done":
       withStrand(model, event.strand, (strand) => {
         strand.done = event.at;

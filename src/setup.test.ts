@@ -52,7 +52,7 @@ describe("ponpoko setup", () => {
     expect(ponpoko({ deal: "alt+y" }).keys.map((binding: { key: string }) => binding.key)).toEqual(["alt+y", "alt+shift+m"]);
     const [mode] = ponpoko().modes;
     expect(mode.key).toBe("m");
-    expect(mode.keys.map((binding: { key: string }) => binding.key)).toEqual(["m", "shift+m", "o"]);
+    expect(mode.keys.map((binding: { key: string }) => binding.key)).toEqual(["m", "shift+m", "t", "o"]);
     expect(ponpoko({ leader: "y" }).modes[0].key).toBe("y");
   });
 });

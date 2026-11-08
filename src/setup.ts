@@ -55,6 +55,7 @@ export type PonpokoOptions = { deal?: string; catchUp?: string; leader?: string 
 export default function ponpoko(options: PonpokoOptions = {}) {
   const deal = { popup: [...command, "deal"], name: "your move", width: 95, height: 75 };
   const catchUp = { popup: [...command, "deal", "--unseen"], name: "catch up", width: 95, height: 75 };
+  const thisTab = { popup: [...command, "deal", "--tab"], name: "this tab", width: 95, height: 75 };
   return {
     name: "ponpoko",
     run: [[...command, "komux"]],
@@ -71,6 +72,7 @@ export default function ponpoko(options: PonpokoOptions = {}) {
         keys: [
           { key: "m", ...deal },
           { key: "shift+m", ...catchUp },
+          { key: "t", ...thisTab },
           { key: "o", popup: command, name: "overview" },
         ],
       },
@@ -157,7 +159,7 @@ export function komuxConfigHint(places: Places): string {
 
 Alt m deals your oldest move, Alt shift m deals what changed since you last caught up,
 and the tray shows your count. Ctrl Space m opens ponpoko's mode: m and M deal the same
-way, and o opens the overview the tray opens.
+way, t opens the current tab's strands, and o opens the overview the tray opens.
 Give a layout labels: { strand: "sc-{story}" } so agents in its tabs work on that strand;
 agents elsewhere get a loose strand of their own until you point their directory at one. Alt n is komux's focus key, so ponpoko doesn't take it.`;
 }

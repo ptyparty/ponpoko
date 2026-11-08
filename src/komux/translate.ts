@@ -27,6 +27,10 @@ const yourMoves: Record<string, string> = {
 const asking = "asking you";
 const ready = "ready for a prompt";
 
+export function komuxTabHandle(server: string, tabId: number): string {
+  return `komux:${server}:tab:${tabId}`;
+}
+
 export function komuxHandle(server: string, paneId: number): string {
   return `komux:${server}:${paneId}`;
 }
@@ -139,6 +143,7 @@ export class Translator {
         return {
           dir: entry.dir,
           ...(strand?.id ? { strand: strand.id } : {}),
+          handle: komuxTabHandle(live.server, entry.id),
           label: `tab ${entry.number ?? "?"} ${entry.name}`,
           short: entry.number === undefined ? entry.name : `tab ${entry.number}`,
           players: players.filter((player) => player.tabId === entry.id).map((player) => player.id),

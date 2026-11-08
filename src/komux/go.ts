@@ -1,6 +1,6 @@
-import { aboveOf, type MoveView, type PlayerView, type StrandView } from "../core.ts";
+import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } from "../core.ts";
 import { sendKomux } from "./stream.ts";
-import { komuxPlace, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
+import { komuxPlace, komuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
 export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string }>;
 
@@ -44,6 +44,19 @@ function claudeIn(strands: StrandView[], dir: string, env: Record<string, string
     }
   }
   return undefined;
+}
+
+export function tabStrands(strands: StrandView[], server: string, tabId: number): StrandView[] {
+  const handle = komuxTabHandle(server, tabId);
+  const here = (strand: StrandView) =>
+    strand.spaces.some((space) => space.handle === handle) ||
+    strand.open.some((move) => {
+      const place = komuxPlace(move.answers ?? move.by);
+      return place?.server === server && place.tabId === tabId;
+    });
+  const found = new Set(strands.filter(here).map((strand) => strand.id));
+  const roots = strands.filter((strand) => found.has(strand.id) && !aboveOf(strands, strand).some((above) => found.has(above.id)));
+  return roots.flatMap((root) => [root, ...underOf(strands, root)]);
 }
 
 export function goPlace(strand: StrandView, above: StrandView[]): { dir: string; tab?: KomuxTabRef } | undefined {

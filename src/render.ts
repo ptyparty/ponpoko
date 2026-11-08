@@ -144,6 +144,8 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
       return `new strand ${name(event.strand)}`;
     case "strand.titled":
       return `${name(event.strand)} is ${event.kind ? `a ${event.kind}: ` : ""}${event.title}`;
+    case "strand.renamed":
+      return `${name(event.strand)} renamed`;
     case "strand.parented":
       return `${name(event.strand)} moved under ${name(event.parent)}`;
     case "strand.done":

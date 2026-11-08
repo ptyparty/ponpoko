@@ -46,6 +46,7 @@ export function recordingActions() {
     seen: record("seen"),
     add: record("add"),
     reparent: record("reparent"),
+    rename: record("rename"),
     done: record("done"),
     open: async (link: { ref: string }) => void calls.push(["open", link.ref]),
   } as Actions;

@@ -164,6 +164,14 @@ describe("strands", () => {
     expect(strandNamed(core, "sc-1").snoozedUntil).toBeUndefined();
   });
 
+  test("renaming a strand renames the paths under it, and takes a single name", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1 › pr › ask");
+    core.rename(strandNamed(core, "sc-1 › pr").id, " pr-fix ");
+    expect(core.snapshot().strands.map((strand) => strand.path.join(" › "))).toEqual(["sc-1", "sc-1 › pr-fix", "sc-1 › pr-fix › ask"]);
+    expect(() => core.rename(strandNamed(core, "sc-1").id, "a › b")).toThrow("single name");
+  });
+
   test("players are live only while something says they're present", () => {
     const { core, tick } = setup();
     core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "look" });

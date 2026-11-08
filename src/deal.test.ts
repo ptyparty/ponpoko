@@ -194,6 +194,39 @@ describe("the deck", () => {
     expect(tree.slice(1, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" | ● a", " | ● b | no one on it · now", " | ⊘ c | Copilot · PR review · now"]);
   });
 
+  test("opened on a tab, lists its strands with the trees under them, and edits the picked one", async () => {
+    const { core, hear, now } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "widgets", dir: "/w/s", labels: { strand: "sc-1" } }, { id: 4, number: 4, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 7, tabId: 3, state: "done" } });
+    core.add(strandNamed(core, "sc-1").id, "pr › ask");
+    await hear({ type: "agent.state", agent: { paneId: 8, tabId: 4, state: "done" } });
+    const { actions, calls } = recordingActions();
+    const dealer = new Dealer(actions, false, now, { server: "s1", tabId: 3 });
+    dealer.setSnapshot(core.snapshot());
+    const deck = plain(dealer.view(120, 40)).split("\n");
+    expect(deck.slice(0, 4).map((line) => line.replace(/\s{2,}/g, " | ").trimEnd())).toEqual([" tab 3 widgets · 3", " ▸ 1 | sc-1 | Widget CSV import | claude · turn ended · now", " | 2 | pr", " | 3 | ask | no one on it · now"]);
+    expect(deck.join("\n")).not.toContain("side");
+    await dealer.key({ name: "s" });
+    expect(dealer.card()?.name).toBe("sc-1");
+    await dealer.key({ name: "j" });
+    for (const [key, text] of [["a", "tests"], ["n", "waiting on Sam"], ["m", "ptyparty"]] as const) {
+      await dealer.key({ name: key });
+      for (const char of text) await dealer.key({ name: char, text: char });
+      await dealer.key({ name: "return" });
+    }
+    await dealer.key({ name: "r" });
+    expect(plain(dealer.view(120, 40))).toContain("rename to: pr▏");
+    for (const char of "-fix") await dealer.key({ name: char, text: char });
+    await dealer.key({ name: "return" });
+    const pr = strandNamed(core, "sc-1 › pr").id;
+    expect(calls).toEqual([
+      ["add", pr, "tests"],
+      ["note", pr, "waiting on Sam"],
+      ["reparent", pr, "ptyparty"],
+      ["rename", pr, "pr-fix"],
+    ]);
+  });
+
   test("an empty hand says so", () => {
     const dealer = new Dealer({} as Actions, false);
     dealer.setSnapshot({ now: 0, counts: { yours: 0, agents: 0, snoozed: 0, waiting: 0 }, strands: [], moves: [], unseen: [], heard: [], labels: {} });

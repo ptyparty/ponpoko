@@ -33,6 +33,7 @@ export const request = z.discriminatedUnion("method", [
   z.object({ method: z.literal("split"), params: z.object({ ...where, names: z.array(z.string().min(1).max(120)).min(1).max(50) }) }),
   z.object({ method: z.literal("add"), params: z.object({ parent: z.string().optional(), name: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("reparent"), params: z.object({ strand: z.string(), to: z.string().max(200) }) }),
+  z.object({ method: z.literal("rename"), params: z.object({ strand: z.string(), name: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("done"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("close-move"), params: z.object({ move: z.string() }) }),
   z.object({ method: z.literal("seen"), params: z.object({ strand: z.string() }) }),
@@ -139,6 +140,9 @@ export function handle(core: Ponpoko, request: Request): Response {
         return { ok: true, result: { strand: core.add(request.params.parent, request.params.name) } };
       case "reparent":
         return { ok: true, result: { strand: core.reparent(request.params.strand, request.params.to) } };
+      case "rename":
+        core.rename(request.params.strand, request.params.name);
+        return { ok: true };
       case "done":
         core.done(request.params.strand);
         return { ok: true };

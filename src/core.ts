@@ -25,7 +25,7 @@ import {
 } from "./model.ts";
 import type { Store } from "./store.ts";
 
-export type Space = { dir: string; strand?: string; label: string; short: string; players: string[] };
+export type Space = { dir: string; strand?: string; handle?: string; label: string; short: string; players: string[] };
 export type Presence = { adapter: string; scope: string; players: string[]; spaces: Space[] };
 export type PlayerView = Player & { live: boolean; space?: string };
 export type MoveView = Move & { by: PlayerView; answers?: PlayerView; links: Link[] };
@@ -40,7 +40,7 @@ export type StrandView = Strand & {
   recent: MoveView[];
   links: Link[];
   unseen: boolean;
-  spaces: { label: string; short: string }[];
+  spaces: { label: string; short: string; handle?: string }[];
   dir?: string;
 };
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
@@ -165,7 +165,7 @@ export class Ponpoko {
         recent: allMoves.filter((move) => move.strand === strand.id).sort((a, b) => a.from - b.from).slice(-recentMoves).map(moveView),
         links: strandLinks,
         unseen: ownStanding.whose === "you" && isUnseen(this.model, strand),
-        spaces: spaces.filter((space) => space.strand === strand.id).map(({ label, short }) => ({ label, short })),
+        spaces: spaces.filter((space) => space.strand === strand.id).map(({ label, short, handle }) => ({ label, short, ...(handle ? { handle } : {}) })),
         ...(dirs[0] ? { dir: dirs[0] } : {}),
       };
     };
@@ -261,6 +261,13 @@ export class Ponpoko {
     const id = parent ? this.resolveUnder(this.mustHave(parent).id, splitPath(name), facts) : this.resolve(name, facts, undefined);
     this.record("you", facts);
     return id;
+  }
+
+  rename(strand: string, name: string): void {
+    this.mustHave(strand);
+    const trimmed = name.trim();
+    if (trimmed === "" || splitPath(trimmed).length !== 1) throw new Error("name the strand with a single name, without ›");
+    this.record("you", [{ type: "strand.renamed", strand, name: trimmed }]);
   }
 
   reparent(strand: string, to: string): string {
@@ -469,6 +476,13 @@ export class Ponpoko {
 function topOrder(model: Model, strand: Strand, now: number): number {
   const standing = rolled(model, strand);
   return standing.whose === "you" && !((strand.snoozedUntil ?? 0) > now) ? standing.since : Number.MAX_SAFE_INTEGER;
+}
+
+export function underOf(strands: StrandView[], strand: StrandView): StrandView[] {
+  const at = strands.findIndex((candidate) => candidate.id === strand.id);
+  if (at < 0) return [];
+  const end = strands.findIndex((candidate, index) => index > at && candidate.depth <= strand.depth);
+  return strands.slice(at + 1, end < 0 ? undefined : end);
 }
 
 export function aboveOf(strands: StrandView[], strand: StrandView): StrandView[] {

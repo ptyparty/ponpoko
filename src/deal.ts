@@ -1,12 +1,23 @@
 import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
-import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { goPlace, goTarget, pickupOffer, startsAt } from "./komux/go.ts";
+import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
+import { goPlace, goTarget, pickupOffer, startsAt, tabStrands } from "./komux/go.ts";
+import { komuxTabHandle } from "./komux/translate.ts";
 import { age, cause, clock, fit, holder, snoozedLabel, strandGlyph, untilNeeded } from "./render.ts";
 import { openScreen, style, type Key } from "./screen.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
-type Mode = "card" | "pickup" | "snooze" | "time" | "forget";
+type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | Purpose;
+type Purpose = "add" | "note" | "move" | "rename";
+export type TabRef = { server: string; tabId: number };
+
+const prompts: Record<Purpose, string> = {
+  add: "new strand under it",
+  note: "note",
+  move: "move under (empty for the top)",
+  rename: "rename to",
+};
+const purposeKeys: Record<string, Purpose> = { a: "add", n: "note", m: "move", r: "rename" };
 
 export class Dealer {
   private snapshot: Snapshot | undefined;
@@ -25,6 +36,7 @@ export class Dealer {
     private readonly actions: Actions,
     private readonly unseen: boolean,
     private readonly now: () => number = Date.now,
+    private readonly tab?: TabRef,
   ) {}
 
   setSnapshot(snapshot: Snapshot | undefined): void {
@@ -35,6 +47,13 @@ export class Dealer {
       return;
     }
     const before = this.card()?.id;
+    if (this.tab) {
+      this.hand = tabStrands(snapshot.strands, this.tab.server, this.tab.tabId);
+      this.others = [];
+      const again = this.hand.findIndex((strand) => strand.id === before);
+      this.selected = again >= 0 ? again : Math.min(this.selected, Math.max(0, this.hand.length - 1));
+      return;
+    }
     const wanted = this.unseen ? new Set(snapshot.unseen) : undefined;
     const moves = snapshot.moves.filter((strand) => !wanted || wanted.has(strand.id)).sort((a, b) => urgency(a) - urgency(b) || b.own.since - a.own.since);
     const fresh = moves.filter((strand) => !this.skipped.includes(strand.id));
@@ -69,6 +88,7 @@ export class Dealer {
     this.message = undefined;
     const card = this.card();
     if (this.mode === "time") return this.timeKey(key);
+    if (this.mode in prompts) return this.textKey(this.mode as Purpose, key);
     if (this.mode === "snooze") {
       this.mode = key.name === "t" ? "time" : "card";
       this.typed = "";
@@ -113,7 +133,7 @@ export class Dealer {
         return undefined;
       case "s":
       case " ":
-        if (card && this.hand.includes(card)) {
+        if (card && !this.tab && this.hand.includes(card)) {
           this.dealt.add(card.id);
           this.skipped = [...this.skipped.filter((id) => id !== card.id), card.id];
           this.hand = [...this.hand.filter((strand) => strand !== card), card];
@@ -145,6 +165,15 @@ export class Dealer {
       case "z":
         if (card) this.mode = "snooze";
         return undefined;
+      case "a":
+      case "n":
+      case "m":
+      case "r":
+        if (card) {
+          this.mode = purposeKeys[key.name]!;
+          this.typed = this.mode === "rename" ? card.name : "";
+        }
+        return undefined;
       case "x":
         if (card) this.mode = "forget";
         return undefined;
@@ -157,11 +186,12 @@ export class Dealer {
   }
 
   private under(strand: StrandView): StrandView[] {
-    const strands = this.strands();
-    const at = strands.findIndex((candidate) => candidate.id === strand.id);
-    if (at < 0) return [];
-    const end = strands.findIndex((candidate, index) => index > at && candidate.depth <= strand.depth);
-    return strands.slice(at + 1, end < 0 ? undefined : end);
+    return this.tab ? [] : underOf(this.strands(), strand);
+  }
+
+  private tabLabel(): string {
+    const handle = this.tab ? komuxTabHandle(this.tab.server, this.tab.tabId) : undefined;
+    return this.strands().flatMap((strand) => strand.spaces).find((space) => space.handle === handle)?.label ?? "this tab";
   }
 
   private side(to: "mine" | "others"): void {
@@ -171,6 +201,22 @@ export class Dealer {
     if (this.selected < this.hand.length) this.sideAt.mine = this.selected;
     else this.sideAt.others = this.selected - this.hand.length;
     this.selected = to === "mine" ? Math.min(this.sideAt.mine, this.hand.length - 1) : this.hand.length + Math.min(this.sideAt.others, count - 1);
+  }
+
+  private async textKey(purpose: Purpose, key: Key): Promise<undefined> {
+    const card = this.card();
+    if (key.name === "escape" || key.name === "ctrl+c") this.mode = "card";
+    else if (key.name === "backspace") this.typed = this.typed.slice(0, -1);
+    else if (key.name === "return") {
+      this.mode = "card";
+      const text = this.typed.trim();
+      if (!card || (text === "" && purpose !== "move")) return undefined;
+      if (purpose === "add") await this.act(() => this.actions.add(card.id, text), `Added ${text} under ${card.name}`);
+      else if (purpose === "note") await this.act(() => this.actions.note(card.id, text), "Note added");
+      else if (purpose === "move") await this.act(() => this.actions.reparent(card.id, text), text === "" ? `${card.name} is at the top` : `${card.name} is under ${text}`);
+      else await this.act(() => this.actions.rename(card.id, text), `Renamed to ${text}`);
+    } else if (key.text) this.typed += key.text;
+    return undefined;
   }
 
   private async timeKey(key: Key): Promise<undefined> {
@@ -189,9 +235,10 @@ export class Dealer {
   }
 
   view(width = 80, height = 40): string[] {
-    const hand = this.unseen ? "since you last caught up" : "your move";
+    const hand = this.tab ? this.tabLabel() : this.unseen ? "since you last caught up" : "your move";
     if (!this.snapshot) return ["", style.red(" ponpoko ✗  the service isn't running"), "", style.dim(" esc close")];
     const card = this.card();
+    if (!card && this.tab) return ["", style.bold(` ${hand}`), "", style.dim(" ponpoko knows of no strand in this tab; ask its Claude to call ponpoko's status, or label the tab"), "", style.dim(" esc close")];
     if (!card) {
       return ["", style.bold(` ${this.unseen ? "✓ caught up" : "✓ clear"}`), "", style.dim(this.unseen ? " nothing new is yours since you last caught up" : " nothing is going on"), "", style.dim(" esc close")];
     }
@@ -203,15 +250,18 @@ export class Dealer {
     this.wide = width >= 100 && this.others.length > 0;
     const column = this.wide ? Math.floor((width - 3) / 2) : width;
     const mine: Listed[] = [{ line: style.dim(` ${hand} · ${this.hand.length}${this.hand.length === 0 ? "  ✓ nothing is waiting on you" : ""}`) }];
+    const ids = new Set(this.hand.map((strand) => strand.id));
+    const indent = (strand: StrandView) => (this.tab ? "  ".repeat(aboveOf(this.strands(), strand).filter((above) => ids.has(above.id)).length) : "");
     const theirs: Listed[] = [];
     let index = 0;
     const row = (into: Listed[], strand: StrandView, what: string, yours: boolean) => {
       const at = index++;
       const label = strand.title ? `${strand.name}  ${strand.title}` : strand.name;
-      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${fit(label, Math.max(24, Math.floor(column * 0.5)))}  ${what}`, column - 2).trimEnd();
+      const nested = indent(strand);
+      const text = fit(`${at === this.selected ? "▸" : " "} ${at < 9 ? at + 1 : " "}  ${nested}${fit(label, Math.max(24, Math.floor(column * 0.5)) - nested.length)}  ${what}`, column - 2).trimEnd();
       into.push({ row: at, line: yours && urgency(strand) === 0 ? style.amber(` ${text}`) : at === this.selected ? ` ${text}` : style.dim(` ${text}`) });
     };
-    for (const strand of this.hand) row(mine, strand, `${cause(strand)} · ${age(now - strand.own.since)}`, true);
+    for (const strand of this.hand) row(mine, strand, this.tab ? standing(strand, now) : `${cause(strand)} · ${age(now - strand.own.since)}`, true);
     for (const section of this.others) {
       theirs.push({ line: style.dim(` ${section.title} · ${section.strands.length}`) });
       for (const strand of section.strands) row(theirs, strand, section.title === "snoozed" ? [snoozedLabel(strand, now), othersCause(strand)].filter(Boolean).join(" · ") : `${othersCause(strand)} · ${age(now - strand.own.since)}`, false);
@@ -219,7 +269,7 @@ export class Dealer {
     const under = this.under(card);
     const tree = under.slice(0, 12).map((strand) => {
       const label = strand.title ? `${strand.name}  ${strand.title}` : strand.name;
-      const state = (strand.snoozedUntil ?? 0) > now ? snoozedLabel(strand, now) : strand.own.whose ? `${othersCause(strand)} · ${age(now - strand.own.since)}` : "";
+      const state = standing(strand, now);
       const indent = "  ".repeat(strand.depth - card.depth - 1);
       const text = fit(`   ${indent}${strandGlyph(strand, now)} ${fit(label, Math.max(24, Math.floor(width * 0.4)) - indent.length)}  ${state}`, width - 1).trimEnd();
       return strand.own.whose === "you" ? text : style.dim(text);
@@ -249,7 +299,9 @@ export class Dealer {
           ? style.amber(` forget ${card.name}?  y yes   any other key no`)
           : this.mode === "pickup" && options
             ? style.amber(` ${pickupLine(options, this.snapshot.now)}`)
-            : style.dim(` ⏎ go  j/k pick${this.wide ? "  tab side" : ""}  s skip${startsAt(card) ? "  f fresh" : ""}  d done  z snooze  x forget  esc`);
+            : this.mode in prompts
+              ? style.amber(` ${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`)
+              : style.dim(` ⏎ go  j/k pick${this.wide ? "  tab side" : ""}${this.tab ? "" : "  s skip"}${startsAt(card) ? "  f fresh" : ""}  d done  z snooze  x forget  a add  n note  m move  r rename  esc`);
     if (this.message) lines.push(style.amber(` ${this.message}`));
     lines.push(footer);
     return lines;
@@ -274,8 +326,18 @@ export class Dealer {
   }
 }
 
+function tabFrom(env: Record<string, string | undefined>): TabRef | undefined {
+  const tabId = Number(env.KOMUX_TAB_ID);
+  return env.KOMUX_SERVER_ID && env.KOMUX_TAB_ID && Number.isInteger(tabId) ? { server: env.KOMUX_SERVER_ID, tabId } : undefined;
+}
+
 export async function runDeal(args: string[]): Promise<number> {
-  const dealer = new Dealer(serviceActions, args.includes("--unseen"));
+  const tab = args.includes("--tab") ? tabFrom(process.env) : undefined;
+  if (args.includes("--tab") && !tab) {
+    console.error("ponpoko deal --tab runs in a komux popup, which gives it KOMUX_SERVER_ID and KOMUX_TAB_ID");
+    return 2;
+  }
+  const dealer = new Dealer(serviceActions, args.includes("--unseen"), Date.now, tab);
   const done = Promise.withResolvers<void>();
   const draw = () => screen.draw(dealer.view(screen.width, screen.height));
   const reload = async () => {
@@ -312,6 +374,11 @@ function sideBySide(left: string[], right: string[], column: number): string[] {
     const line = left[at] ?? "";
     return `${line}${" ".repeat(Math.max(0, column - visible(line)))}${style.dim(" │")}${right[at] ?? ""}`;
   });
+}
+
+function standing(strand: StrandView, now: number): string {
+  if ((strand.snoozedUntil ?? 0) > now) return snoozedLabel(strand, now);
+  return strand.own.whose ? `${othersCause(strand)} · ${age(now - strand.own.since)}` : "";
 }
 
 function othersCause(strand: StrandView): string {
