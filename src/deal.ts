@@ -24,7 +24,6 @@ export class Dealer {
   private snapshot: Snapshot | undefined;
   private hand: StrandView[] = [];
   private others: { title: string; strands: StrandView[] }[] = [];
-  private skipped: string[] = [];
   private dealt = new Set<string>();
   private selected = 0;
   private wide = false;
@@ -57,9 +56,7 @@ export class Dealer {
     }
     const wanted = this.unseen ? new Set(snapshot.unseen) : undefined;
     const moves = snapshot.moves.filter((strand) => !wanted || wanted.has(strand.id)).sort((a, b) => urgency(a) - urgency(b) || b.own.since - a.own.since);
-    const fresh = moves.filter((strand) => !this.skipped.includes(strand.id));
-    const back = this.skipped.flatMap((id) => moves.filter((strand) => strand.id === id));
-    this.hand = [...fresh, ...back];
+    this.hand = moves;
     const live = this.unseen ? [] : snapshot.strands;
     const asleep = (strand: StrandView) => (strand.snoozedUntil ?? 0) > snapshot.now;
     const newest = (a: StrandView, b: StrandView) => b.own.since - a.own.since;
@@ -131,14 +128,6 @@ export class Dealer {
         if (!card || !startsAt(card)) return undefined;
         this.dealt.add(card.id);
         if (await this.act(() => this.actions.pickUp(card, "fresh"))) return this.finish();
-        return undefined;
-      case "s":
-      case " ":
-        if (card && !this.tab && this.hand.includes(card)) {
-          this.dealt.add(card.id);
-          this.skipped = [...this.skipped.filter((id) => id !== card.id), card.id];
-          this.hand = [...this.hand.filter((strand) => strand !== card), card];
-        }
         return undefined;
       case "j":
       case "down": {
@@ -317,7 +306,7 @@ export class Dealer {
               ? ask(pickupLine(options, this.snapshot.now))
               : this.mode in prompts
                 ? ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`)
-                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(this.tab ? [] : [["s", "skip"] as [string, string]]), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["w", "wait on"], ["esc", "close"]]);
+                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["w", "wait on"], ["esc", "close"]]);
     const body = [...list, "", ...detail];
     while (body.length < height - 3) body.push("");
     return [...body, "", this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(where))}`, footer];

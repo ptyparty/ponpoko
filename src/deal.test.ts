@@ -163,14 +163,11 @@ describe("the deck", () => {
     expect(calls).toEqual([["pickUp", strandNamed(core, "sc-1").id, "fresh"]]);
   });
 
-  test("skip puts the card at the back, and d marks it done", async () => {
-    const { core, dealer, calls } = await setup();
-    await dealer.key({ name: "s" });
-    expect(dealer.card()?.name).toBe("sc-1");
-    await dealer.key({ name: "s" });
-    expect(dealer.card()?.name).toBe("claude in side");
+  test("d marks the card done", async () => {
+    const { dealer, calls } = await setup();
+    const card = dealer.card()!;
     await dealer.key({ name: "d" });
-    expect(calls).toEqual([["done", strandNamed(core, "claude in side").id]]);
+    expect(calls).toEqual([["done", card.id]]);
   });
 
   test("w makes the card wait on a typed strand, or on none when left empty, and the card says what it waits on", async () => {
@@ -204,11 +201,11 @@ describe("the deck", () => {
   });
 
   test("catching up marks each dealt strand seen", async () => {
-    const { core, dealer, calls } = await setup(true);
+    const { dealer, calls } = await setup(true);
     expect(plain(dealer.view())).toContain("since you last caught up 2");
-    await dealer.key({ name: "s" });
-    expect(await dealer.key({ name: "escape" })).toBe("close");
-    expect(calls).toEqual([["seen", strandNamed(core, "claude in side").id]]);
+    const card = dealer.card()!;
+    expect(await dealer.key({ name: "return" })).toBe("close");
+    expect(calls.filter(([call]) => call === "seen")).toEqual([["seen", card.id]]);
   });
 
   test("a card says what the strand is: its title, the strands above it, and its latest note", async () => {
@@ -259,7 +256,6 @@ describe("the deck", () => {
     expect(deck[2]).toMatch(/^ 2   ○ pr +waiting on ask/);
     expect(deck[3]).toMatch(/^ 3     ● ask +yours · no one on it/);
     expect(deck.join("\n")).not.toContain("side");
-    await dealer.key({ name: "s" });
     expect(dealer.card()?.name).toBe("sc-1");
     await dealer.key({ name: "j" });
     for (const [key, text] of [["a", "tests"], ["n", "waiting on Sam"], ["m", "ptyparty"]] as const) {
