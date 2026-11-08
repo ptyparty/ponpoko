@@ -23,7 +23,7 @@ export const request = z.discriminatedUnion("method", [
       adapter: z.string().min(1),
       scope: z.string().min(1),
       players: z.array(z.string()),
-      spaces: z.array(z.object({ dir: z.string(), strand: z.string().optional(), label: z.string(), short: z.string(), players: z.array(z.string()) })),
+      spaces: z.array(z.object({ dir: z.string(), strand: z.string().optional(), handle: z.string().optional(), label: z.string(), short: z.string(), players: z.array(z.string()) })),
     }),
   }),
   z.object({ method: z.literal("absent"), params: z.object({ adapter: z.string(), scope: z.string() }) }),

@@ -2,6 +2,7 @@ import type { Actions } from "./actions.ts";
 import { Ponpoko } from "./core.ts";
 import { Bridge } from "./komux/bridge.ts";
 import { komuxLine } from "./komux/stream.ts";
+import { handle, request } from "./server.ts";
 import type { TitleLookup } from "./shortcut.ts";
 import { Store } from "./store.ts";
 
@@ -18,7 +19,7 @@ export function harness(start = 1_000_000, store = new Store(":memory:"), shared
     {
       knowledge: async () => (up(), core.knowledge()),
       record: async (facts) => (up(), core.record("komux", facts)),
-      present: async (presence) => (up(), core.present(presence)),
+      present: async (presence) => (up(), void handle(core, request.parse({ method: "present", params: presence }))),
       absent: async (scope) => (up(), core.absent("komux", scope)),
     },
     async (request) => {
