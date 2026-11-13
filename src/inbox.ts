@@ -18,6 +18,10 @@ const tops = {
   [mentionsId]: { name: "mentions", title: "Mentions on GitHub you haven't answered" },
 };
 
+export function isReviewId(strand: string): boolean {
+  return strand.startsWith("github:review:");
+}
+
 export function reviewId(pr: { repo: string; number: number }): string {
   return `github:review:${pr.repo}#${pr.number}`;
 }

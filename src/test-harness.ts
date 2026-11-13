@@ -6,7 +6,7 @@ import { handle, request } from "./server.ts";
 import type { TitleLookup } from "./shortcut.ts";
 import { Store } from "./store.ts";
 
-export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko, lookupTitle: TitleLookup = async () => ({ kind: "story", title: "Widget CSV import" })) {
+export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko, lookupTitle: TitleLookup = async () => ({ kind: "story", title: "Widget CSV import" }), strandsExist = true) {
   let now = start;
   let ids = 0;
   const core = shared ?? new Ponpoko(store, () => now, (prefix) => `${prefix}${++ids}`);
@@ -29,7 +29,20 @@ export function harness(start = 1_000_000, store = new Store(":memory:"), shared
     () => now,
     lookupTitle,
   );
-  const hear = (line: Record<string, unknown>) => bridge.line(komuxLine.parse({ session: "main", server: "s1", ...line }));
+  const labelled = (line: Record<string, unknown>) => {
+    const tabs = [...((line.tabs as { labels?: Record<string, string> }[] | undefined) ?? []), ...(line.tab ? [line.tab as { labels?: Record<string, string> }] : [])];
+    const known = core.knowledge();
+    for (const name of tabs.flatMap((tab) => tab.labels?.strand ?? [])) {
+      if (/[{›]/.test(name)) continue;
+      const wanted = name.toLowerCase();
+      if ([...known.strands, ...known.closed].some((strand) => strand.name.toLowerCase() === wanted)) continue;
+      core.add(undefined, wanted);
+    }
+  };
+  const hear = (line: Record<string, unknown>) => {
+    if (strandsExist) labelled(line);
+    return bridge.line(komuxLine.parse({ session: "main", server: "s1", ...line }));
+  };
   core.onChange(() => bridge.changed());
   return { core, bridge, sent, hear, store, service, tick: (ms: number) => (now += ms), now: () => now };
 }

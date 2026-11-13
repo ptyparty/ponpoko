@@ -6,8 +6,9 @@ import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
 import { pickWhose, whoseOf } from "../model.ts";
 import { fetchInbox, type Inbox } from "../github.ts";
-import { inboxFacts, source as githubSource } from "../inbox.ts";
+import { inboxFacts, isReviewId, source as githubSource } from "../inbox.ts";
 import { shortcutTitle, storyNumber, type TitleLookup } from "../shortcut.ts";
+import { reviewLayout } from "./go.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
 import { known, komuxPlace, tabStrand, Translator, type Known } from "./translate.ts";
 
@@ -23,6 +24,7 @@ export type Badge = { tabId: number; text: string | null; color?: string };
 const heartbeatMs = 30_000;
 const titleRetryMs = 10 * 60_000;
 const inboxMs = 2 * 60_000;
+const inboxSoonMs = 15_000;
 
 export class Bridge {
   readonly translator = new Translator();
@@ -34,6 +36,7 @@ export class Bridge {
   private readonly titling = new Set<string>();
   private readonly titleFailed = new Map<string, number>();
   private inboxAt = Number.NEGATIVE_INFINITY;
+  private inboxDue = Number.POSITIVE_INFINITY;
   private inboxing = false;
   private inboxError: string | undefined;
 
@@ -47,9 +50,10 @@ export class Bridge {
   ) {}
 
   async pollInbox(inTurn: <T>(work: () => Promise<T>) => Promise<T> = (work) => work()): Promise<boolean> {
-    if (!this.lookupInbox || this.inboxing || this.now() < this.inboxAt + inboxMs) return false;
+    if (!this.lookupInbox || this.inboxing || (this.now() < this.inboxAt + inboxMs && this.now() < this.inboxDue)) return false;
     this.inboxing = true;
     this.inboxAt = this.now();
+    this.inboxDue = Number.POSITIVE_INFINITY;
     try {
       const inbox = await this.lookupInbox();
       const recorded = await inTurn(async () => {
@@ -74,7 +78,9 @@ export class Bridge {
 
   async line(line: KomuxLine): Promise<void> {
     const knowledge = await this.knowledge().catch(() => undefined);
+    const leavingReview = (line.type === "tab.closed" || line.type === "agent.gone") && this.translator.tabs().some((tab) => tab.id === line.tabId && tab.layout === reviewLayout());
     const facts = this.translator.facts(line, known(knowledge ?? this.last));
+    if (leavingReview || touchesReview(facts, knowledge ?? this.last)) this.inboxDue = Math.min(this.inboxDue, this.now() + inboxSoonMs);
     if (!knowledge || this.behind) {
       this.behind = true;
       return;
@@ -294,4 +300,17 @@ function whoseNow(model: Known, strand: Knowledge["strands"][number]): "you" | "
   const whose = pickWhose(model.open.filter((move) => move.strand === strand.id).map((move) => (move.player === "you" ? "you" : whoseOf(model.players.get(move.player)?.kind ?? "machine"))));
   if (whose) return whose === "person" || whose === "machine" ? "waiting" : whose;
   return [...model.strands.values()].some((child) => child.parent === strand.id) ? undefined : "you";
+}
+
+function touchesReview(facts: Fact[], knowledge: Knowledge): boolean {
+  const parents = new Map(knowledge.strands.map((strand) => [strand.id, strand.parent]));
+  const underReview = (strand: string | undefined) => {
+    for (let at = strand, steps = 0; at !== undefined && steps < 50; at = parents.get(at), steps++) if (isReviewId(at)) return true;
+    return false;
+  };
+  return facts.some((fact) => {
+    if (fact.type === "move.opened") return underReview(fact.strand);
+    if (fact.type === "move.described") return underReview(knowledge.open.find((move) => move.id === fact.move)?.strand);
+    return false;
+  });
 }

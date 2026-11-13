@@ -5,7 +5,7 @@ import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
 async function setup(unseen = false) {
   const { core, hear, tick, now } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }, { id: 2, number: 2, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }], agents: [], jobs: [] });
   await hear({ type: "agent.state", agent: { paneId: 3, tabId: 1, state: "done" } });
   tick(60_000);
   await hear({ type: "agent.state", agent: { paneId: 4, tabId: 2, state: "waiting" } });
@@ -68,7 +68,7 @@ describe("the deck", () => {
 
   test("deals what's asking you first, then the newest, and an agent only ready for a prompt last", async () => {
     const { core, hear, tick, now } = harness();
-    const tabs = ["a", "b", "c", "d"].map((name, index) => ({ id: index + 1, number: index + 1, name, dir: `/w/${name}` }));
+    const tabs = ["a", "b", "c", "d"].map((name, index) => ({ id: index + 1, number: index + 1, name, dir: `/w/${name}`, labels: { strand: `claude in ${name}` } }));
     await hear({ type: "snapshot", tabs, agents: [], jobs: [] });
     await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
     await hear({ type: "agent.state", agent: { paneId: 4, tabId: 4, state: "done" } });
@@ -85,7 +85,7 @@ describe("the deck", () => {
 
   test("lists agents at work, strands waiting on others and snoozed strands under yours, and goes to any of them", async () => {
     const { core, hear, tick, now } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets" }, { id: 2, number: 2, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "claude in widgets" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }], agents: [], jobs: [] });
     await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "working" } });
     core.wait({ strand: "sc-7", who: "Copilot", kind: "machine", what: "PR review" }, "you");
@@ -106,7 +106,7 @@ describe("the deck", () => {
 
   test("puts yours on the left and everyone else's on the right when the popup is wide, and moves between them", async () => {
     const { core, hear, tick, now } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets" }, { id: 2, number: 2, name: "side", dir: "/w/side" }, { id: 3, number: 3, name: "docs", dir: "/w/docs" }], agents: [], jobs: [] });
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "claude in widgets" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }, { id: 3, number: 3, name: "docs", dir: "/w/docs", labels: { strand: "claude in docs" } }], agents: [], jobs: [] });
     await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
     await hear({ type: "agent.state", agent: { paneId: 3, tabId: 3, state: "done" } });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "working" } });
@@ -243,7 +243,7 @@ describe("the deck", () => {
 
   test("opened on a tab, lists its strands with the trees under them, and edits the picked one", async () => {
     const { core, hear, now } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "widgets", dir: "/w/s", labels: { strand: "sc-1" } }, { id: 4, number: 4, name: "side", dir: "/w/side" }], agents: [], jobs: [] });
+    await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "widgets", dir: "/w/s", labels: { strand: "sc-1" } }, { id: 4, number: 4, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }], agents: [], jobs: [] });
     await hear({ type: "agent.state", agent: { paneId: 7, tabId: 3, state: "done" } });
     core.add(strandNamed(core, "sc-1").id, "pr › ask");
     await hear({ type: "agent.state", agent: { paneId: 8, tabId: 4, state: "done" } });

@@ -30,7 +30,7 @@ import ponpoko from "./plugins/ponpoko.ts";
 plugins: [ponpoko()],
 ```
 
-Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs work on that strand. An agent elsewhere gets a loose strand of its own once it takes a turn, until it names a strand or you point its directory at one. A Claude you never prompt doesn't show up.
+Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs work on that strand, once the strand exists. A tab whose label names no strand, or that has no label, makes nothing on its own: a quick look at a repo leaves no trace. Its Claude's turns start counting once it says what it's working on through ponpoko's `status`, which makes the strand if needed, or once you add the strand (`a`) or point the tab's directory at one (`p`). A Claude you never prompt doesn't show up.
 
 ## In komux
 

@@ -238,6 +238,7 @@ export class Ponpoko {
     } else {
       if (player !== you && (!this.model.players.has(player) || this.model.players.get(player)!.gone !== undefined)) facts.push({ type: "player.joined", player, kind: report.kind, who: report.who });
       for (const move of open) facts.push({ type: "move.closed", move: move.id });
+      if (player !== you) this.closeTurnsOver(strand, agent?.id, facts);
       facts.push({ type: "move.opened", move: this.newId("m"), strand, player, ...(agent ? { with: agent.id } : {}), what: report.what });
     }
     this.record(source, facts);
@@ -253,7 +254,10 @@ export class Ponpoko {
       const on = this.named(report.on, strand);
       if (!(on in (this.model.strands.get(strand)?.blockedOn ?? {}))) throw new Error(`${path(this.model, strand).join(" › ")} doesn't wait on ${report.on}`);
       facts.push({ type: "strand.unblocked", strand, on });
-    } else this.blockFacts(strand, report.on, facts);
+    } else {
+      this.blockFacts(strand, report.on, facts);
+      this.closeTurnsOver(strand, agent?.id, facts);
+    }
     this.record(source, facts);
     return path(this.model, strand).join(" › ");
   }
@@ -270,6 +274,11 @@ export class Ponpoko {
   unblock(strand: string, on?: string): void {
     const waiting = Object.keys(this.mustHave(strand).blockedOn).filter((id) => on === undefined || id === on);
     this.record("you", waiting.map((id) => ({ type: "strand.unblocked", strand, on: id })));
+  }
+
+  private closeTurnsOver(strand: string, reporter: string | undefined, facts: Fact[]): void {
+    if (!reporter) return;
+    for (const move of openMoves(this.model, strand)) if (move.player === you && move.with === reporter) facts.push({ type: "move.closed", move: move.id });
   }
 
   private blockFacts(strand: string, on: string, facts: Fact[]): string {

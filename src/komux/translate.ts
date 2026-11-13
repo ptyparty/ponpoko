@@ -199,7 +199,7 @@ export class Translator {
     if (!player || old?.tabId !== place.tabId || old?.dir !== place.dir || old?.sessionId !== place.sessionId) {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
     }
-    const strand = (reopen: boolean) => out.strandFor(id, tab, entry.name ?? "claude", reopen, entry.sessionId);
+    const strand = (reopen: boolean) => out.strandFor(id, tab, reopen, entry.sessionId);
     const running = [...live.jobs.values()].filter((job) => job.startedBy === entry.paneId && job.state === "running");
     if (wanted !== undefined && wanted !== asking && running.length > 0) {
       for (const move of [...mine, ...yours]) out.close(move);
@@ -218,7 +218,10 @@ export class Translator {
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
       const on = mine.length === 0 ? strand(true) : undefined;
-      if (on) out.open(on, id, "working");
+      if (on) {
+        for (const move of out.githubYours(on)) out.close(move);
+        out.open(on, id, "working");
+      }
       return;
     }
     for (const move of mine) out.push({ type: "move.closed", move: move.id });
@@ -251,8 +254,8 @@ export class Translator {
     const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tab.dir };
     out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
     const why = entry.code === null || entry.code === undefined ? `${entry.name} failed` : `${entry.name} failed (exit ${entry.code})`;
-    const on = out.strandFor(id, tab, entry.name, true);
-    if (on) out.open(on, "you", why, id);
+    const on = out.strandFor(id, tab, true) ?? out.make(`${entry.name} in ${tab.name}`, "loose");
+    out.open(on, "you", why, id);
   }
 }
 
@@ -289,11 +292,11 @@ class Facts {
     this.model.on.set(answers ?? player, strand);
   }
 
-  strandFor(player: string, tab: KomuxTab, who: string, reopen: boolean, resume?: string): string | undefined {
+  strandFor(player: string, tab: KomuxTab, reopen: boolean, resume?: string): string | undefined {
     const on = this.model.on.get(player) ?? (resume ? this.model.resumed.get(resume) : undefined);
     if (on && this.model.strands.has(on)) return on;
     if (on && this.model.closed.has(on) && !reopen) return undefined;
-    return this.labelled(tab, reopen) ?? this.make(`${who} in ${tab.name}`, "loose");
+    return this.labelled(tab, reopen);
   }
 
   labelled(tab: KomuxTab, reopen: boolean): string | undefined {
@@ -314,7 +317,7 @@ class Facts {
       this.model.strands.set(strand.id, { ...strand, done: undefined });
       return strand.id;
     }
-    return this.make(found.name, undefined);
+    return undefined;
   }
 
   private rememberTab(strand: string, tab: KomuxTab): void {
@@ -323,6 +326,10 @@ class Facts {
     const link = this.newId("l");
     this.push({ type: "link.added", link, strand, adapter: "komux", ref, label: tab.name });
     this.model.links.push({ id: link, strand, adapter: "komux", ref, label: tab.name, at: Date.now() });
+  }
+
+  githubYours(strand: string): Move[] {
+    return this.model.open.filter((move) => move.strand === strand && move.player === "you" && move.source === "github");
   }
 
   close(move: Move): void {
@@ -347,7 +354,7 @@ class Facts {
     }
   }
 
-  private make(name: string, kind: string | undefined): string {
+  make(name: string, kind: string | undefined): string {
     const strand = this.newId("s");
     this.push({ type: "strand.made", strand, name, ...(kind ? { kind } : {}) });
     this.model.strands.set(strand, { id: strand, name, ...(kind ? { kind } : {}), made: 0, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
@@ -379,7 +386,6 @@ export function tabStrand(tab: KomuxTab, model: Pick<Known, "strands" | "links">
     if (found) return { id: found.id, name: found.name };
     const closed = pick(model.closed?.values() ?? []);
     if (closed) return { closed: closed.id, name: closed.name };
-    if (parts.length === 1) return { name: label.toLowerCase() };
   }
   let best: Link | undefined;
   for (const link of model.links) {
