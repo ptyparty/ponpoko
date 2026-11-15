@@ -12,9 +12,10 @@ export const mentionsId = "github:mentions";
 export const prAdapter = "github";
 export const stateAdapter = "github-state";
 export const ownStateAdapter = "github-pr-state";
+export const repoAdapter = "github-repo-state";
 
 type Desired = { player: string; who?: string; what: string; with?: { id: string; who: string }; link?: { ref: string; label: string } };
-type Want = { id: string; parent: string; kind: "review" | "mention"; name: string; title: string; url: string; key: string; wanted: boolean; desired?: Desired; done?: string };
+type Want = { id: string; parent: string; kind: "review" | "mention"; name: string; title: string; url: string; key: string; wanted: boolean; desired?: Desired; done?: string; public?: boolean };
 
 const tops = {
   [reviewsId]: { name: "reviews", title: "Pull requests waiting for a review" },
@@ -197,7 +198,7 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
 function reviewWants(inbox: Inbox): Want[] {
   return inbox.reviews.map((pr) => {
     const state = reviewState(pr, inbox.me);
-    const base = { id: reviewId(pr), parent: reviewsId, kind: "review" as const, name: prName(pr.repo, pr.number), title: pr.title, url: pr.url, key: `${state.kind}:${pr.head ?? ""}:${state.why}`, wanted: state.kind === "yours" };
+    const base = { id: reviewId(pr), parent: reviewsId, kind: "review" as const, name: prName(pr.repo, pr.number), title: pr.title, url: pr.url, key: `${state.kind}:${pr.head ?? ""}:${state.why}`, wanted: state.kind === "yours", ...(pr.public ? { public: true } : {}) };
     switch (state.kind) {
       case "gone":
         return { ...base, done: state.why };
@@ -270,6 +271,12 @@ class Reconciler {
   }
 
   private want(want: Want): boolean {
+    const shown = this.wantShown(want);
+    if (shown && want.public && !this.knowledge.links.some((link) => link.strand === want.id && link.adapter === repoAdapter)) this.facts.push({ type: "link.added", link: this.newId("l"), strand: want.id, adapter: repoAdapter, ref: "public" });
+    return shown;
+  }
+
+  private wantShown(want: Want): boolean {
     const live = this.live.has(want.id);
     const closed = this.closed.has(want.id);
     const hidden = !live && !closed && this.knowledge.links.some((link) => link.strand === want.id);

@@ -21,29 +21,101 @@ const type = async (tab: TabController, text: string) => {
 };
 
 describe("the command tab", () => {
-  test("shows the tree of strands, opens a strand's moves, and goes to the selected strand", async () => {
+  test("Work lists epics with their stories, then other work, folding a story's own strands, and goes to the picked strand", async () => {
     const { core, tab, calls } = await setup();
-    const screen = plain(tab.view(120, 20)).join("\n");
-    expect(screen).toContain("▎•● sc-1  Widget CSV import");
-    expect(screen).toContain(" •  ● tests ");
-    expect(screen).toMatch(/ ▎ ● claude · turn ended/);
-    const lines = plain(tab.view(120, 20));
-    expect(lines).toHaveLength(20);
-    expect(lines[4]).toBe("");
-    expect(lines[5]).toMatch(/^ ▎ sc-1  Widget CSV import/);
-    expect(lines.at(-1)).toContain("q  quit");
-    expect(screen).not.toMatch(/\d\d:\d\d  \w+ +new strand/);
+    const epic = core.add(undefined, "sc-100 › sc-101");
+    core.record("you", [{ type: "strand.titled", strand: strandNamed(core, "sc-100").id, kind: "epic", title: "Smarter widget pricing" }]);
+    core.record("you", [{ type: "strand.titled", strand: epic, title: "Gadget prices" }]);
+    tab.setSnapshot(core.snapshot());
+    const lines = plain(tab.view(120, 24));
+    expect(lines).toHaveLength(24);
+    expect(lines[0]).toMatch(/◆ ponpoko +1 Work 2 +2 Reviews 0 +3 Mentions 0 +\/ search all/);
+    expect(lines[2]).toMatch(/^▎ Smarter widget pricing  sc-100 · epic · 1 story · 1 yours/);
+    expect(lines[3]).toMatch(/^ {4}● Gadget prices +sc-101 +no one on it +now/);
+    expect(lines[5]).toMatch(/^ {2}Other work/);
+    expect(lines[6]).toMatch(/^ {4}● Widget CSV import +sc-1 +claude replied +now +tab 1 +▸1/);
+    expect(lines.join("\n")).not.toContain("tests");
+    expect(lines.at(-1)).toContain("⏎  nothing here; its work is in the strands under it");
+    await tab.key({ name: "j" });
+    await tab.key({ name: "j" });
+    expect(tab.current()?.strand?.name).toBe("sc-1");
+    expect(plain(tab.view(120, 24)).at(-1)).toMatch(/⏎  go to claude in tab 1 widgets +␣  its strands/);
+    await tab.key({ name: " ", text: " " });
+    expect(plain(tab.view(120, 24))[7]).toMatch(/^ {8}● tests +no one on it/);
     await tab.key({ name: "l", text: "l" });
     const log = plain(tab.view(120, 20));
     expect(log[0]).toMatch(/◆ log +newest first · \d+/);
-    expect(log.join("\n")).toMatch(/\d\d:\d\d  \w+ +new strand sc-1 › tests/);
     await tab.key({ name: "escape" });
-    expect(plain(tab.view(120, 20))[0]).toContain("◆ ponpoko");
-    await tab.key({ name: " ", text: " " });
-    expect(plain(tab.view(120, 20)).join("\n")).toMatch(/\d\d:\d\d–\s+you\s+turn ended/);
     await tab.key({ name: "j" });
     await tab.key({ name: "return" });
     expect(calls).toEqual([["go", strandNamed(core, "sc-1 › tests").id]]);
+  });
+
+  test("a chain of stories queued behind one another folds into one line, and snoozed strands sit at the end", async () => {
+    const { core, now } = harness();
+    core.add(undefined, "sc-1 › sc-2");
+    for (const [name, title] of [["sc-3", "Gadgets: fees by charge"], ["sc-4", "Gadgets: door fees"], ["sc-5", "Gadgets: accessorials"]]) core.add(strandNamed(core, "sc-1").id, name!), core.title(strandNamed(core, `sc-1 › ${name}`).id, title!);
+    core.title(strandNamed(core, "sc-1 › sc-2").id, "Gadgets: import and export");
+    core.record("you", [{ type: "strand.titled", strand: strandNamed(core, "sc-1").id, kind: "epic", title: "Gadgets" }]);
+    core.block(strandNamed(core, "sc-1 › sc-3").id, strandNamed(core, "sc-1 › sc-2").id);
+    core.block(strandNamed(core, "sc-1 › sc-4").id, strandNamed(core, "sc-1 › sc-3").id);
+    core.block(strandNamed(core, "sc-1 › sc-5").id, strandNamed(core, "sc-1 › sc-4").id);
+    core.add(undefined, "side");
+    core.add(undefined, "dotfiles");
+    core.snooze(strandNamed(core, "dotfiles").id, now() + 3_600_000);
+    core.add(undefined, "zebra");
+    const tab = new TabController(recordingActions().actions, now);
+    tab.setSnapshot(core.snapshot());
+    const screen = plain(tab.view(140, 30)).join("\n");
+    expect(screen).toMatch(/● Gadgets: import and export +sc-2 [^\n]*\n {8}▸ then: fees by charge sc-3 → door fees sc-4 → accessorials sc-5 *\n/);
+    expect(screen).toMatch(/Other work *\n {4}● side[^\n]*\n {4}● zebra[^\n]*\n {4}◷ dotfiles +snoozed till/);
+    await tab.key({ name: "j" });
+    await tab.key({ name: "j" });
+    expect(tab.current()?.fold).toBe(true);
+    await tab.key({ name: "return" });
+    expect(plain(tab.view(140, 30)).join("\n")).toMatch(/▾ then: [^\n]*\n {6}⊘ Gadgets: fees by charge +sc-3 +waiting on sc-2/);
+  });
+
+  test("1 2 3 and tab switch areas, and / searches names and titles across all of them", async () => {
+    const { core, tab, calls } = await setup();
+    const pr = { repo: "acme/widgets", number: 1860, title: "Add a widget cache", url: "https://github.com/acme/widgets/pull/1860", author: "alice", assignees: [], requested: [], reviews: [], head: "c1" };
+    let ids = 0;
+    core.record("github", inboxFacts(core.knowledge(), { me: "octo", reviews: [pr], mentioned: [{ repo: "acme/widgets", number: 7, title: "Widget docs", url: "https://github.com/acme/widgets/pull/7", entries: [{ url: "https://github.com/acme/widgets/pull/7#c1", author: "sam", at: "2026-11-13T10:00:00Z", body: "@octo look", reacted: false }] }] }, (prefix) => `${prefix}gh${++ids}`));
+    tab.setSnapshot(core.snapshot());
+    expect(plain(tab.view(120, 20))[0]).toMatch(/1 Work 1 +2 Reviews 1 +3 Mentions 1/);
+    await tab.key({ name: "3", text: "3" });
+    expect(plain(tab.view(120, 20))[2]).toMatch(/▎ ● Widget docs +widgets#7 +sam mentioned you/);
+    await tab.key({ name: "tab" });
+    expect(tab.area).toBe("work");
+    await tab.key({ name: "2", text: "2" });
+    expect(tab.current()?.strand?.name).toBe("widgets#1860");
+    await tab.key({ name: "/", text: "/" });
+    for (const char of "widget") await tab.key({ name: char, text: char });
+    const found = plain(tab.view(120, 20)).join("\n");
+    expect(found).toContain("/ widget▏");
+    expect(found).toMatch(/Widget CSV import +sc-1 .* Work/);
+    expect(found).toMatch(/Add a widget cache +widgets#1860 +in reviews .* Reviews/);
+    expect(found).toMatch(/Widget docs +widgets#7 +in mentions .* Mentions/);
+    for (const char of " csv") await tab.key({ name: char, text: char });
+    await tab.key({ name: "return" });
+    expect(tab.area).toBe("work");
+    expect(tab.current()?.strand?.name).toBe("sc-1");
+    await tab.key({ name: "/", text: "/" });
+    for (const char of "tests") await tab.key({ name: char, text: char });
+    await tab.key({ name: "return" });
+    expect(tab.current()?.strand?.name).toBe("tests");
+    expect(plain(tab.view(120, 20)).join("\n")).toMatch(/▎ {7}● tests/);
+    expect(calls).toEqual([]);
+  });
+
+  test("the card sits beside the list on a wide screen, and below it otherwise", async () => {
+    const { tab } = await setup();
+    const wide = plain(tab.view(180, 30));
+    expect(wide[2]).toMatch(/Other work +│  ▎ sc-1/);
+    expect(wide[3]).toMatch(/● Widget CSV import .* │  ▎ Widget CSV import/);
+    const narrow = plain(tab.view(100, 30));
+    expect(narrow[2]).not.toContain("│");
+    expect(narrow.join("\n")).toMatch(/\n ▎ sc-1 *\n ▎ Widget CSV import/);
   });
 
   test("adds, moves, finishes, snoozes, forgets after asking, notes and points", async () => {
@@ -54,6 +126,7 @@ describe("the command tab", () => {
     await type(tab, "docs");
     await tab.key({ name: "A" });
     await type(tab, "sc-2");
+    await tab.key({ name: " ", text: " " });
     await tab.key({ name: "j" });
     await tab.key({ name: "m" });
     await tab.key({ name: "/", text: "/" });
@@ -88,6 +161,7 @@ describe("the command tab", () => {
     core.add(undefined, "sc-2");
     tab.setSnapshot(core.snapshot());
     const tests = strandNamed(core, "sc-1 › tests").id;
+    await tab.key({ name: " ", text: " " });
     await tab.key({ name: "j" });
     await tab.key({ name: "m" });
     expect(plain(tab.view(100, 20)).join("\n")).toContain("move tests stays under sc-1");
@@ -126,7 +200,11 @@ describe("the command tab", () => {
     expect(tab.current()?.strand?.id).toBe(sc1);
     core.block(sc1, sc2);
     tab.setSnapshot(core.snapshot());
-    expect(plain(tab.view(100, 20)).join("\n")).toContain("⊘ waiting on sc-2");
+    expect(plain(tab.view(100, 20)).join("\n")).toMatch(/● sc-2 +no one on it[^\n]*\n {8}▸ then: Widget CSV import sc-1/);
+    await tab.key({ name: "j" });
+    await tab.key({ name: "return" });
+    await tab.key({ name: "j" });
+    expect(tab.current()?.strand?.id).toBe(sc1);
     await tab.key({ name: "w" });
     await tab.key({ name: "j" });
     await tab.key({ name: "j" });
@@ -140,17 +218,19 @@ describe("the command tab", () => {
     expect(calls.slice(1)).toEqual([["unblock", sc1, sc2], ["unblock", sc1], ["block", sc1, "sc-9"]]);
   });
 
-  test("the footer says what Enter will do on the picked strand", async () => {
+  test("the footer says what Enter will do on the picked strand, with only the keys that apply", async () => {
     const { core, tab } = await setup();
     core.add(undefined, "epic 9 › sc-2");
     tab.setSnapshot(core.snapshot());
-    const footer = () => plain(tab.view(140, 30)).at(-2)!.trim();
-    expect(footer()).toBe("⏎  go to claude in tab 1 widgets");
-    await tab.key({ name: "j" });
-    expect(footer()).toBe("⏎  open a tab at /w/stories/sc-1");
-    for (const _ of [1, 2, 3]) await tab.key({ name: "k" });
+    const footer = () => plain(tab.view(160, 30)).at(-1)!.trim();
     expect(tab.current()?.strand?.name).toBe("epic 9");
-    expect(footer()).toBe("⏎  nothing here; its work is in the strands under it");
+    expect(footer()).toMatch(/^⏎  nothing here; its work is in the strands under it +d  done/);
+    await tab.key({ name: "j" });
+    await tab.key({ name: "j" });
+    expect(footer()).toBe("⏎  go to claude in tab 1 widgets    ␣  its strands    d  done    z  snooze    a  add    m  move    w  wait on    /  search    ?  more");
+    await tab.key({ name: " ", text: " " });
+    await tab.key({ name: "j" });
+    expect(footer()).toMatch(/^⏎  open a tab at \/w\/stories\/sc-1 +d  done/);
   });
 
   test("f starts a fresh Claude on the picked strand", async () => {
@@ -207,15 +287,14 @@ describe("reviews from GitHub in the command tab", () => {
     let ids = 0;
     core.record("github", inboxFacts(core.knowledge(), { me: "octo", reviews: [pr], mentioned: [] }, (prefix) => `${prefix}gh${++ids}`));
     const { actions, calls } = recordingActions();
-    const tab = new TabController(actions, () => 1_000_000);
+    const tab = new TabController(actions, () => 1_000_000, "reviews");
     tab.setSnapshot(core.snapshot());
-    await tab.key({ name: "j", text: "j" });
     return { tab, calls };
   }
 
   test("asks before taking a review nobody has, and can open it without assigning", async () => {
     const { tab, calls } = await pooled();
-    expect(plain(tab.view(120, 20)).join("\n")).toContain("take widgets#1860: assign yourself and open it in pr-review");
+    expect(plain(tab.view(160, 20)).join("\n")).toMatch(/take widgets#1860: assign yourself and open it in pr-review +y  take it/);
     await tab.key({ name: "return" });
     const asking = plain(tab.view(120, 20)).join("\n");
     expect(asking).toContain("widgets#1860 has no reviewer yet");
@@ -230,6 +309,7 @@ describe("reviews from GitHub in the command tab", () => {
     ]);
     await tab.key({ name: "return" });
     await tab.key({ name: "escape" });
-    expect(calls).toHaveLength(3);
+    await tab.key({ name: "y", text: "y" });
+    expect(calls).toHaveLength(5);
   });
 });

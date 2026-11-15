@@ -11,6 +11,8 @@ import { Bridge } from "./komux/bridge.ts";
 import { Store } from "./store.ts";
 import { TabController } from "./tab.ts";
 import { recordingActions } from "./test-harness.ts";
+
+const plain = (lines: string[]) => lines.map((line) => line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")).join("\n");
 import { readPool, savePool, unreviewedColor, unreviewedLine, type Pool } from "./unreviewed.ts";
 
 const me = "octo";
@@ -278,18 +280,32 @@ describe("marking a draft ready", () => {
 });
 
 describe("the command tab on its reviews", () => {
-  test("starts on the reviews strand, or says nothing waits", () => {
+  test("opens on Reviews: your PRs and where each stands, the pool nobody has reviewed with internal repos first, then what's already reviewed", async () => {
     const { core, sync } = setup();
-    core.add(undefined, "a story");
-    const pool: PullRequest = { repo: "acme/widgets", number: 1, title: "t", url: "https://github.com/acme/widgets/pull/1", author: "alice", assignees: [], requested: [], reviews: [], head: "c1" };
-    const { actions } = recordingActions();
-    const empty = new TabController(actions, () => 0, reviewsId);
+    core.add(undefined, "sc-52751");
+    const pool = (number: number, over: Partial<PullRequest> = {}): PullRequest => ({ repo: "acme/widgets", number, title: `pool ${number}`, url: `https://github.com/acme/widgets/pull/${number}`, author: "alice", assignees: [], requested: [], reviews: [], head: "c1", ...over });
+    const { actions, calls } = recordingActions();
+    const empty = new TabController(actions, () => 0, "reviews");
     empty.setSnapshot(core.snapshot());
-    expect(empty.message).toBe("Nothing is waiting for a review");
-    sync([], { reviews: [pool] });
-    const tab = new TabController(actions, () => 0, reviewsId);
+    expect(plain(empty.view(120, 30))).toContain("none open");
+    sync([own({ reviews: [sam("APPROVED")] })], {
+      reviews: [pool(1), pool(2, { repo: "acme/lib", url: "https://github.com/acme/lib/pull/2", public: true }), pool(3, { assignees: [me] }), pool(4, { reviews: [{ author: me, state: "CHANGES_REQUESTED", commit: "c1" }] }), pool(5, { reviews: [{ author: "sam", state: "APPROVED", commit: "c1" }] })],
+    });
+    const tab = new TabController(actions, () => 0, "reviews");
     tab.setSnapshot(core.snapshot());
-    expect(tab.current()?.strand?.id).toBe(reviewsId);
+    const screen = plain(tab.view(140, 40));
+    expect(screen).toMatch(/1 Work 1 +2 Reviews 6 +3 Mentions 0/);
+    expect(screen).toMatch(/my PRs 1[^\n]*\n▎ ● Partner Services section +widgets#212 +approved by sam · merge it/);
+    expect(screen).toMatch(/waiting for review 3[^\n]*\n {2}● pool 3 +widgets#3 +assigned to you[^\n]*\n {2}○ pool 1 +widgets#1 +nobody yet[^\n]*\n {4}▸ 1 on public repos/);
+    expect(screen).toMatch(/already reviewed 2[^\n]*\n {2}○ pool 5 +widgets#5 +approved by sam · nobody assigned[^\n]*\n {2}⊘ pool 4 +widgets#4 +you asked for changes · alice on it/);
+    expect(screen).toContain("⏎  open widgets#212 on GitHub to merge");
+    await tab.key({ name: "return" });
+    await tab.key({ name: "o", text: "o" });
+    expect(calls).toEqual([["open", url], ["open", url]]);
+    for (let step = 0; step < 3; step++) await tab.key({ name: "j" });
+    expect(tab.current()?.fold).toBe(true);
+    await tab.key({ name: " ", text: " " });
+    expect(plain(tab.view(140, 40))).toMatch(/▾ 1 on public repos[^\n]*\n {2}○ pool 2 +lib#2 +nobody yet/);
   });
 });
 

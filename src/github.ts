@@ -13,6 +13,7 @@ export type PullRequest = {
   requested: string[];
   reviews: Review[];
   head?: string;
+  public?: boolean;
 };
 export type Entry = { url: string; author: string; at: string; body: string; reacted: boolean };
 export type Mentioned = { repo: string; number: number; title: string; url: string; entries: Entry[] };
@@ -145,7 +146,7 @@ export function samePr(a: string, b: string): boolean {
 }
 
 const prFields =
-  "title number url author { login } repository { nameWithOwner } assignees(first: 20) { nodes { login } } reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } } reviews(last: 50) { nodes { state author { __typename login } commit { oid } } } commits(last: 1) { nodes { commit { oid } } }";
+  "title number url author { login } repository { nameWithOwner isPrivate } assignees(first: 20) { nodes { login } } reviewRequests(first: 50) { nodes { requestedReviewer { ... on User { login } } } } reviews(last: 50) { nodes { state author { __typename login } commit { oid } } } commits(last: 1) { nodes { commit { oid } } }";
 const ownFields =
   "title number url isDraft headRefName author { login } repository { nameWithOwner } reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { name } ... on Bot { login } } } } reviews(last: 50) { nodes { state submittedAt author { __typename login } commit { oid } } } reviewThreads(last: 100) { nodes { isResolved comments(first: 1) { nodes { author { login } } } } } commits(last: 1) { nodes { commit { oid } } }";
 const entryFields = "url createdAt body author { login } reactionGroups { viewerHasReacted }";
@@ -251,6 +252,7 @@ function readPullRequest(raw: unknown): PullRequest | undefined {
       review?.author?.login ? [{ author: review.author.login, state: review.state, ...(review.commit?.oid ? { commit: review.commit.oid } : {}), ...(review.author.__typename === "Bot" ? { bot: true } : {}) }] : [],
     ),
     ...(node.commits?.nodes?.[0]?.commit?.oid ? { head: node.commits.nodes[0].commit.oid } : {}),
+    ...(node.repository?.isPrivate === false ? { public: true } : {}),
   };
 }
 

@@ -5,8 +5,8 @@ Keeps track of whose move each line of your work is: yours, an agent's, or someo
 Work is a tree of **strands**. A project holds stories, a story holds smaller strands, and any strand can split further. **Players** make **moves** on strands: you, Claude agents, failed jobs, and the people and machines you wait on. ponpoko hears komux, so while an agent works the move is the agent's, and when its turn ends a move opens for you. Agents report the rest through ponpoko's MCP: which strand they're on and what they're doing, what they're waiting on, and when a strand is done. A strand's moves stay as its record, so whoever picks it up next sees what was done.
 
 ```
-ponpoko                  the command tab: every strand, whose move it is, and what ponpoko heard
-ponpoko tab --reviews    the command tab, starting on the pull requests waiting for a review
+ponpoko                  the command tab: a map of the work, the reviews and the mentions
+ponpoko tab --reviews    the command tab, starting on Reviews
 ponpoko list             your moves, then everything else, printed once
 ponpoko tray [--stream]  one line for komux's tray; --stream prints a new one as it changes
 ponpoko tray --unreviewed [--stream]
@@ -46,7 +46,13 @@ Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs wor
 
 Pass `ponpoko({ deal, catchUp, leader })` to pick other keys.
 
-In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens its pull request on GitHub, or else what its latest move links to (a notebook page in quoll), `R` marks its draft pull request ready for review, `z` snoozes (`t` then types a time such as `14:30`, `mon 9`, `2h` or `nov 12`, and `0` snoozes it till woken: until it moves again, such as when you prompt its Claude, a strand is added under it, or a strand right under it or one it waits on is done), `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
+The command tab is the map: what's in flight and how it fits together. It has three areas, switched with `1`, `2`, `3` or Tab, and `/` searches names and titles across all three; Enter on a result goes to its row.
+
+- **Work** holds every top-level strand but the reviews and mentions. An epic (a strand Shortcut says is an epic) gets a section with its stories under it; everything else at the top goes under "Other work". Each story is one line: its title, its id, who has it anywhere under it, how long, and its tab. Your moves stand out by their ●, not by moving to the top, so things stay where you left them. A story's own strands stay folded, shown as `▸3` after its tab; space opens them. Stories inside a story show under it. A chain of stories queued behind one another, each waiting on the one before, folds into one "then: … → …" line under the first. Snoozed strands sit at the end of their section. Moving a strand under an epic with `m` moves it on the map too.
+- **Reviews** has your own open pull requests and where each stands, then other people's that nobody has reviewed yet (those assigned to you marked ●, internal repos first and public ones folded, newest first), then those already reviewed and still open: waiting on the author after you asked for changes, or approved by someone else.
+- **Mentions** lists the mentions waiting on you.
+
+The picked strand's card sits beside the list on a wide screen and below it otherwise. The footer says what Enter does and shows only the keys that apply to the picked row; `?` lists them all. Enter goes to a strand, or on your pull request that's approved, opens it on GitHub to merge. `a` adds a strand under it, `m` moves it under another, `w` makes it wait on another, `d` marks it done, `o` opens its pull request on GitHub, or else what its latest move links to (a notebook page in quoll), `R` marks its draft pull request ready for review, `y` takes a review nobody has, `z` snoozes (`t` then types a time such as `14:30`, `mon 9`, `2h` or `nov 12`, and `0` snoozes it till woken: until it moves again, such as when you prompt its Claude, a strand is added under it, or a strand right under it or one it waits on is done), `n` adds a note, `x` forgets it, `p` points its directory at a strand, `f` starts a fresh Claude, `c` marks it caught up, `l` shows the log, and `q` quits. `m` and `w` show the whole tree to pick from.
 
 Enter on a strand no one is on offers to resume the last Claude that worked on it, or to start a fresh one briefed with the strand's moves and links. Either way it opens the strand's project with its layout and wakes the Claude docked there. Only when that Claude is busy, or the layout has none, does it open a pane running `komux claude`; set `PONPOKO_CLAUDE` in komux's `env`, such as `komux claude --mode auto`, to run something else.
 

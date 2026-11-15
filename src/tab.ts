@@ -1,26 +1,28 @@
-import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
-import { isPooled, mentionLink, reviewsId } from "./inbox.ts";
+import { draftsOf, openableLink, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
+import { prName } from "./github.ts";
+import { isPooled, mentionLink, ownPrs, prAdapter, type OwnPrView } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { blockersOf, clock, header, isWaitingOn, rows, snoozedLabel, standingOf, type Row } from "./render.ts";
-import { cells, keyLine, openScreen, style, type Key } from "./screen.ts";
+import { areaCount, areaNames, areaOf, areaRows, areas, isStory, searchRows, type Area, type MapRow } from "./map.ts";
+import { blockersOf, clock, fit, isWaitingOn, rows, snoozedLabel, standingOf, whyOf } from "./render.ts";
+import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { LogView } from "./log.ts";
 import { parseWhen } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
-
-const keys: [string, string][] = [["␣", "moves"], ["a", "add"], ["m", "move"], ["w", "wait on"], ["d", "done"], ["z", "snooze"], ["n", "note"], ["f", "fresh Claude"], ["l", "log"], ["?", "all keys"], ["q", "quit"]];
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
 
 const help = [
   " Keys",
   "",
-  "   j k ↑ ↓   move between strands",
+  "   1 2 3     switch between Work, Reviews and Mentions; tab goes to the next",
+  "   j k ↑ ↓   move between rows",
+  "   /         search names and titles across all three, then ⏎ goes to the strand's row",
   "   ⏎         go to the strand: its agent's tab, a Claude already in the tab it lives in, or a tab opened at its directory",
   "             a review opens its pull request in the pr-review layout, asking first whether to assign yourself, and a mention opens on GitHub",
+  "   ␣         open or fold a story's own strands, a chain of stories queued behind it, or the reviews on public repos",
   "   f         start a fresh Claude on the strand, even when one is already in its tab",
-  "   ␣         show or hide the strand's moves",
   "   a         add a strand under this one",
   "   A         add a strand at the top",
   "   m         move the strand: pick its new parent with j k ↑ ↓ and ⏎, t for the top, or / to type a path such as ptyparty › ponpoko; a rogue's loose strand merges into it",
@@ -28,15 +30,17 @@ const help = [
   "   d         mark the strand done",
   "   o         open the strand's pull request on GitHub, or else what its latest move links to, such as a notebook page (📓) in quoll",
   "   R         mark the strand's draft pull request ready for review",
+  "   y         take a review nobody has: assign yourself and open it",
   "   z         snooze the strand, then pick how long, t to type a time such as 14:30, mon 9, 2h or nov 12, or 0 till woken",
   "   n         add a note to the strand",
   "   x         forget a strand ponpoko has wrong",
   "   p         point the strand's directory at a strand, so agents there work on it",
-  "   c         mark the strand caught up, so its moves are no longer new (•)",
+  "   c         mark the strand caught up, so its moves are no longer new",
   "   l         show the log of what ponpoko heard, newest first; leader m l opens it as a popup",
   "   q         quit",
   "",
-  " Glyphs:  ● yours   ◐ an agent's   ⊘ waiting on someone, something or another strand   ○ waiting on a strand under it   ◷ snoozed",
+  " Glyphs:  ● yours   ◐ an agent's   ⊘ waiting on someone, something or another strand   ○ waiting on a strand under it, or nobody yet   ◷ snoozed",
+  " A story shows who has it anywhere under it; ▸3 after its tab says it has three strands of its own folded away.",
   "",
   " Any key goes back.",
 ];
@@ -50,46 +54,92 @@ const prompts: Record<Purpose, string> = {
   wait: "waits on",
 };
 
+const cardWidth = 50;
+
 export class TabController {
   snapshot: Snapshot | undefined;
   mode: Mode = { kind: "list" };
   message: string | undefined;
-  selected = 0;
-  readonly expanded = new Set<string>();
+  area: Area = "work";
+  readonly opened = new Set<string>();
+  private picked: string | undefined;
   private top = 0;
   private readonly log = new LogView();
   private height = 30;
+  private width = 120;
   private down = false;
 
   constructor(
     private readonly actions: Actions,
     private readonly now: () => number = Date.now,
-    private focus: string | undefined = undefined,
-  ) {}
+    focus: Area | undefined = undefined,
+  ) {
+    if (focus) this.area = focus;
+  }
 
   setSnapshot(snapshot: Snapshot | undefined): void {
     this.log.setSnapshot(snapshot);
-    const before = this.current();
     this.snapshot = snapshot;
     this.down = snapshot === undefined;
-    if (snapshot && this.focus) {
-      const focus = this.focus;
-      this.focus = undefined;
-      if (this.select(focus)) return;
-      this.message = "Nothing is waiting for a review";
-    }
-    if (!snapshot || !before) return;
-    const again = this.selectable().findIndex((row) => row.strand?.id === before.strand?.id);
-    if (again >= 0) this.selected = again;
-    this.selected = Math.min(this.selected, Math.max(0, this.selectable().length - 1));
   }
 
   private strands(): StrandView[] {
     return this.snapshot?.strands ?? [];
   }
 
-  current(): Row | undefined {
-    return this.selectable()[this.selected];
+  private listWidth(): number {
+    return this.beside() ? this.width - cardWidth - 3 : this.width;
+  }
+
+  private beside(): boolean {
+    return this.width >= 170;
+  }
+
+  private rows(selected = this.picked): MapRow[] {
+    const snapshot = this.snapshot;
+    if (!snapshot) return [];
+    const width = this.listWidth();
+    const mode = this.mode;
+    if (mode.kind === "moving" || mode.kind === "waiting") return rows(snapshot, width, { header: false, logCount: 0, selected }).map((row) => ({ ...row, ...(row.strand ? { key: row.strand.id } : {}) }));
+    if (mode.kind === "search") return searchRows(snapshot, width, mode.text, selected);
+    return areaRows(this.area, snapshot, width, this.opened, selected);
+  }
+
+  private selectable(): MapRow[] {
+    return this.rows().filter((row) => row.key !== undefined);
+  }
+
+  current(): MapRow | undefined {
+    const selectable = this.selectable();
+    return selectable.find((row) => row.key === this.picked) ?? selectable[0];
+  }
+
+  private move(by: number): void {
+    const selectable = this.selectable();
+    const at = Math.max(0, selectable.findIndex((row) => row.key === this.current()?.key));
+    this.picked = selectable[Math.max(0, Math.min(selectable.length - 1, at + by))]?.key;
+  }
+
+  private select(id: string): boolean {
+    const found = this.selectable().some((row) => row.key === id);
+    if (found) this.picked = id;
+    return found;
+  }
+
+  private switchArea(area: Area): void {
+    if (area === this.area) return;
+    this.area = area;
+    this.picked = undefined;
+    this.top = 0;
+  }
+
+  private reveal(strand: StrandView): void {
+    this.switchArea(areaOf(strand, this.strands()));
+    if (this.select(strand.id)) return;
+    for (const above of aboveOf(this.strands(), strand)) this.opened.add(above.id);
+    for (const sibling of this.strands().filter((candidate) => candidate.parent === strand.parent)) this.opened.add(`then:${sibling.id}`);
+    this.opened.add("public");
+    this.select(strand.id);
   }
 
   async key(key: Key): Promise<"quit" | undefined> {
@@ -100,13 +150,15 @@ export class TabController {
       return undefined;
     }
     if (mode.kind === "text") return this.textKey(mode, key);
+    if (mode.kind === "search") return this.searchKey(mode, key);
     if (mode.kind === "log") {
       if (this.log.key(key, this.height) === "close") this.mode = { kind: "list" };
       return undefined;
     }
     if (mode.kind === "moving") return this.movingKey(mode.strand, key);
     if (mode.kind === "waiting") return this.waitingKey(mode.strand, key);
-    const strand = this.current()?.strand;
+    const row = this.current();
+    const strand = row?.strand;
     if (mode.kind === "snooze") {
       this.mode = key.name === "t" && strand ? { kind: "text", purpose: "snooze", text: "" } : { kind: "list" };
       const choice = snoozeChoices.find((candidate) => candidate.key === key.name);
@@ -125,9 +177,8 @@ export class TabController {
     if (mode.kind === "assign") {
       this.mode = { kind: "list" };
       const pooled = mode.strand;
-      if (key.name === "y" || key.name === "return") {
-        if (await this.run(() => this.actions.assign(pooled), `Assigned you to ${pooled.name}`)) await this.run(() => this.actions.go(pooled, this.strands()), `Assigned you to ${pooled.name}`);
-      } else if (key.name === "o") await this.run(() => this.actions.go(pooled, this.strands()));
+      if (key.name === "y" || key.name === "return") await this.take(pooled);
+      else if (key.name === "o") await this.run(() => this.actions.go(pooled, this.strands()));
       return undefined;
     }
     if (mode.kind === "forget") {
@@ -135,24 +186,44 @@ export class TabController {
       if (key.name === "y" && strand) await this.run(() => this.actions.forget(strand.id), `Forgot ${strand.name}`);
       return undefined;
     }
-    const count = this.selectable().length;
     switch (key.name) {
       case "q":
       case "escape":
       case "ctrl+c":
         return "quit";
+      case "1":
+      case "2":
+      case "3":
+        this.switchArea(areas[Number(key.name) - 1]!);
+        return undefined;
+      case "tab":
+        this.switchArea(areas[(areas.indexOf(this.area) + 1) % areas.length]!);
+        return undefined;
+      case "/":
+        this.mode = { kind: "search", text: "" };
+        this.picked = undefined;
+        return undefined;
       case "j":
       case "down":
-        this.selected = Math.min(this.selected + 1, Math.max(0, count - 1));
+        this.move(1);
         return undefined;
       case "k":
       case "up":
-        this.selected = Math.max(this.selected - 1, 0);
+        this.move(-1);
         return undefined;
       case "?":
         this.mode = { kind: "help" };
         return undefined;
       case "return": {
+        if (row?.fold) {
+          this.toggle(row.key!);
+          return undefined;
+        }
+        if (row?.pr && toMerge(row.pr)) {
+          const pr = row.pr;
+          await this.run(() => this.actions.open({ id: pr.url, adapter: prAdapter, ref: pr.url, at: 0 }), `Opened ${pr.url}`);
+          return undefined;
+        }
         const options = strand ? pickupOffer(strand, this.strands()) : undefined;
         if (!strand) this.message = "Nothing to go to here";
         else if (isPooled(strand)) this.mode = { kind: "assign", strand };
@@ -166,10 +237,16 @@ export class TabController {
         return undefined;
       case "space":
       case " ":
-        if (strand && !this.expanded.delete(strand.id)) this.expanded.add(strand.id);
+        if (row?.fold) this.toggle(row.key!);
+        else if (strand && this.hasOwnStrands(strand)) this.toggle(strand.id);
+        else this.message = "Nothing folded here";
+        return undefined;
+      case "y":
+        if (strand && isPooled(strand)) await this.take(strand);
+        else this.message = "Only a review nobody has taken can be taken";
         return undefined;
       case "o": {
-        const link = strand ? openableLink(strand) : undefined;
+        const link = row?.pr ? { id: row.pr.url, adapter: prAdapter, ref: row.pr.url, at: 0 } : strand ? openableLink(strand) : undefined;
         if (!link) this.message = "Nothing on this strand links anywhere";
         else await this.run(() => this.actions.open(link), `Opened ${link.label ?? link.ref}`);
         return undefined;
@@ -191,7 +268,10 @@ export class TabController {
         return undefined;
       case "w":
         if (!strand) this.message = "Pick a strand first";
-        else this.mode = { kind: "waiting", strand };
+        else {
+          this.mode = { kind: "waiting", strand };
+          this.select(strand.id);
+        }
         return undefined;
       case "n":
         if (strand) this.mode = { kind: "text", purpose: "note", text: "" };
@@ -222,26 +302,74 @@ export class TabController {
     return undefined;
   }
 
+  private hasOwnStrands(strand: StrandView): boolean {
+    return this.strands().some((candidate) => candidate.parent === strand.id && !isStory(candidate));
+  }
+
+  private toggle(key: string): void {
+    if (!this.opened.delete(key)) this.opened.add(key);
+    this.picked = key;
+  }
+
+  private async take(pooled: StrandView): Promise<void> {
+    if (await this.run(() => this.actions.assign(pooled), `Assigned you to ${pooled.name}`)) await this.run(() => this.actions.go(pooled, this.strands()), `Assigned you to ${pooled.name}`);
+  }
+
+  private async searchKey(mode: Extract<Mode, { kind: "search" }>, key: Key): Promise<undefined> {
+    if (key.name === "escape" || key.name === "ctrl+c") {
+      this.mode = { kind: "list" };
+      this.picked = undefined;
+    } else if (key.name === "backspace") mode.text = mode.text.slice(0, -1);
+    else if (key.name === "down" || key.name === "tab") this.move(1);
+    else if (key.name === "up") this.move(-1);
+    else if (key.name === "return") {
+      const strand = this.current()?.strand;
+      this.mode = { kind: "list" };
+      if (strand) this.reveal(strand);
+    } else if (key.text) {
+      mode.text += key.text;
+      this.picked = undefined;
+    }
+    return undefined;
+  }
+
   view(width: number, height: number): string[] {
     this.height = height;
+    this.width = width;
     if (this.mode.kind === "help") return help;
     if (this.mode.kind === "log") return this.log.view(width, height);
     if (this.down || !this.snapshot) return [" ◆ ponpoko", "", style.red(" ponpoko ✗  the service isn't running. Start it with `systemctl --user start ponpoko`."), "", " q quit"];
     const mode = this.mode;
-    const strand = this.current()?.strand;
-    const all = rows(this.snapshot, width, { expanded: this.expanded, header: false, selected: strand?.id, logCount: 0 });
-    const chosen = all.find((row) => row.strand !== undefined && row.strand.id === strand?.id);
+    const current = this.current();
+    const strand = current?.strand;
+    const all = this.rows(current?.key);
+    const chosen = all.findIndex((row) => row.key !== undefined && row.key === current?.key);
     const moving = mode.kind === "moving" || mode.kind === "waiting" ? all.find((row) => row.strand?.id === mode.strand.id) : undefined;
-    const card = strand && mode.kind !== "moving" && mode.kind !== "waiting" ? this.card(strand, width) : [];
-    const footer = this.footer();
-    const room = Math.max(3, height - 2 - (card.length > 0 ? card.length + 1 : 0) - footer.length - 1);
-    const at = chosen ? all.indexOf(chosen) : 0;
+    const beside = this.beside();
+    const card = strand && mode.kind !== "moving" && mode.kind !== "waiting" ? this.card(strand, beside ? cardWidth : width) : [];
+    const footer = this.footer(width);
+    const room = Math.max(3, height - 2 - (beside || card.length === 0 ? 0 : card.length + 1) - footer.length - 1);
+    const at = Math.max(0, chosen);
     if (at < this.top + 2) this.top = Math.max(0, at - 2);
     if (at >= this.top + room) this.top = at - room + 1;
-    const shown = all.slice(this.top, this.top + room).map((row) => (row === chosen ? style.selected(row.text) : row === moving ? style.you(style.bold(`»${row.text.slice(1)}`)) : row.text));
-    const body = [...shown, ...(card.length > 0 ? ["", ...card] : [])];
-    while (body.length < height - 3 - footer.length) body.push("");
-    return [header(this.snapshot, width), "", ...body, "", ...footer];
+    this.top = Math.max(0, Math.min(this.top, Math.max(0, all.length - room)));
+    const shown = all.slice(this.top, this.top + room).map((row) => (row === moving && row !== all[chosen] ? style.you(style.bold(`»${row.text.slice(1)}`)) : row.text));
+    const listWidth = this.listWidth();
+    const body = beside ? Array.from({ length: Math.max(shown.length, card.length) }, (_, index) => `${cells([[shown[index] ?? ""]], listWidth)}${style.faint(" │ ")}${card[index] ?? ""}`) : [...shown, ...(card.length > 0 ? ["", ...card] : [])];
+    while (body.length < height - 3 - footer.length) body.push(beside ? `${" ".repeat(listWidth)}${style.faint(" │ ")}` : "");
+    return [this.header(width), "", ...body.slice(0, Math.max(0, height - 3 - footer.length)), "", ...footer];
+  }
+
+  private header(width: number): string {
+    const snapshot = this.snapshot!;
+    const mode = this.mode;
+    const tabs: Part[] = areas.flatMap((area, index): Part[] => {
+      const label = ` ${index + 1} ${areaNames[area]} ${areaCount(area, snapshot)} `;
+      const on = area === this.area && mode.kind !== "search";
+      return [[label, on ? (text) => style.selected(style.you(style.bold(text))) : style.muted], "  "];
+    });
+    const search: Part = mode.kind === "search" ? [`/ ${mode.text}▏`, (text) => style.you(style.bold(text))] : ["/ search all", style.faint];
+    return style.surface(cells([[" ◆ ", (text) => style.accent(style.bold(text))], ["ponpoko   ", (text) => style.text(style.bold(text))], ...tabs, "    ", search], width));
   }
 
   private card(strand: StrandView, width: number): string[] {
@@ -251,35 +379,58 @@ export class TabController {
     const above = strand.path.slice(0, -1);
     const note = strand.notes.at(-1);
     const waits = blockersOf(strand, this.strands()).map((other) => other.name);
-    const moves = strand.recent.slice(-2).map((move) => {
+    const behind = this.strands().filter((other) => isWaitingOn(other, strand.id)).map((other) => other.name);
+    const wrapped = (text: string, paint: (text: string) => string) => wrapText(text, width - 4).map((line) => stripe([[line, paint]]));
+    const moves = strand.recent.slice(this.height < 36 ? -1 : -3).map((move) => {
       const until = move.until === undefined ? "     " : clock(move.until);
       return stripe([[`${clock(move.from)}–${until}  ${(move.player === "you" ? (move.answers?.kind === "person" ? move.answers.who : "you") : move.by.who).padEnd(8)}  ${move.what}`, style.faint]]);
     });
+    const why = whyOf(strand, now);
+    const where = strand.spaces.map((space) => space.label).join(", ");
     return [
-      stripe([[strand.name, (text) => style.text(style.bold(text))], ...(strand.title ? ["  ", [strand.title, style.muted] as [string, (text: string) => string]] : [])]),
-      ...(above.length > 0 ? [stripe([[`in ${above.join(" › ")}`, style.faint]])] : []),
+      stripe([[strand.name, (text) => style.text(style.bold(text))]]),
+      ...(strand.title ? wrapped(strand.title, style.muted) : []),
+      ...(above.length > 0 ? wrapped(`in ${above.join(" › ")}`, style.faint) : []),
       stripe(),
-      stripe([[`${standing.glyph} `, standing.paint], [standing.text, standing.paint], [standing.age ? `  ·  ${standing.age}` : "", style.faint]]),
-      ...(waits.length > 0 ? [stripe([[`waits on ${waits.join(", ")}`, style.wait]])] : []),
-      ...(note ? [stripe([[`✎ ${note.text}`, style.muted]])] : []),
-      ...moves,
+      stripe([[`${standing.glyph} `, standing.paint], [why.text, why.paint], [[standing.age, where].filter(Boolean).map((text) => ` · ${text}`).join(""), style.faint]]),
+      ...ownPrs(strand)
+        .filter((pr) => pr.state !== "closed")
+        .flatMap((pr) => wrapped(`↗ ${prName(pr.repo, pr.number)}${pr.draft ? " (draft)" : ""} · ${pr.state === "waiting" ? `${pr.who} · ` : ""}${pr.what}`, pr.state === "yours" ? style.you : style.muted)),
+      ...(waits.length > 0 ? wrapped(`waits on ${waits.join(", ")}`, style.wait) : []),
+      ...(behind.length > 0 ? wrapped(`waiting behind it: ${behind.join(", ")}`, style.faint) : []),
+      ...(note ? wrapped(`✎ ${note.text}`, style.muted) : []),
+      ...(moves.length > 0 ? [stripe(), ...moves] : []),
     ];
   }
 
-  private footer(): string[] {
+  private footer(width: number): string[] {
     const mode = this.mode;
     const ask = (text: string) => [style.you(` ${text}`)];
     if (mode.kind === "snooze") return ask(snoozeLine());
     if (mode.kind === "pickup") return ask(`no one is on it · ${pickupLine(mode.options, this.now())}`);
-    if (mode.kind === "moving") return [style.you(` move ${mode.strand.name} ${this.underWhat(mode.strand)}`), keyLine([["j k", "pick its new parent"], ["⏎", "move"], ["t", "top"], ["/", "type a path"], ["esc", "cancel"]])];
-    if (mode.kind === "waiting") return [style.you(` ${mode.strand.name} ${this.waitsWhat(mode.strand)}`), keyLine([["j k", "pick the strand it waits on"], ["⏎", "wait on it"], ["/", "type a path"], ["c", "stop waiting"], ["esc", "cancel"]])];
-    if (mode.kind === "assign") return [style.you(` ${mode.strand.name} has no reviewer yet`), keyLine([["y ⏎", "assign yourself and open it"], ["o", "open it without assigning"], ["esc", "cancel"]])];
+    if (mode.kind === "moving") return [style.you(` move ${mode.strand.name} ${this.underWhat(mode.strand)}`), keyLine([["j k", "pick its new parent"], ["⏎", "move"], ["t", "top"], ["/", "type a path"], ["esc", "cancel"]], width)];
+    if (mode.kind === "waiting") return [style.you(` ${mode.strand.name} ${this.waitsWhat(mode.strand)}`), keyLine([["j k", "pick the strand it waits on"], ["⏎", "wait on it"], ["/", "type a path"], ["c", "stop waiting"], ["esc", "cancel"]], width)];
+    if (mode.kind === "assign") return [style.you(` ${mode.strand.name} has no reviewer yet`), keyLine([["y ⏎", "assign yourself and open it"], ["o", "open it without assigning"], ["esc", "cancel"]], width)];
     if (mode.kind === "forget") return ask(`forget ${this.current()?.strand?.name}?  y yes   any other key no`);
     if (mode.kind === "text" && mode.purpose === "snooze") return ask(timeLine(mode.text, this.now()));
     if (mode.kind === "text") return ask(`${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`);
-    const strand = this.current()?.strand;
-    const first = this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(strand ? enterDoes(strand, this.strands()) : "nothing to go to"))}`;
-    return [first, keyLine(strand && draftsOf(strand).length > 0 ? [...keys.slice(0, -2), ["R", "mark ready"], ...keys.slice(-2)] : keys)];
+    if (mode.kind === "search") return [keyLine([["⏎", "go to its row"], ["↑ ↓", "pick"], ["esc", "back"]], width)];
+    if (this.message) return [style.warn(` ${this.message}`)];
+    const row = this.current();
+    const strand = row?.strand;
+    if (!row) return [keyLine([["1 2 3", "areas"], ["a", "add"], ["/", "search"], ["?", "more"], ["q", "quit"]], width)];
+    const enter = row.fold ? (this.opened.has(row.key!) ? "fold it away" : "open it") : row.pr && toMerge(row.pr) ? `open ${prName(row.pr.repo, row.pr.number)} on GitHub to merge` : strand ? enterDoes(strand, this.strands()) : "nothing to go to";
+    const keys: [string, string][] = [
+      ...(!row.fold && strand && this.hasOwnStrands(strand) ? [["␣", this.opened.has(strand.id) ? "fold its strands" : "its strands"] as [string, string]] : []),
+      ...(strand && isPooled(strand) ? [["y", "take it"] as [string, string]] : []),
+      ...(row.pr || (strand && openableLink(strand)) ? [["o", row.pr || strand?.kind === "review" ? "on GitHub" : "open"] as [string, string]] : []),
+      ...(strand && draftsOf(strand).length > 0 ? [["R", "mark ready"] as [string, string]] : []),
+      ...(strand && !row.fold ? [["d", "done"], ["z", "snooze"], ["a", "add"], ["m", "move"], ["w", "wait on"]] as [string, string][] : []),
+      ["/", "search"],
+      ["?", "more"],
+    ];
+    const lead = ` ${style.enter("⏎")} ${style.text(style.bold(fit(enter, Math.max(30, Math.floor(width * 0.45))).trimEnd()))}  `;
+    return [lead + keyLine(keys, Math.max(10, width - visible(lead)))];
   }
 
   private async textKey(mode: Extract<Mode, { kind: "text" }>, key: Key): Promise<undefined> {
@@ -304,21 +455,21 @@ export class TabController {
     return undefined;
   }
 
-  private picked(picking: StrandView, key: Key): boolean {
+  private pickedKey(picking: StrandView, key: Key): boolean {
     switch (key.name) {
       case "j":
       case "down":
-        this.selected = Math.min(this.selected + 1, Math.max(0, this.selectable().length - 1));
+        this.move(1);
         return true;
       case "k":
       case "up":
-        this.selected = Math.max(this.selected - 1, 0);
+        this.move(-1);
         return true;
       case "escape":
       case "q":
       case "ctrl+c":
         this.mode = { kind: "list" };
-        this.select(picking.id);
+        this.picked = picking.id;
         return true;
     }
     return false;
@@ -326,20 +477,21 @@ export class TabController {
 
   private async movingKey(moving: StrandView, key: Key): Promise<undefined> {
     const target = this.current()?.strand;
-    if (this.picked(moving, key)) return undefined;
+    if (this.pickedKey(moving, key)) return undefined;
     switch (key.name) {
       case "/":
-        this.mode = this.select(moving.id) ? { kind: "text", purpose: "move", text: "" } : { kind: "list" };
+        this.picked = moving.id;
+        this.mode = { kind: "text", purpose: "move", text: "" };
         return undefined;
       case "t":
         this.mode = { kind: "list" };
-        this.select(moving.id);
+        this.picked = moving.id;
         await this.run(() => this.actions.reparent(moving.id, ""), `${moving.name} is at the top`);
         return undefined;
       case "return":
         if (!target || this.cannotHold(moving, target)) return undefined;
         this.mode = { kind: "list" };
-        this.select(moving.id);
+        this.picked = moving.id;
         if (target.id !== moving.parent) await this.run(() => this.actions.reparent(moving.id, target.id), `${moving.name} is under ${target.name}`);
         return undefined;
     }
@@ -349,20 +501,21 @@ export class TabController {
   private async waitingKey(picked: StrandView, key: Key): Promise<undefined> {
     const waiting = this.strands().find((strand) => strand.id === picked.id) ?? picked;
     const target = this.current()?.strand;
-    if (this.picked(waiting, key)) return undefined;
+    if (this.pickedKey(waiting, key)) return undefined;
     switch (key.name) {
       case "/":
-        this.mode = this.select(waiting.id) ? { kind: "text", purpose: "wait", text: "" } : { kind: "list" };
+        this.picked = waiting.id;
+        this.mode = { kind: "text", purpose: "wait", text: "" };
         return undefined;
       case "c":
         this.mode = { kind: "list" };
-        this.select(waiting.id);
+        this.picked = waiting.id;
         await this.run(() => this.actions.unblock(waiting.id), `${waiting.name} no longer waits on other strands`);
         return undefined;
       case "return":
         if (!target || target.id === waiting.id) return undefined;
         this.mode = { kind: "list" };
-        this.select(waiting.id);
+        this.picked = waiting.id;
         if (isWaitingOn(waiting, target.id)) await this.run(() => this.actions.unblock(waiting.id, target.id), `${waiting.name} no longer waits on ${target.name}`);
         else await this.run(() => this.actions.block(waiting.id, target.id), `${waiting.name} waits on ${target.name}`);
         return undefined;
@@ -387,12 +540,6 @@ export class TabController {
 
   private cannotHold(moving: StrandView, target: StrandView): boolean {
     return target.id === moving.id || aboveOf(this.strands(), target).some((above) => above.id === moving.id);
-  }
-
-  private select(id: string): boolean {
-    const at = this.selectable().findIndex((row) => row.strand?.id === id);
-    if (at >= 0) this.selected = at;
-    return at >= 0;
   }
 
   private async caughtUpOnFinish(strand: StrandView): Promise<void> {
@@ -430,14 +577,23 @@ export class TabController {
       return false;
     }
   }
-
-  private selectable(): Row[] {
-    return this.snapshot ? rows(this.snapshot, 100, { expanded: this.expanded, logCount: 0 }).filter(isSelectable) : [];
-  }
 }
 
-function isSelectable(row: Row): boolean {
-  return row.strand !== undefined;
+function toMerge(pr: OwnPrView): boolean {
+  return pr.state === "yours" && /^approved/.test(pr.what);
+}
+
+function wrapText(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    if (line && line.length + word.length + 1 > width) {
+      lines.push(line);
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  return lines.length > 3 ? [...lines.slice(0, 2), `${lines[2]!.slice(0, width - 1)}…`] : lines;
 }
 
 export type Live = { setSnapshot: (snapshot: Snapshot | undefined) => void; view: (width: number, height: number) => string[]; key: (key: Key, height: number) => Promise<"quit" | "close" | undefined> | "quit" | "close" | undefined };
@@ -485,7 +641,7 @@ export async function runLive(controller: Live): Promise<number> {
 }
 
 export function runTab(args: string[] = []): Promise<number> {
-  return runLive(new TabController(serviceActions, Date.now, args.includes("--reviews") ? reviewsId : undefined));
+  return runLive(new TabController(serviceActions, Date.now, args.includes("--reviews") ? "reviews" : args.includes("--mentions") ? "mentions" : undefined));
 }
 
 export function enterDoes(strand: StrandView, strands: StrandView[]): string {
