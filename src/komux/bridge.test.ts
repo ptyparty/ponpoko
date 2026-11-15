@@ -217,6 +217,55 @@ describe("the komux bridge", () => {
     expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
   });
 
+  test("a Claude whose turn ends with background agents running stays on the move, counting them, until nothing is left", async () => {
+    const { core, hear, store } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 3, tasks: 0 } } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: 3 background agents");
+    expect(core.snapshot().moves.map((strand) => strand.name)).not.toContain("sc-1234");
+    const facts = store.all().length;
+    await hear({ ...snapshot, agents: [{ paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 3, tasks: 0 } }, ...snapshot.agents.slice(1)], jobs: [] });
+    expect(store.all().length).toBe(facts);
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "idle", sessionId: "c1", background: { agents: 1, tasks: 2 } } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: 1 background agent · 2 background tasks");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1", background: { agents: 1, tasks: 0 } } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 1, tasks: 0 } } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: 1 background agent");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
+  });
+
+  test("a Claude with background agents running that asks you something, or needs you, is your move", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    const busy = { agents: 2, tasks: 0 };
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: busy } });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", asking: true, sessionId: "c1", background: busy } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): asking you");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "waiting", sessionId: "c1", background: busy } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): waiting on you");
+  });
+
+  test("background commands that run as komux jobs show as the jobs, not again in the count", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    const build = { id: 9, tabId: 1, name: "gadgets build", state: "running", agent: false, startedBy: 2 };
+    await hear({ type: "job.started", job: build });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 1, tasks: 1 } } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent job:s1:9: running; pane:s1:2: 1 background agent");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 0, tasks: 1 } } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 machine job:s1:9: running");
+  });
+
+  test("older komux lines with no background count, or a malformed one, read as nothing running", () => {
+    const agent = (background: unknown) => komuxLine.parse({ type: "agent.state", session: "main", agent: { paneId: 2, tabId: 1, state: "done", background } });
+    expect(komuxLine.parse({ type: "agent.state", session: "main", agent: { paneId: 2, tabId: 1, state: "done" } })).toMatchObject({ agent: { state: "done" } });
+    expect(agent({ agents: 2, tasks: 1 })).toMatchObject({ agent: { background: { agents: 2, tasks: 1 } } });
+    const malformed = agent("lots");
+    expect(malformed.type === "agent.state" ? malformed.agent.background : "not an agent line").toBeUndefined();
+  });
+
   test("a job that says which strand it's for waits there, not on the strand of the tab whose Claude started it, whichever comes first", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });

@@ -184,8 +184,10 @@ export class Translator {
     const player = out.model.players.get(id);
     const mine = out.openBy(id);
     const yours = out.yoursFor(id);
+    const running = [...live.jobs.values()].filter((job) => job.startedBy === entry.paneId && job.state === "running");
+    const background = entry.asking || (entry.state !== "done" && entry.state !== "idle") ? undefined : backgroundLine(entry.background, running.length);
     const wanted = entry.asking ? asking : entry.state === "working" ? undefined : (yourMoves[entry.state] ?? (player ? ready : null));
-    if (wanted === null) return;
+    if (wanted === null && background === undefined) return;
     const place: KomuxPlace = {
       adapter: "komux",
       handle: komuxHandle(live.server, entry.paneId),
@@ -201,7 +203,19 @@ export class Translator {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
     }
     const strand = (reopen: boolean) => out.strandFor(id, tab, reopen, entry.sessionId);
-    const running = [...live.jobs.values()].filter((job) => job.startedBy === entry.paneId && job.state === "running");
+    if (background !== undefined) {
+      for (const move of yours) out.close(move);
+      const on = strand(false);
+      for (const job of running) {
+        const target = out.claimed(jobPlayerId(live.server, job.id)) ?? on;
+        if (target) this.awaitJob(live, job, target, id, out);
+      }
+      if (mine.length === 1 && mine[0]!.what === background) return;
+      for (const move of mine) out.close(move);
+      if (on) out.open(on, id, background);
+      return;
+    }
+    if (wanted === null) return;
     if (wanted !== undefined && wanted !== asking && running.length > 0) {
       for (const move of [...mine, ...yours]) out.close(move);
       const on = strand(false);
@@ -226,7 +240,9 @@ export class Translator {
     }
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
-      const on = mine.length === 0 ? strand(true) : undefined;
+      const waited = mine.filter((move) => backgroundMove.test(move.what));
+      for (const move of waited) out.close(move);
+      const on = mine.length === waited.length ? strand(true) : undefined;
       if (on) {
         for (const move of out.githubYours(on)) out.close(move);
         out.open(on, id, "working");
@@ -266,6 +282,15 @@ export class Translator {
     const on = out.claimed(id) ?? out.strandFor(id, tab, true) ?? out.make(`${entry.name} in ${tab.name}`, "loose");
     out.open(on, "you", why, id);
   }
+}
+
+const backgroundMove = /^\d+ background (agents?|tasks?)\b/;
+
+export function backgroundLine(background: { agents: number; tasks: number } | undefined, jobs = 0): string | undefined {
+  const agents = background?.agents ?? 0;
+  const tasks = Math.max((background?.tasks ?? 0) - jobs, 0);
+  const parts = [...(agents > 0 ? [`${agents} background ${agents === 1 ? "agent" : "agents"}`] : []), ...(tasks > 0 ? [`${tasks} background ${tasks === 1 ? "task" : "tasks"}`] : [])];
+  return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
 function reportedWait(strand: string, model: Known): boolean {
