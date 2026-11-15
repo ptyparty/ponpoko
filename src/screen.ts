@@ -111,8 +111,23 @@ export function openScreen(onKey: (key: Key) => void, onResize: () => void): Scr
     for (const key of parseKeys(data)) onKey(key);
   };
   process.stdin.on("data", listener);
-  out.on("resize", onResize);
-  process.on("SIGWINCH", onResize);
+  let last = 0;
+  let again: ReturnType<typeof setTimeout> | undefined;
+  const resized = () => {
+    const now = Date.now();
+    if (now - last < 50) {
+      again ??= setTimeout(() => {
+        again = undefined;
+        last = Date.now();
+        onResize();
+      }, 50);
+      return;
+    }
+    last = now;
+    onResize();
+  };
+  out.on("resize", resized);
+  process.on("SIGWINCH", resized);
   const screen: Screen = {
     get width() {
       return out.columns ?? 100;
@@ -125,8 +140,9 @@ export function openScreen(onKey: (key: Key) => void, onResize: () => void): Scr
     },
     close: () => {
       process.stdin.off("data", listener);
-      out.off("resize", onResize);
-      process.off("SIGWINCH", onResize);
+      out.off("resize", resized);
+      process.off("SIGWINCH", resized);
+      if (again) clearTimeout(again);
       process.stdin.setRawMode?.(false);
       process.stdin.pause();
       out.write("\x1b[?25h\x1b[?1049l");

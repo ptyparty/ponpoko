@@ -11,7 +11,7 @@ import { LogView } from "./log.ts";
 import { parseWhen } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "text"; purpose: Purpose; text: string; top?: boolean };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
 
 const help = [
   " Keys",
@@ -63,6 +63,9 @@ export class TabController {
   area: Area = "work";
   readonly opened = new Set<string>();
   private picked: string | undefined;
+  private pickedAt = 0;
+  private returnTo: string | undefined;
+  private drawn: { snapshot: Snapshot; key: string; rows: MapRow[] } | undefined;
   private top = 0;
   private readonly log = new LogView();
   private height = 30;
@@ -98,6 +101,15 @@ export class TabController {
   private rows(selected = this.picked): MapRow[] {
     const snapshot = this.snapshot;
     if (!snapshot) return [];
+    const mode = this.mode;
+    const key = [mode.kind, mode.kind === "search" ? mode.text : "", this.area, this.listWidth(), selected ?? "", [...this.opened].join(" ")].join("\n");
+    if (this.drawn?.snapshot === snapshot && this.drawn.key === key) return this.drawn.rows;
+    const rows = this.build(snapshot, selected);
+    this.drawn = { snapshot, key, rows };
+    return rows;
+  }
+
+  private build(snapshot: Snapshot, selected: string | undefined): MapRow[] {
     const width = this.listWidth();
     const mode = this.mode;
     if (mode.kind === "moving" || mode.kind === "waiting") return rows(snapshot, width, { header: false, logCount: 0, selected }).map((row) => ({ ...row, ...(row.strand ? { key: row.strand.id } : {}) }));
@@ -111,33 +123,58 @@ export class TabController {
 
   current(): MapRow | undefined {
     const selectable = this.selectable();
-    return selectable.find((row) => row.key === this.picked) ?? selectable[0];
+    const at = selectable.findIndex((row) => row.key === this.picked);
+    if (at >= 0) {
+      this.pickedAt = at;
+      return selectable[at];
+    }
+    return selectable[Math.max(0, Math.min(this.pickedAt, selectable.length - 1))];
   }
 
   private move(by: number): void {
     const selectable = this.selectable();
     const at = Math.max(0, selectable.findIndex((row) => row.key === this.current()?.key));
-    this.picked = selectable[Math.max(0, Math.min(selectable.length - 1, at + by))]?.key;
+    this.pickedAt = Math.max(0, Math.min(selectable.length - 1, at + by));
+    this.picked = selectable[this.pickedAt]?.key;
   }
 
   private select(id: string): boolean {
-    const found = this.selectable().some((row) => row.key === id);
-    if (found) this.picked = id;
-    return found;
+    const at = this.selectable().findIndex((row) => row.key === id);
+    if (at >= 0) {
+      this.picked = id;
+      this.pickedAt = at;
+    }
+    return at >= 0;
+  }
+
+  private startPicking(mode: Extract<Mode, { kind: "moving" | "waiting" }>, at: string): void {
+    this.returnTo = this.current()?.key;
+    this.mode = mode;
+    this.select(at);
+  }
+
+  private stopPicking(mode: Mode, fallback: string): void {
+    this.mode = mode;
+    const back = this.returnTo;
+    this.returnTo = undefined;
+    this.picked = back ?? fallback;
+    if (mode.kind === "list" && back && !this.selectable().some((row) => row.key === back)) this.picked = fallback;
   }
 
   private switchArea(area: Area): void {
     if (area === this.area) return;
     this.area = area;
     this.picked = undefined;
+    this.pickedAt = 0;
     this.top = 0;
   }
 
   private reveal(strand: StrandView): void {
     this.switchArea(areaOf(strand, this.strands()));
     if (this.select(strand.id)) return;
-    for (const above of aboveOf(this.strands(), strand)) this.opened.add(above.id);
-    for (const sibling of this.strands().filter((candidate) => candidate.parent === strand.parent)) this.opened.add(`then:${sibling.id}`);
+    const path = [strand, ...aboveOf(this.strands(), strand)];
+    for (const above of path.slice(1)) this.opened.add(above.id);
+    for (const at of path) for (const sibling of this.strands().filter((candidate) => candidate.parent === at.parent)) this.opened.add(`then:${sibling.id}`);
     this.opened.add("public");
     this.select(strand.id);
   }
@@ -201,7 +238,9 @@ export class TabController {
         return undefined;
       case "/":
         this.mode = { kind: "search", text: "" };
+        this.returnTo = this.picked;
         this.picked = undefined;
+        this.pickedAt = 0;
         return undefined;
       case "j":
       case "down":
@@ -261,17 +300,11 @@ export class TabController {
         return undefined;
       case "m":
         if (!strand) this.message = "Pick a strand first";
-        else {
-          this.mode = { kind: "moving", strand };
-          this.select(strand.parent ?? strand.id);
-        }
+        else this.startPicking({ kind: "moving", strand }, strand.parent ?? strand.id);
         return undefined;
       case "w":
         if (!strand) this.message = "Pick a strand first";
-        else {
-          this.mode = { kind: "waiting", strand };
-          this.select(strand.id);
-        }
+        else this.startPicking({ kind: "waiting", strand }, strand.id);
         return undefined;
       case "n":
         if (strand) this.mode = { kind: "text", purpose: "note", text: "" };
@@ -316,19 +349,17 @@ export class TabController {
   }
 
   private async searchKey(mode: Extract<Mode, { kind: "search" }>, key: Key): Promise<undefined> {
-    if (key.name === "escape" || key.name === "ctrl+c") {
-      this.mode = { kind: "list" };
-      this.picked = undefined;
-    } else if (key.name === "backspace") mode.text = mode.text.slice(0, -1);
+    if (key.name === "escape" || key.name === "ctrl+c") this.stopPicking({ kind: "list" }, ""); else if (key.name === "backspace") mode.text = mode.text.slice(0, -1);
     else if (key.name === "down" || key.name === "tab") this.move(1);
     else if (key.name === "up") this.move(-1);
     else if (key.name === "return") {
       const strand = this.current()?.strand;
-      this.mode = { kind: "list" };
+      this.stopPicking({ kind: "list" }, "");
       if (strand) this.reveal(strand);
     } else if (key.text) {
       mode.text += key.text;
       this.picked = undefined;
+      this.pickedAt = 0;
     }
     return undefined;
   }
@@ -437,7 +468,7 @@ export class TabController {
     if (key.name === "escape" || key.name === "ctrl+c") this.mode = { kind: "list" };
     else if (key.name === "backspace") mode.text = mode.text.slice(0, -1);
     else if (key.name === "return") {
-      const strand = this.current()?.strand;
+      const strand = mode.strand ?? this.current()?.strand;
       const text = mode.text.trim();
       if (mode.purpose === "snooze") return this.snoozeUntil(strand, text);
       this.mode = { kind: "list" };
@@ -468,8 +499,7 @@ export class TabController {
       case "escape":
       case "q":
       case "ctrl+c":
-        this.mode = { kind: "list" };
-        this.picked = picking.id;
+        this.stopPicking({ kind: "list" }, picking.id);
         return true;
     }
     return false;
@@ -480,18 +510,15 @@ export class TabController {
     if (this.pickedKey(moving, key)) return undefined;
     switch (key.name) {
       case "/":
-        this.picked = moving.id;
-        this.mode = { kind: "text", purpose: "move", text: "" };
+        this.stopPicking({ kind: "text", purpose: "move", text: "", strand: moving }, moving.id);
         return undefined;
       case "t":
-        this.mode = { kind: "list" };
-        this.picked = moving.id;
+        this.stopPicking({ kind: "list" }, moving.id);
         await this.run(() => this.actions.reparent(moving.id, ""), `${moving.name} is at the top`);
         return undefined;
       case "return":
         if (!target || this.cannotHold(moving, target)) return undefined;
-        this.mode = { kind: "list" };
-        this.picked = moving.id;
+        this.stopPicking({ kind: "list" }, moving.id);
         if (target.id !== moving.parent) await this.run(() => this.actions.reparent(moving.id, target.id), `${moving.name} is under ${target.name}`);
         return undefined;
     }
@@ -504,18 +531,15 @@ export class TabController {
     if (this.pickedKey(waiting, key)) return undefined;
     switch (key.name) {
       case "/":
-        this.picked = waiting.id;
-        this.mode = { kind: "text", purpose: "wait", text: "" };
+        this.stopPicking({ kind: "text", purpose: "wait", text: "", strand: waiting }, waiting.id);
         return undefined;
       case "c":
-        this.mode = { kind: "list" };
-        this.picked = waiting.id;
+        this.stopPicking({ kind: "list" }, waiting.id);
         await this.run(() => this.actions.unblock(waiting.id), `${waiting.name} no longer waits on other strands`);
         return undefined;
       case "return":
         if (!target || target.id === waiting.id) return undefined;
-        this.mode = { kind: "list" };
-        this.picked = waiting.id;
+        this.stopPicking({ kind: "list" }, waiting.id);
         if (isWaitingOn(waiting, target.id)) await this.run(() => this.actions.unblock(waiting.id, target.id), `${waiting.name} no longer waits on ${target.name}`);
         else await this.run(() => this.actions.block(waiting.id, target.id), `${waiting.name} waits on ${target.name}`);
         return undefined;

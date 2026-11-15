@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { openableLink } from "./actions.ts";
 import { createServer, parseSince, strandText } from "./mcp.ts";
 import { handle } from "./server.ts";
 import { harness } from "./test-harness.ts";
@@ -87,10 +88,25 @@ describe("the ponpoko MCP", () => {
     expect(await call("wait", { over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open).toEqual([]);
     expect(await call("wait", { over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    core.record("github", [
+      { type: "player.joined", player: "person:the-team", kind: "person", who: "the team" },
+      { type: "move.opened", move: "m-gh", strand: core.snapshot().strands.find((strand) => strand.name === "docs")!.id, player: "person:the-team", what: "0 of 1 reviews" },
+    ]);
+    await call("wait", { who: "the team", over: true, strand: "docs" });
+    await call("wait", { over: true, strand: "docs" });
+    expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.what)).toEqual(["0 of 1 reviews"]);
     expect(await call("wait", { over: true, strand: "nowhere at all" })).toContain("ponpoko knows of no strand nowhere at all");
     expect(await call("done", { strand: "sc-7 › review merlins" })).toBe("ponpoko: ponpoko knows of no strand sc-7 › review merlins; the nearest is sc-7 › review merlin");
     expect(await call("done", { strand: "merlin" })).toContain("the nearest is sc-7 › review merlin");
     expect(await call("status", {})).toContain("say what you're doing now in text");
     expect(await call("split", {})).toContain("give the strands to make in names");
+  });
+  test("o offers the notebook page, not the job or tab links ponpoko keeps on the strand", async () => {
+    const { core, call } = await setup();
+    await call("status", { text: "planning", page: "ponpoko/plan.md" });
+    core.workFor({ strand: "sc-7", player: "job:s1:9" });
+    const strand = core.snapshot().strands.find((candidate) => candidate.name === "sc-7")!;
+    expect(strand.links.map((link) => link.adapter).sort()).toContain("player-for");
+    expect(openableLink(strand)?.ref).toBe("ponpoko/plan.md");
   });
 });

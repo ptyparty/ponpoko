@@ -39,6 +39,8 @@ export async function readyDrafts(strand: StrandView, gh?: Gh): Promise<string> 
   return `Marked ${drafts.map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`;
 }
 
+const openable = new Set(["remax", prAdapter, "quoll"]);
+
 export function openableLink(strand: StrandView): Link | undefined {
   const moveLinks = strand.recent.flatMap((move) => move.links);
   const prs = ownPrs(strand).filter((pr) => pr.state !== "closed");
@@ -47,7 +49,7 @@ export function openableLink(strand: StrandView): Link | undefined {
     return pr ?? strand.links.find((link) => link.adapter === prAdapter && prs.some((own) => samePr(own.url, link.ref)));
   }
   return [...moveLinks, ...strand.links]
-    .filter((candidate) => candidate.adapter !== "dir" && !isBookkeeping(candidate))
+    .filter((candidate) => openable.has(candidate.adapter) && !isBookkeeping(candidate))
     .sort((a, b) => a.at - b.at)
     .at(-1);
 }

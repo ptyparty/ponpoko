@@ -257,11 +257,12 @@ export class Ponpoko {
     const facts: Fact[] = [];
     const named = report.who ? slug(report.who) : undefined;
     const players = named === undefined ? undefined : report.kind ? [report.kind === "you" ? you : `${report.kind}:${named}`] : named === "you" ? [you] : [`person:${named}`, `machine:${named}`];
+    const reported = (move: Move) => move.source === source && (move.player === you ? move.with !== undefined && move.with === agent?.id : agent === undefined || move.with === undefined || move.with === agent.id);
     const waits = openMoves(this.model, strand).filter((move) => {
-      if (players) return players.includes(move.player) && (move.player !== you || move.with === agent?.id);
-      if (move.player === you) return move.source === "agent" && move.with !== undefined && move.with === agent?.id;
+      if (!reported(move)) return false;
+      if (players) return players.includes(move.player);
       const kind = this.model.players.get(move.player)?.kind;
-      return kind === "person" || kind === "machine";
+      return move.player === you || kind === "person" || kind === "machine";
     });
     const blocking = Object.keys(this.model.strands.get(strand)?.blockedOn ?? {});
     for (const move of waits) facts.push({ type: "move.closed", move: move.id });

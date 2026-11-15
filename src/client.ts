@@ -26,7 +26,14 @@ export async function ask(request: Request, timeoutMs = 3000): Promise<unknown> 
           if (!data.includes(10)) return;
           const received = Buffer.concat(chunks).toString();
           const newline = received.indexOf("\n");
-          settle(() => resolve(JSON.parse(received.slice(0, newline)) as Response));
+          let parsed: Response;
+          try {
+            parsed = JSON.parse(received.slice(0, newline)) as Response;
+          } catch {
+            settle(() => reject(new Down("ponpoko answered with something that isn't JSON")));
+            return;
+          }
+          settle(() => resolve(parsed));
         },
         close: () => settle(() => reject(new Down("ponpoko closed the connection before answering"))),
         error: (_socket, error) => settle(() => reject(new Down(error.message))),

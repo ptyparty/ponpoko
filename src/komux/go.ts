@@ -2,7 +2,7 @@ import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } fro
 import { prRef } from "../github.ts";
 import { isBookkeeping, mentionLink, prAdapter } from "../inbox.ts";
 import { sendKomux } from "./stream.ts";
-import { komuxProjects, projectNamed, type Project } from "./projects.ts";
+import { knownProjects, loadProjects, projectNamed, type Project } from "./projects.ts";
 import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
 export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string; result?: unknown }>;
@@ -13,6 +13,7 @@ export async function goInKomux(strand: StrandView, strands: StrandView[], env =
   const socket = env.KOMUX_SOCKET;
   if (!socket) throw new Error("go works from inside komux");
   const send = control ?? ((request: unknown) => sendKomux(socket, request));
+  await loadProjects(env).catch(() => undefined);
   const target = goTarget(strand, strands, env);
   const place = target ? komuxPlace(target.player) : undefined;
   if (target && place && target.player.live && place.session === env.KOMUX_SESSION && place.server === env.KOMUX_SERVER_ID) {
@@ -109,7 +110,7 @@ export function goPlace(strand: StrandView, above: StrandView[], env: Record<str
 }
 
 export function projectOf(strand: { name: string }, env: Record<string, string | undefined> = process.env): Project | undefined {
-  return projectNamed(strand.name, komuxProjects(env));
+  return projectNamed(strand.name, knownProjects(env));
 }
 
 export function tabOf(strand: StrandView): KomuxTabRef | undefined {
@@ -178,6 +179,7 @@ export async function pickUpInKomux(strand: StrandView, how: "resume" | "fresh",
   const socket = env.KOMUX_SOCKET;
   if (!socket) throw new Error("picking a strand up works from inside komux");
   const send = control ?? ((request: unknown) => sendKomux(socket, request));
+  await loadProjects(env).catch(() => undefined);
   const options = how === "fresh" ? startsAt(strand, env) : pickup(strand, env);
   const resume = how === "resume" ? options?.resume : undefined;
   if (how === "resume" && !resume) throw new Error("no Claude on this strand to resume");

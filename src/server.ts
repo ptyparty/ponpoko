@@ -69,14 +69,14 @@ export async function serve(): Promise<void> {
   const core = new Ponpoko(new Store());
   const watchers = new Set<Socket<Connection>>();
   core.onChange(() => {
-    for (const socket of watchers) send(socket, '{"changed":true}\n');
+    for (const socket of watchers) notify(socket);
   });
   const expiry = setInterval(() => core.expire(), 15_000);
 
   const server = Bun.listen<Connection>({
     unix: path,
     socket: {
-      open: (socket) => void (socket.data = { buffer: "", pending: [], ending: false }),
+      open: (socket) => void (socket.data = { buffer: "", pending: [], ending: false, changed: false }),
       ...answering(core, watchers),
       close: (socket) => void watchers.delete(socket),
       error: (socket) => void watchers.delete(socket),
@@ -93,7 +93,7 @@ export async function serve(): Promise<void> {
   console.log(`ponpoko listening on ${path}`);
 }
 
-type Connection = { buffer: string; pending: Uint8Array[]; ending: boolean };
+type Connection = { buffer: string; pending: Uint8Array[]; ending: boolean; changed?: boolean };
 
 export function answering(core: Ponpoko, watchers: Set<Socket<Connection>>) {
   return {
@@ -135,6 +135,12 @@ export function send(socket: Socket<Connection>, text: string): void {
   flush(socket);
 }
 
+export function notify(socket: Socket<Connection>): void {
+  if (socket.data.changed) return;
+  socket.data.changed = true;
+  send(socket, '{"changed":true}\n');
+}
+
 export function flush(socket: Socket<Connection>): void {
   const pending = socket.data.pending;
   while (pending.length > 0) {
@@ -146,6 +152,7 @@ export function flush(socket: Socket<Connection>): void {
       return;
     }
   }
+  socket.data.changed = false;
   if (socket.data.ending) socket.end();
 }
 

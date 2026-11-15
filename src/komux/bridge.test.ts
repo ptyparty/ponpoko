@@ -6,6 +6,7 @@ import { harness, strandNamed } from "../test-harness.ts";
 import { inboxFacts } from "../inbox.ts";
 import { handle } from "../server.ts";
 import { forRequest, readFor, runFor } from "./for.ts";
+import { loadProjects, readRoots } from "./projects.ts";
 import { Bridge } from "./bridge.ts";
 import { komuxLine } from "./stream.ts";
 import { brief, goInKomux, goTarget, pickup, pickupOffer, pickUpInKomux } from "./go.ts";
@@ -534,6 +535,8 @@ describe("go in komux", () => {
     const strands = core.snapshot().strands;
     const story = strandNamed(core, "sc-900 › sc-901");
     const step = strandNamed(core, "sc-900 › sc-901 › implement");
+    expect(goTarget(story, strands, projects)?.player.id).toBe("pane:s1:9");
+    await loadProjects(projects);
     expect(goTarget(story, strands, projects)).toBeUndefined();
     const { sent, control } = recorder();
     await goInKomux(story, strands, projects, control);
@@ -544,6 +547,11 @@ describe("go in komux", () => {
       { method: "project.open", params: { target: join(work, "stories/sc-901") } },
       { method: "tab.focus", params: { tabId: 4 } },
     ]);
+  });
+
+  test("reads komux's project roots from its config without running it", () => {
+    expect(readRoots(`import p from "./p.ts";\nexport default {\n  projects: {\n    roots: ["~/work/*/*", '~/work/ptyparty'],\n    layout: "ide",\n  },\n};`)).toEqual(["~/work/*/*", "~/work/ptyparty"]);
+    expect(readRoots("export default { layouts: {} };")).toBeUndefined();
   });
 
   test("a strand no one is on goes to a Claude already in the tab it lives in, rather than offering a new one", async () => {

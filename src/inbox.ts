@@ -46,7 +46,18 @@ export function inboxFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: s
 
 export type OwnPrView = { url: string; repo: string; number: number; title: string; branch: string; draft: boolean; state: "waiting" | "yours" | "draft" | "closed"; who?: string; what: string };
 
+const parsedPrs = new WeakMap<object, OwnPrView[]>();
+
 export function ownPrs(strand: { links: { adapter: string; ref: string; at: number }[] }): OwnPrView[] {
+  const cached = parsedPrs.get(strand.links);
+  if (cached) return cached;
+  const views = readOwnPrs(strand.links);
+  parsedPrs.set(strand.links, views);
+  return views;
+}
+
+function readOwnPrs(links: { adapter: string; ref: string; at: number }[]): OwnPrView[] {
+  const strand = { links };
   const latest = new Map<string, { at: number; view: OwnPrView }>();
   for (const link of strand.links) {
     if (link.adapter !== ownStateAdapter) continue;

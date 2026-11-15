@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Socket } from "bun";
 import { Ponpoko } from "./core.ts";
-import { answering, flush, send } from "./server.ts";
+import { answering, flush, notify, send } from "./server.ts";
 import { Store } from "./store.ts";
 
 function fakeSocket(room: number[]) {
@@ -35,6 +35,16 @@ describe("answering over the socket", () => {
     flush(socket);
     expect(text()).toBe("hello wörld and more\n");
     expect(ended()).toBe(true);
+  });
+
+  test("a stalled watcher holds at most one change notice", () => {
+    const { socket, text } = fakeSocket([0]);
+    for (let at = 0; at < 50; at++) notify(socket);
+    expect(socket.data.pending).toHaveLength(1);
+    flush(socket);
+    expect(text()).toBe('{"changed":true}\n');
+    notify(socket);
+    expect(text()).toBe('{"changed":true}\n{"changed":true}\n');
   });
 
   test("keeps a watcher open after writing", () => {

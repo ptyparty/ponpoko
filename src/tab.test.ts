@@ -74,6 +74,33 @@ describe("the command tab", () => {
     expect(tab.current()?.fold).toBe(true);
     await tab.key({ name: "return" });
     expect(plain(tab.view(140, 30)).join("\n")).toMatch(/▾ then: [^\n]*\n {6}⊘ Gadgets: fees by charge +sc-3 +waiting on sc-2/);
+    await tab.key({ name: "return" });
+    core.add(strandNamed(core, "sc-1 › sc-4").id, "door fee notes");
+    tab.setSnapshot(core.snapshot());
+    await tab.key({ name: "/", text: "/" });
+    for (const char of "door fee notes") await tab.key({ name: char, text: char });
+    await tab.key({ name: "return" });
+    expect(tab.current()?.strand?.name).toBe("door fee notes");
+    expect(plain(tab.view(140, 30)).join("\n")).toMatch(/▾ then: [^\n]*\n[^\n]*sc-3[^\n]*\n[^\n]*sc-4[^\n]*\n▎ +● door fee notes/);
+  });
+
+  test("the cursor stays where it was when the picked row goes away", async () => {
+    const { core, now } = harness();
+    for (const name of ["a", "b", "c", "d"]) core.add(undefined, name);
+    const tab = new TabController(recordingActions().actions, now);
+    tab.setSnapshot(core.snapshot());
+    await tab.key({ name: "j" });
+    await tab.key({ name: "j" });
+    expect(tab.current()?.strand?.name).toBe("c");
+    core.done(strandNamed(core, "c").id);
+    tab.setSnapshot(core.snapshot());
+    expect(tab.current()?.strand?.name).toBe("d");
+    core.done(strandNamed(core, "d").id);
+    tab.setSnapshot(core.snapshot());
+    expect(tab.current()?.strand?.name).toBe("b");
+    await tab.key({ name: "m" });
+    await tab.key({ name: "escape" });
+    expect(tab.current()?.strand?.name).toBe("b");
   });
 
   test("1 2 3 and tab switch areas, and / searches names and titles across all of them", async () => {

@@ -30,6 +30,7 @@ export async function runFor(args: string[], env = process.env, send: (request: 
   else await send(request).catch((error: Error) => console.error(`ponpoko for: ${error.message}`));
   if (claim.command.length === 0) return 0;
   const child = Bun.spawn(claim.command, { stdin: "inherit", stdout: "inherit", stderr: "inherit", env });
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => child.kill(signal));
+  process.on("SIGINT", () => undefined);
+  process.on("SIGTERM", () => child.kill("SIGTERM"));
   return await child.exited;
 }
