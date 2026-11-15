@@ -45,6 +45,7 @@ export const request = z.discriminatedUnion("method", [
   z.object({ method: z.literal("done"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("close-move"), params: z.object({ move: z.string() }) }),
   z.object({ method: z.literal("seen"), params: z.object({ strand: z.string() }) }),
+  z.object({ method: z.literal("start"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("forget"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("snooze"), params: z.object({ strand: z.string(), until: z.number(), untilNeeded: z.literal(false, "snooze till needed is gone; reopen this ponpoko screen").optional() }) }),
   z.object({ method: z.literal("note"), params: z.object({ strand: z.string(), text: z.string().min(1).max(500) }) }),
@@ -217,6 +218,9 @@ export function handle(core: Ponpoko, request: Request): Response {
         return { ok: true };
       case "close-move":
         core.closeMove(request.params.move);
+        return { ok: true };
+      case "start":
+        core.start(request.params.strand);
         return { ok: true };
       case "seen":
         core.seen(request.params.strand);

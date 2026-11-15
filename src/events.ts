@@ -18,6 +18,7 @@ export const fact = z.discriminatedUnion("type", [
   z.object({ type: z.literal("strand.merged"), strand: id, into: id }),
   z.object({ type: z.literal("strand.note"), strand: id, text: z.string() }),
   z.object({ type: z.literal("strand.blocked"), strand: id, on: id }),
+  z.object({ type: z.literal("strand.planned"), strand: id, planned: z.boolean() }),
   z.object({ type: z.literal("strand.unblocked"), strand: id, on: id }),
   z.object({ type: z.literal("strand.seen"), strand: id }),
   z.object({ type: z.literal("strand.dismissed"), strand: id }),

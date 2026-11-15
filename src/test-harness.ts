@@ -3,12 +3,12 @@ import { Ponpoko } from "./core.ts";
 import { Bridge } from "./komux/bridge.ts";
 import { komuxLine } from "./komux/stream.ts";
 import { handle, request } from "./server.ts";
-import type { TitleLookup } from "./shortcut.ts";
+import type { EpicLookup, TitleLookup } from "./shortcut.ts";
 import { Store } from "./store.ts";
 
 process.env.PONPOKO_PROJECT_ROOTS ??= "";
 
-export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko, lookupTitle: TitleLookup = async () => ({ kind: "story", title: "Widget CSV import" }), strandsExist = true) {
+export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko, lookupTitle: TitleLookup = async () => ({ kind: "story", title: "Widget CSV import" }), strandsExist = true, lookupEpic: EpicLookup = async () => []) {
   let now = start;
   let ids = 0;
   const core = shared ?? new Ponpoko(store, () => now, (prefix) => `${prefix}${++ids}`);
@@ -30,6 +30,10 @@ export function harness(start = 1_000_000, store = new Store(":memory:"), shared
     },
     () => now,
     lookupTitle,
+    undefined,
+    undefined,
+    undefined,
+    lookupEpic,
   );
   const labelled = (line: Record<string, unknown>) => {
     const tabs = [...((line.tabs as { labels?: Record<string, string> }[] | undefined) ?? []), ...(line.tab ? [line.tab as { labels?: Record<string, string> }] : [])];
@@ -61,6 +65,7 @@ export function recordingActions() {
     note: record("note"),
     point: record("point"),
     seen: record("seen"),
+    start: record("start"),
     add: record("add"),
     reparent: record("reparent"),
     block: record("block"),

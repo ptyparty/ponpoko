@@ -78,7 +78,7 @@ export class Dealer {
   }
 
   private dealOthers(snapshot: Snapshot, newest: (a: StrandView, b: StrandView) => number): void {
-    const listed = snapshot.strands.filter((strand) => !isPooled(strand) && strand.id !== reviewsId && strand.id !== mentionsId);
+    const listed = snapshot.strands.filter((strand) => !isPooled(strand) && !strand.planned && strand.id !== reviewsId && strand.id !== mentionsId);
     const asleep = (strand: StrandView) => (strand.snoozedUntil ?? 0) > snapshot.now;
     const awake = listed.filter((strand) => !asleep(strand) && strand.own.whose !== "you");
     const agents = awake.filter((strand) => strand.own.whose === "agent" || onOwnJob(strand));

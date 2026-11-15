@@ -11,6 +11,7 @@ export type Strand = {
   seenAt: number;
   dismissedAt: number;
   snoozedUntil?: number;
+  planned?: boolean;
   blockedOn: Record<string, number>;
   notes: { at: number; text: string }[];
 };
@@ -120,6 +121,12 @@ function applyFact(model: Model, event: Recorded): void {
         strand.blockedOn[event.on] = event.at;
       });
       return;
+    case "strand.planned":
+      withStrand(model, event.strand, (strand) => {
+        if (event.planned) strand.planned = true;
+        else delete strand.planned;
+      });
+      return;
     case "strand.unblocked":
       withStrand(model, event.strand, (strand) => void delete strand.blockedOn[event.on]);
       return;
@@ -153,6 +160,7 @@ function applyFact(model: Model, event: Recorded): void {
     case "move.opened":
       if (!model.strands.has(event.strand)) return;
       model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, from: event.at, source: event.source });
+      delete model.strands.get(event.strand)!.planned;
       wake(model, [event.strand]);
       return;
     case "move.described": {
@@ -324,7 +332,7 @@ export function own(model: Model, strand: Strand): Standing {
       const blocker = model.strands.get(on);
       return blocker ? [{ blocker, since, ended: endedAt(model, blocker) }] : [];
     });
-    const finished = strand.kind === "inbox" ? undefined : [
+    const finished = strand.kind === "inbox" || strand.planned ? undefined : [
       ...kids.filter((child) => child.done !== undefined && child.done > quiet).map((child) => ({ strand: child, at: child.done! })),
       ...blocking.filter(({ since, ended }) => ended !== undefined && ended > since && ended > quiet).map(({ blocker, ended }) => ({ strand: blocker, at: ended! })),
     ].sort((a, b) => b.at - a.at)[0];
@@ -335,6 +343,7 @@ export function own(model: Model, strand: Strand): Standing {
     else if (holding) standing = { since: holding.since, why: `waiting on ${holding.blocker.name}`, moves: [], waitsOn: holding.blocker.id };
     else if (busiest) standing = { since: busiest.standing.since, why: `waiting on ${busiest.child.name}`, moves: [], waitsOn: busiest.child.id };
     else if (live.length > 0) standing = { since: strand.made, why: "", moves: [] };
+    else if (strand.planned) standing = { since: strand.made, why: "ready to start", moves: [] };
     else standing = { whose: "you", since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "no one on it", moves: [] };
   }
   index.own.set(strand.id, standing);

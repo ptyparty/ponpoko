@@ -36,6 +36,7 @@ const help = [
   "   x         forget a strand ponpoko has wrong",
   "   p         point the strand's directory at a strand, so agents there work on it",
   "   c         mark the strand caught up, so its moves are no longer new",
+  "   s         start a planned strand, so it's yours until someone takes a turn on it",
   "   l         show the log of what ponpoko heard, newest first; leader m l opens it as a popup",
   "   q         quit",
   "",
@@ -342,6 +343,10 @@ export class TabController {
       case "c":
         if (strand) await this.run(() => this.actions.seen(strand.id), `${strand.name} caught up`);
         return undefined;
+      case "s":
+        if (strand?.planned) await this.run(() => this.actions.start(strand.id), `${strand.name} is started: it's yours until someone takes a turn on it`);
+        else this.message = "Only a planned strand can be started";
+        return undefined;
       case "l":
         this.mode = { kind: "log" };
         return undefined;
@@ -469,6 +474,7 @@ export class TabController {
     const keys: [string, string][] = [
       ...(!row.fold && strand && this.hasOwnStrands(strand) ? [["␣", this.opened.has(strand.id) ? "fold its strands" : "its strands"] as [string, string]] : []),
       ...(strand && isPooled(strand) ? [["y", "take it"] as [string, string]] : []),
+      ...(strand?.planned ? [["s", "start"] as [string, string]] : []),
       ...(row.pr || (strand && openableLink(strand)) ? [["o", row.pr || strand?.kind === "review" ? "on GitHub" : "open"] as [string, string]] : []),
       ...(strand && draftsOf(strand).length > 0 ? [["R", "mark ready"] as [string, string]] : []),
       ...(strand && !row.fold ? [["d", "done"], ["z", "snooze"], ["a", "add"], ["m", "move"], ["w", "wait on"]] as [string, string][] : []),

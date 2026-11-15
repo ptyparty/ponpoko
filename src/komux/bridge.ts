@@ -8,7 +8,8 @@ import { pickWhose, whoseOf } from "../model.ts";
 import { fetchInbox, type Inbox } from "../github.ts";
 import { hasOpenPr, inboxFacts, isReviewId, prLinkIds, source as githubSource, unwatchedPrs } from "../inbox.ts";
 import { savePool, type Pool } from "../unreviewed.ts";
-import { shortcutTitle, storyNumber, type TitleLookup } from "../shortcut.ts";
+import { epicStories, shortcutTitle, storyNumber, type EpicLookup, type TitleLookup } from "../shortcut.ts";
+import { epicFacts, epicsToImport } from "../epics.ts";
 import { reviewLayout } from "./go.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
 import { known, komuxPlace, tabStrand, Translator, type Known } from "./translate.ts";
@@ -42,6 +43,8 @@ export class Bridge {
   private inboxError: string | undefined;
   private readonly nudged = new Set<string>();
   private readonly prLinksSeen = new Set<string>();
+  private readonly importing = new Set<string>();
+  private readonly importFailed = new Map<string, number>();
 
   constructor(
     private readonly service: Service,
@@ -51,6 +54,7 @@ export class Bridge {
     private readonly lookupInbox: (() => Promise<Inbox>) | undefined = undefined,
     private readonly newId: (prefix: string) => string = (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`,
     private readonly keepPool: (pool: Pool) => void = () => undefined,
+    private readonly lookupEpic: EpicLookup = epicStories,
   ) {}
 
   async pollInbox(inTurn: <T>(work: () => Promise<T>) => Promise<T> = (work) => work()): Promise<boolean> {
@@ -117,6 +121,7 @@ export class Bridge {
       const presence = this.translator.presence(known(knowledge));
       if (presence) await this.service.present({ adapter: "komux", ...presence });
       this.askTitles(knowledge);
+      this.importEpics(knowledge);
       await this.syncBadges(knowledge);
     } catch {
       this.behind = true;
@@ -149,6 +154,26 @@ export class Bridge {
     } catch {
       this.behind = true;
       return false;
+    }
+  }
+
+  private importEpics(knowledge: Knowledge): void {
+    for (const { strand, epic } of epicsToImport(knowledge)) {
+      if (this.importing.has(strand) || this.now() < (this.importFailed.get(strand) ?? Number.NEGATIVE_INFINITY) + titleRetryMs) continue;
+      this.importing.add(strand);
+      void this.lookupEpic(epic)
+        .then(async (stories) => {
+          this.cached = undefined;
+          const facts = epicFacts(await this.knowledge(), strand, epic, stories, this.newId);
+          await this.service.record(facts, "shortcut");
+          this.cached = undefined;
+          this.importFailed.delete(strand);
+        })
+        .catch((error: Error) => {
+          this.importFailed.set(strand, this.now());
+          console.error(`ponpoko: importing epic sc-${epic} from Shortcut: ${error.message}`);
+        })
+        .finally(() => this.importing.delete(strand));
     }
   }
 

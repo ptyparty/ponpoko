@@ -46,7 +46,8 @@ export type StrandView = Strand & {
   spaces: { label: string; short: string; handle?: string }[];
   dir?: string;
 };
-export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
+export type Ended = Pick<Strand, "id" | "name" | "title" | "parent" | "kind" | "blockedOn" | "done">;
+export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string>; ended?: Ended[] };
 export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[]; answered: string[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
@@ -129,7 +130,7 @@ export class Ponpoko {
       closed: [...this.model.strands.values()].filter((strand) => strand.done !== undefined),
       players: [...this.model.players.values()].filter((player) => player.gone === undefined),
       open: moves.filter((move) => move.until === undefined),
-      links: [...this.model.links.values()].filter((link) => link.adapter === "dir" || link.adapter === "komux" || link.adapter === forAdapter || link.adapter.startsWith("github")),
+      links: [...this.model.links.values()].filter((link) => link.adapter === "dir" || link.adapter === "komux" || link.adapter === forAdapter || link.adapter.startsWith("github") || link.adapter.startsWith("shortcut")),
       on,
       resumed,
       spoke: [...new Set(moves.filter((move) => move.source === "agent" || (move.described !== undefined && move.player !== you)).map((move) => move.strand))],
@@ -205,6 +206,9 @@ export class Ponpoko {
       unseen: moves.filter((strand) => strand.unseen).map((strand) => strand.id),
       heard,
       labels: this.labelsFor(heard),
+      ended: [...this.model.strands.values()]
+        .filter((strand) => strand.done !== undefined && strand.parent !== undefined && byId.has(strand.parent))
+        .map(({ id, name, title, parent, kind, blockedOn, done }) => ({ id, name, ...(title ? { title } : {}), ...(parent ? { parent } : {}), ...(kind ? { kind } : {}), blockedOn, ...(done !== undefined ? { done } : {}) })),
     };
   }
 
@@ -423,6 +427,10 @@ export class Ponpoko {
     const strand = this.model.strands.get(found.strand);
     if (answers?.kind === "job" && strand?.kind === "loose") facts.push({ type: "strand.forgotten", strand: strand.id });
     this.record("you", facts);
+  }
+
+  start(strand: string): void {
+    if (this.mustHave(strand).planned) this.record("you", [{ type: "strand.planned", strand, planned: false }]);
   }
 
   seen(strand: string): void {

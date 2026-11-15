@@ -17,6 +17,7 @@ export type Actions = {
   note: (strand: string, text: string) => Promise<unknown>;
   point: (dir: string, to: string) => Promise<unknown>;
   seen: (strand: string) => Promise<unknown>;
+  start: (strand: string) => Promise<unknown>;
   add: (parent: string | undefined, name: string) => Promise<unknown>;
   reparent: (strand: string, to: string) => Promise<unknown>;
   block: (strand: string, on: string) => Promise<unknown>;
@@ -39,7 +40,7 @@ export async function readyDrafts(strand: StrandView, gh?: Gh, url?: string): Pr
   return `Marked ${drafts.map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`;
 }
 
-const openable = new Set(["remax", prAdapter, "quoll"]);
+const openable = new Set(["remax", prAdapter, "quoll", "shortcut"]);
 
 export function openableLink(strand: StrandView): Link | undefined {
   const moveLinks = strand.recent.flatMap((move) => move.links);
@@ -81,6 +82,7 @@ export const serviceActions: Actions = {
   note: (strand, text) => ask({ method: "note", params: { strand, text } }),
   point: (dir, to) => ask({ method: "point", params: { dir, to } }),
   seen: (strand) => ask({ method: "seen", params: { strand } }),
+  start: (strand) => ask({ method: "start", params: { strand } }),
   add: (parent, name) => ask({ method: "add", params: { ...(parent ? { parent } : {}), name } }),
   reparent: (strand, to) => ask({ method: "reparent", params: { strand, to } }),
   block: (strand, on) => ask({ method: "block", params: { strand, on } }),
@@ -91,7 +93,7 @@ export const serviceActions: Actions = {
   ready: (strand, url) => readyDrafts(strand, undefined, url),
   open: async (link) => {
     if (link.adapter === "remax") return showTour(link, process.env.KOMUX_TAB_DIR);
-    if (link.adapter === prAdapter) return openUrl(link.ref);
+    if (link.adapter === prAdapter || link.adapter === "shortcut") return openUrl(link.ref);
     if (link.adapter !== "quoll") throw new Error(`ponpoko can't open ${link.adapter} links yet`);
     const shown = Bun.spawnSync(["quoll", "show", link.ref], { stdout: "pipe", stderr: "pipe" });
     if (shown.exitCode !== 0) throw new Error(`quoll show: ${shown.stderr.toString().trim() || shown.stdout.toString().trim()}`);
