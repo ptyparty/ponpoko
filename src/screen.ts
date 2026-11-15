@@ -101,7 +101,7 @@ export function keyLine(keys: [string, string][], width = Number.POSITIVE_INFINI
 
 export type Screen = { width: number; height: number; draw: (lines: string[]) => void; close: () => void };
 
-export function openScreen(onKey: (key: Key) => void, onResize: () => void): Screen {
+export function openScreen(onKey: (key: Key) => void, onResize: () => void, onWake: () => void = onResize): Screen {
   const out = process.stdout;
   out.write("\x1b[?1049h\x1b[?25l");
   process.stdin.setRawMode?.(true);
@@ -111,23 +111,21 @@ export function openScreen(onKey: (key: Key) => void, onResize: () => void): Scr
     for (const key of parseKeys(data)) onKey(key);
   };
   process.stdin.on("data", listener);
-  let last = 0;
-  let again: ReturnType<typeof setTimeout> | undefined;
+  let resizedAt = 0;
+  let waking: ReturnType<typeof setTimeout> | undefined;
   const resized = () => {
-    const now = Date.now();
-    if (now - last < 50) {
-      again ??= setTimeout(() => {
-        again = undefined;
-        last = Date.now();
-        onResize();
-      }, 50);
-      return;
-    }
-    last = now;
+    resizedAt = Date.now();
     onResize();
   };
+  const signalled = () => {
+    const at = Date.now();
+    waking ??= setTimeout(() => {
+      waking = undefined;
+      if (resizedAt < at - 50) onWake();
+    }, 30);
+  };
   out.on("resize", resized);
-  process.on("SIGWINCH", resized);
+  process.on("SIGWINCH", signalled);
   const screen: Screen = {
     get width() {
       return out.columns ?? 100;
@@ -141,8 +139,8 @@ export function openScreen(onKey: (key: Key) => void, onResize: () => void): Scr
     close: () => {
       process.stdin.off("data", listener);
       out.off("resize", resized);
-      process.off("SIGWINCH", resized);
-      if (again) clearTimeout(again);
+      process.off("SIGWINCH", signalled);
+      if (waking) clearTimeout(waking);
       process.stdin.setRawMode?.(false);
       process.stdin.pause();
       out.write("\x1b[?25h\x1b[?1049l");

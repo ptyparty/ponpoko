@@ -95,6 +95,10 @@ describe("the ponpoko MCP", () => {
     await call("wait", { who: "the team", over: true, strand: "docs" });
     await call("wait", { over: true, strand: "docs" });
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.what)).toEqual(["0 of 1 reviews"]);
+    core.block(core.snapshot().strands.find((strand) => strand.name === "docs")!.id, core.snapshot().strands.find((strand) => strand.name === "review merlin")!.id);
+    await call("wait", { over: true, strand: "docs" });
+    await call("wait", { over: true, strand: "docs" });
+    expect(Object.keys(core.snapshot().strands.find((strand) => strand.name === "docs")!.blockedOn)).toHaveLength(1);
     expect(await call("wait", { over: true, strand: "nowhere at all" })).toContain("ponpoko knows of no strand nowhere at all");
     expect(await call("done", { strand: "sc-7 › review merlins" })).toBe("ponpoko: ponpoko knows of no strand sc-7 › review merlins; the nearest is sc-7 › review merlin");
     expect(await call("done", { strand: "merlin" })).toContain("the nearest is sc-7 › review merlin");

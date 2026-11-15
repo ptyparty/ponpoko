@@ -95,6 +95,11 @@ describe("the komux bridge", () => {
     await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
     await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "idle", sessionId: "e1" } });
     expect(line(core, "sc-900")).toBe("sc-900 you you(pane:s1:9): ready for a prompt");
+    await hear({ type: "agent.state", agent: { paneId: 10, tabId: 3, state: "working", sessionId: "e2" } });
+    await hear({ type: "agent.state", agent: { paneId: 10, tabId: 3, state: "done", sessionId: "e2", background: { agents: 2, tasks: 0 } } });
+    expect(shown(core)).toContain("pane:s1:10: 2 background agents");
+    await hear({ type: "agent.state", agent: { paneId: 10, tabId: 3, state: "idle", sessionId: "e2" } });
+    expect(shown(core)).toContain("you(pane:s1:10): ready for a prompt");
   });
 
   test("a question open in komux is your move, and answering it hands the move back", async () => {
@@ -297,6 +302,10 @@ describe("the komux bridge", () => {
     expect(readFor(["sc-1 › gadgets", "--", "scripts/build", "-v"], {})).toEqual({ strand: "sc-1 › gadgets", command: ["scripts/build", "-v"] });
     expect(readFor(["--", "scripts/build"], { PONPOKO_STRAND: "gadgets" })).toEqual({ strand: "gadgets", command: ["scripts/build"] });
     expect(readFor(["--", "scripts/build"], {})).toContain("name the strand");
+    expect(readFor(["scripts/build", "-v"], { PONPOKO_STRAND: "gadgets" })).toEqual({ strand: "gadgets", command: ["scripts/build", "-v"] });
+    expect(await runFor(["nowhere", "--", "true"], { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9", PATH: process.env.PATH }, async () => {
+      throw new Error("ponpoko knows of no strand nowhere");
+    })).toBe(1);
     expect(forRequest("gadgets", { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9" }, "/w")).toEqual({ method: "for", params: { strand: "gadgets", player: "job:s1:9", dir: "/w" } });
     expect(forRequest("gadgets", {}, "/w")).toBeUndefined();
     const sent: unknown[] = [];
@@ -572,12 +581,14 @@ describe("go in komux", () => {
 
   test("a story under an epic opens its own komux project rather than the epic's tab, the deepest strand with a project winning", async () => {
     const work = mkdtempSync(join(tmpdir(), "ponpoko-projects-"));
-    for (const dir of ["stories/sc-900", "stories/sc-901", "repos/gadgets"]) mkdirSync(join(work, dir), { recursive: true });
+    for (const dir of ["stories/sc-900", "stories/sc-901", "repos/gadgets", "repos/merlin"]) mkdirSync(join(work, dir), { recursive: true });
     const projects = { ...env, PONPOKO_PROJECT_ROOTS: `${work}/stories/*:${work}/repos/*` };
     const { core, hear } = harness();
     await hear({ type: "snapshot", tabs: [{ id: 4, number: 4, name: "epic", dir: join(work, "stories/sc-900"), labels: { strand: "sc-900" } }], agents: [{ paneId: 9, tabId: 4, state: "working", sessionId: "e1" }], jobs: [] });
     await hear({ type: "agent.state", agent: { paneId: 9, tabId: 4, state: "done", sessionId: "e1" } });
     core.add(strandNamed(core, "sc-900").id, "sc-901 › implement");
+    core.add(strandNamed(core, "sc-900").id, "sc-901 › merlin");
+    core.add(undefined, "gadgets");
     core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:9"], spaces: [] });
     core.status({ self: "komux:s1:9", strand: "sc-901", text: "mapping the story" });
     core.status({ self: "komux:s1:9", strand: "sc-900", text: "back on the epic" });
@@ -590,10 +601,14 @@ describe("go in komux", () => {
     const { sent, control } = recorder();
     await goInKomux(story, strands, projects, control);
     await goInKomux(step, strands, projects, control);
+    await goInKomux(strandNamed(core, "sc-900 › sc-901 › merlin"), strands, projects, control);
+    await goInKomux(strandNamed(core, "gadgets"), strands, projects, control);
     await goInKomux(story, strands, { ...projects, PONPOKO_PROJECT_ROOTS: "" }, control);
     expect(sent).toEqual([
       { method: "project.open", params: { target: join(work, "stories/sc-901") } },
       { method: "project.open", params: { target: join(work, "stories/sc-901") } },
+      { method: "project.open", params: { target: join(work, "stories/sc-901") } },
+      { method: "project.open", params: { target: join(work, "repos/gadgets") } },
       { method: "tab.focus", params: { tabId: 4 } },
     ]);
   });

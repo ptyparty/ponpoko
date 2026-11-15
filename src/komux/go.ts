@@ -2,6 +2,7 @@ import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } fro
 import { prRef } from "../github.ts";
 import { isBookkeeping, mentionLink, prAdapter } from "../inbox.ts";
 import { sendKomux } from "./stream.ts";
+import { storyNumber } from "../shortcut.ts";
 import { knownProjects, loadProjects, projectNamed, type Project } from "./projects.ts";
 import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
@@ -103,14 +104,24 @@ export function tabStrands(strands: StrandView[], server: string, tabId: number)
 export function goPlace(strand: StrandView, above: StrandView[], env: Record<string, string | undefined> = process.env): { dir: string; tab?: KomuxTabRef } | undefined {
   for (const at of [strand, ...above]) {
     const tab = tabOf(at);
-    const dir = tab?.dir ?? at.links.find((link) => link.adapter === "dir")?.ref ?? projectOf(at, env)?.dir ?? lastDir(at);
+    const dir = tab?.dir ?? at.links.find((link) => link.adapter === "dir")?.ref ?? storyProject(at, env)?.dir ?? lastDir(at);
     if (dir) return { dir, ...(tab ? { tab } : {}) };
   }
-  return strand.dir ? { dir: strand.dir } : undefined;
+  if (strand.dir) return { dir: strand.dir };
+  const project = [strand, ...above].map((at) => projectOf(at, env)).find(Boolean);
+  return project ? { dir: project.dir } : undefined;
 }
 
 export function projectOf(strand: { name: string }, env: Record<string, string | undefined> = process.env): Project | undefined {
   return projectNamed(strand.name, knownProjects(env));
+}
+
+function storyProject(strand: { name: string; kind?: string }, env: Record<string, string | undefined>): Project | undefined {
+  return isStoryName(strand) ? projectOf(strand, env) : undefined;
+}
+
+function isStoryName(strand: { name: string; kind?: string }): boolean {
+  return storyNumber(strand.name) !== undefined || strand.kind === "story" || strand.kind === "epic";
 }
 
 export function tabOf(strand: StrandView): KomuxTabRef | undefined {
@@ -146,7 +157,7 @@ export function startsAt(strand: StrandView, env: Record<string, string | undefi
   const agent = last ? (last.answers ?? last.by) : undefined;
   const place = agent ? komuxPlace(agent) : undefined;
   const resume = last && agent && place ? { session: agent.resume!, dir: place.dir, who: agent.who, at: last.until ?? last.from } : undefined;
-  const dir = tabOf(strand)?.dir ?? strand.links.find((link) => link.adapter === "dir")?.ref ?? projectOf(strand, env)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand);
+  const dir = tabOf(strand)?.dir ?? strand.links.find((link) => link.adapter === "dir")?.ref ?? storyProject(strand, env)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand) ?? projectOf(strand, env)?.dir;
   if (!resume && !dir) return undefined;
   return { ...(resume ? { resume } : {}), ...(dir ? { dir } : {}) };
 }

@@ -32,7 +32,7 @@ export type Inbox = {
   complete?: { reviews: boolean; mentioned: boolean; mine?: boolean; pool?: boolean };
 };
 
-export type OwnState = { kind: "waiting"; who: string; whoKind: "person" | "machine"; what: string } | { kind: "yours"; what: string } | { kind: "draft"; what: string };
+export type OwnState = { kind: "waiting"; who: string; whoKind: "person" | "machine"; what: string } | { kind: "yours"; what: string; approved?: true } | { kind: "draft"; what: string };
 
 export const theTeam = "the team";
 
@@ -84,7 +84,7 @@ export function ownState(pr: OwnPr, required = 1): OwnState {
   if (again) return { kind: "waiting", who: again.author, whoKind: "person", what: "re-review" };
   if (pr.requested.some((request) => isCopilot(request.login))) return { kind: "waiting", who: "Copilot", whoKind: "machine", what: "reviewing" };
   const approvals = [...verdicts.values()].filter((review) => review.state === "APPROVED");
-  if (approvals.length >= required && users.length === 0) return { kind: "yours", what: `approved by ${names(approvals)} · merge it` };
+  if (approvals.length >= required && users.length === 0) return { kind: "yours", what: `approved by ${names(approvals)} · merge it`, approved: true };
   const copilot = pr.reviews.filter((review) => isCopilot(review.author)).sort((a, b) => a.at.localeCompare(b.at)).at(-1);
   const copilotOpen = open(isCopilot);
   if (copilot && !pushedSince(copilot) && copilotOpen > 0) return { kind: "yours", what: `Copilot left ${plural(copilotOpen, "comment")}` };

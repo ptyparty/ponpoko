@@ -25,15 +25,15 @@ export type Actions = {
   title: (strand: string, title: string) => Promise<unknown>;
   done: (strand: string) => Promise<unknown>;
   open: (link: Link) => Promise<unknown>;
-  ready: (strand: StrandView) => Promise<string>;
+  ready: (strand: StrandView, url: string) => Promise<string>;
 };
 
 export function draftsOf(strand: StrandView): OwnPrView[] {
   return ownPrs(strand).filter((pr) => pr.draft && pr.state !== "closed");
 }
 
-export async function readyDrafts(strand: StrandView, gh?: Gh): Promise<string> {
-  const drafts = draftsOf(strand);
+export async function readyDrafts(strand: StrandView, gh?: Gh, url?: string): Promise<string> {
+  const drafts = draftsOf(strand).filter((pr) => url === undefined || samePr(pr.url, url));
   if (drafts.length === 0) throw new Error(`${strand.name} has no draft pull request`);
   for (const pr of drafts) await markReady(pr.url, gh);
   return `Marked ${drafts.map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`;
@@ -88,7 +88,7 @@ export const serviceActions: Actions = {
   rename: (strand, name) => ask({ method: "rename", params: { strand, name } }),
   title: (strand, title) => ask({ method: "title", params: { strand, title } }),
   done: (strand) => ask({ method: "done", params: { strand } }),
-  ready: (strand) => readyDrafts(strand),
+  ready: (strand, url) => readyDrafts(strand, undefined, url),
   open: async (link) => {
     if (link.adapter === "remax") return showTour(link, process.env.KOMUX_TAB_DIR);
     if (link.adapter === prAdapter) return openUrl(link.ref);
@@ -121,6 +121,14 @@ export const snoozeChoices: SnoozeChoice[] = [
   },
   { key: "0", label: "till woken", until: () => dormant },
 ];
+
+export function readyLine(drafts: OwnPrView[]): string {
+  return `mark ready  ${drafts.slice(0, 9).map((pr, at) => `${at + 1} ${prName(pr.repo, pr.number)}`).join("  ")}  esc`;
+}
+
+export function readyChoice(drafts: OwnPrView[], key: string): OwnPrView | undefined {
+  return /^[1-9]$/.test(key) ? drafts[Number(key) - 1] : undefined;
+}
 
 export function snoozeLine(): string {
   return `snooze  ${snoozeChoices.map((choice) => `${choice.key} ${choice.label}`).join("  ")}  t a time  esc`;

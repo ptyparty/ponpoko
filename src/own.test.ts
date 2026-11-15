@@ -64,7 +64,7 @@ describe("your own pull request's state", () => {
     const threads = [1, 2, 3].map(() => ({ author: "sam", resolved: false }));
     expect(ownState(own({ reviews: [sam("CHANGES_REQUESTED")], threads }))).toEqual({ kind: "yours", what: "sam requested changes · 3 threads" });
     expect(ownState(own({ reviews: [sam("CHANGES_REQUESTED")], threads, head: "c2" }))).toEqual({ kind: "waiting", who: "sam", whoKind: "person", what: "re-review" });
-    expect(ownState(own({ reviews: [sam("CHANGES_REQUESTED"), sam("APPROVED", { commit: "c2", at: "2026-11-13T12:00:00Z" })], head: "c2" }))).toEqual({ kind: "yours", what: "approved by sam · merge it" });
+    expect(ownState(own({ reviews: [sam("CHANGES_REQUESTED"), sam("APPROVED", { commit: "c2", at: "2026-11-13T12:00:00Z" })], head: "c2" }))).toEqual({ kind: "yours", what: "approved by sam · merge it", approved: true });
   });
 
   test("names the latest reviewer asking for changes, and every reviewer with open comments", () => {
@@ -103,7 +103,7 @@ describe("your own pull requests as moves", () => {
     expect(line("sc-52751")).toBe("person sam · re-review");
     sync([own({ head: "c2", reviews: [copilot(), sam("APPROVED", { commit: "c2" })] })]);
     expect(line("sc-52751")).toBe("you approved by sam · merge it");
-    expect(ownPrs(strand("sc-52751"))).toEqual([{ url, repo: "acme/widgets", number: 212, title: "Partner Services section", branch: "sc-52751/partner-services", draft: false, state: "yours", what: "approved by sam · merge it" }]);
+    expect(ownPrs(strand("sc-52751"))).toEqual([{ url, repo: "acme/widgets", number: 212, title: "Partner Services section", branch: "sc-52751/partner-services", draft: false, state: "yours", what: "approved by sam · merge it", approved: true }]);
     expect(hasOpenPr(core.knowledge(), story)).toBe(true);
     sync([]);
     expect(hasOpenPr(core.knowledge(), story)).toBe(false);
@@ -264,7 +264,7 @@ describe("marking a draft ready", () => {
     expect(tab.view(120, 30).join("\n")).toContain("mark ready");
     await tab.key({ name: "R" });
     expect(tab.message).toStartWith("Marked ");
-    expect(calls).toContainEqual(["ready", core.snapshot().strands.find((strand) => strand.name === "sc-52751")!.id]);
+    expect(calls).toContainEqual(["ready", core.snapshot().strands.find((strand) => strand.name === "sc-52751")!.id, url]);
     await tab.key({ name: "o" });
     expect(calls).toContainEqual(["open", url]);
     await pick("sc-1");
@@ -276,6 +276,30 @@ describe("marking a draft ready", () => {
     expect(dealer.card()?.name).toBe("sc-52751");
     await dealer.key({ name: "R" });
     expect(calls.filter((call) => call[0] === "ready")).toHaveLength(2);
+  });
+
+  test("with two drafts, R asks which, and on a PR row in Reviews marks only that one", async () => {
+    const { core, sync, strand } = setup();
+    core.add(undefined, "sc-52751");
+    const other = "https://github.com/acme/gadgets/pull/9";
+    sync([own({ draft: true }), own({ draft: true, number: 9, url: other, repo: "acme/gadgets", title: "Gadgets" })]);
+    const calls: string[][] = [];
+    expect(await readyDrafts(strand("sc-52751"), async (args) => (calls.push(args), ""), other)).toBe("Marked gadgets#9 ready for review");
+    expect(calls).toEqual([["pr", "ready", other]]);
+    const { actions, calls: done } = recordingActions();
+    const tab = new TabController(actions, () => 0);
+    tab.setSnapshot(core.snapshot());
+    await tab.key({ name: "j" });
+    await tab.key({ name: "R" });
+    expect(plain(tab.view(120, 30))).toContain("mark ready  1 widgets#212  2 gadgets#9");
+    await tab.key({ name: "2", text: "2" });
+    const reviews = new TabController(actions, () => 0, "reviews");
+    reviews.setSnapshot(core.snapshot());
+    await reviews.key({ name: "j" });
+    expect(reviews.current()?.pr?.url).toBe(other);
+    await reviews.key({ name: "R" });
+    const id = strand("sc-52751").id;
+    expect(done.filter((call) => call[0] === "ready")).toEqual([["ready", id, other], ["ready", id, other]]);
   });
 });
 

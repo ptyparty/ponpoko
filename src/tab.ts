@@ -1,17 +1,17 @@
-import { draftsOf, openableLink, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
+import { draftsOf, openableLink, pickupChoice, pickupLine, readyChoice, readyLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { prName } from "./github.ts";
 import { isPooled, mentionLink, ownPrs, prAdapter, type OwnPrView } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
-import { areaCount, areaNames, areaOf, areaRows, areas, isStory, searchRows, type Area, type MapRow } from "./map.ts";
-import { blockersOf, clock, fit, isWaitingOn, rows, snoozedLabel, standingOf, whyOf } from "./render.ts";
+import { areaCount, areaNames, areaOf, areaRows, areas, chainsOf, isPublic, isStory, searchRows, type Area, type MapRow } from "./map.ts";
+import { blockersOf, clock, fit, wrap, isWaitingOn, rows, snoozedLabel, standingOf, whyOf } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { LogView } from "./log.ts";
 import { parseWhen } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "ready"; strand: StrandView; drafts: OwnPrView[] } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
 
 const help = [
   " Keys",
@@ -102,9 +102,10 @@ export class TabController {
     const snapshot = this.snapshot;
     if (!snapshot) return [];
     const mode = this.mode;
-    const key = [mode.kind, mode.kind === "search" ? mode.text : "", this.area, this.listWidth(), selected ?? "", [...this.opened].join(" ")].join("\n");
+    const tree = mode.kind === "moving" || mode.kind === "waiting";
+    const key = [mode.kind, mode.kind === "search" ? mode.text : "", this.area, this.listWidth(), tree ? (selected ?? "") : "", [...this.opened].join(" ")].join("\n");
     if (this.drawn?.snapshot === snapshot && this.drawn.key === key) return this.drawn.rows;
-    const rows = this.build(snapshot, selected);
+    const rows = this.build(snapshot, tree ? selected : undefined);
     this.drawn = { snapshot, key, rows };
     return rows;
   }
@@ -173,9 +174,13 @@ export class TabController {
     this.switchArea(areaOf(strand, this.strands()));
     if (this.select(strand.id)) return;
     const path = [strand, ...aboveOf(this.strands(), strand)];
+    const now = this.snapshot?.now ?? this.now();
     for (const above of path.slice(1)) this.opened.add(above.id);
-    for (const at of path) for (const sibling of this.strands().filter((candidate) => candidate.parent === at.parent)) this.opened.add(`then:${sibling.id}`);
-    this.opened.add("public");
+    for (const at of path) {
+      const siblings = this.strands().filter((candidate) => candidate.parent === at.parent && !((candidate.snoozedUntil ?? 0) > now));
+      for (const [head, chain] of chainsOf(siblings)) if (chain.some((next) => next.id === at.id)) this.opened.add(`then:${head}`);
+    }
+    if (isPublic(strand)) this.opened.add("public");
     this.select(strand.id);
   }
 
@@ -203,6 +208,12 @@ export class TabController {
         const until = choice.until(this.now());
         await this.run(() => this.actions.snooze(strand.id, until), `Snoozed ${snoozedLabel({ snoozedUntil: until }, this.now())}`);
       }
+      return undefined;
+    }
+    if (mode.kind === "ready") {
+      this.mode = { kind: "list" };
+      const pr = readyChoice(mode.drafts, key.name);
+      if (pr) await this.run(() => this.actions.ready(mode.strand, pr.url), (said) => String(said));
       return undefined;
     }
     if (mode.kind === "pickup") {
@@ -290,10 +301,13 @@ export class TabController {
         else await this.run(() => this.actions.open(link), `Opened ${link.label ?? link.ref}`);
         return undefined;
       }
-      case "R":
-        if (!strand || draftsOf(strand).length === 0) this.message = "This strand has no draft pull request to mark ready";
-        else await this.run(() => this.actions.ready(strand), (said) => String(said));
+      case "R": {
+        const drafts = row?.pr ? (row.pr.draft && row.pr.state !== "closed" ? [row.pr] : []) : strand ? draftsOf(strand) : [];
+        if (!strand || drafts.length === 0) this.message = row?.pr ? "This pull request isn't a draft" : "This strand has no draft pull request to mark ready";
+        else if (drafts.length === 1) await this.run(() => this.actions.ready(strand, drafts[0]!.url), (said) => String(said));
+        else this.mode = { kind: "ready", strand, drafts };
         return undefined;
+      }
       case "a":
       case "A":
         this.mode = { kind: "text", purpose: "add", text: "", top: key.name === "A" || !strand };
@@ -384,7 +398,7 @@ export class TabController {
     if (at < this.top + 2) this.top = Math.max(0, at - 2);
     if (at >= this.top + room) this.top = at - room + 1;
     this.top = Math.max(0, Math.min(this.top, Math.max(0, all.length - room)));
-    const shown = all.slice(this.top, this.top + room).map((row) => (row === moving && row !== all[chosen] ? style.you(style.bold(`»${row.text.slice(1)}`)) : row.text));
+    const shown = all.slice(this.top, this.top + room).map((row) => (row === moving && row !== all[chosen] ? style.you(style.bold(`»${row.text.slice(1)}`)) : row === all[chosen] ? (row.picked ?? row.text) : row.text));
     const listWidth = this.listWidth();
     const body = beside ? Array.from({ length: Math.max(shown.length, card.length) }, (_, index) => `${cells([[shown[index] ?? ""]], listWidth)}${style.faint(" │ ")}${card[index] ?? ""}`) : [...shown, ...(card.length > 0 ? ["", ...card] : [])];
     while (body.length < height - 3 - footer.length) body.push(beside ? `${" ".repeat(listWidth)}${style.faint(" │ ")}` : "");
@@ -411,7 +425,7 @@ export class TabController {
     const note = strand.notes.at(-1);
     const waits = blockersOf(strand, this.strands()).map((other) => other.name);
     const behind = this.strands().filter((other) => isWaitingOn(other, strand.id)).map((other) => other.name);
-    const wrapped = (text: string, paint: (text: string) => string) => wrapText(text, width - 4).map((line) => stripe([[line, paint]]));
+    const wrapped = (text: string, paint: (text: string) => string) => wrap(text, width - 4, 3).map((line) => stripe([[line, paint]]));
     const moves = strand.recent.slice(this.height < 36 ? -1 : -3).map((move) => {
       const until = move.until === undefined ? "     " : clock(move.until);
       return stripe([[`${clock(move.from)}–${until}  ${(move.player === "you" ? (move.answers?.kind === "person" ? move.answers.who : "you") : move.by.who).padEnd(8)}  ${move.what}`, style.faint]]);
@@ -438,6 +452,7 @@ export class TabController {
     const mode = this.mode;
     const ask = (text: string) => [style.you(` ${text}`)];
     if (mode.kind === "snooze") return ask(snoozeLine());
+    if (mode.kind === "ready") return ask(readyLine(mode.drafts));
     if (mode.kind === "pickup") return ask(`no one is on it · ${pickupLine(mode.options, this.now())}`);
     if (mode.kind === "moving") return [style.you(` move ${mode.strand.name} ${this.underWhat(mode.strand)}`), keyLine([["j k", "pick its new parent"], ["⏎", "move"], ["t", "top"], ["/", "type a path"], ["esc", "cancel"]], width)];
     if (mode.kind === "waiting") return [style.you(` ${mode.strand.name} ${this.waitsWhat(mode.strand)}`), keyLine([["j k", "pick the strand it waits on"], ["⏎", "wait on it"], ["/", "type a path"], ["c", "stop waiting"], ["esc", "cancel"]], width)];
@@ -604,21 +619,9 @@ export class TabController {
 }
 
 function toMerge(pr: OwnPrView): boolean {
-  return pr.state === "yours" && /^approved/.test(pr.what);
+  return pr.state === "yours" && pr.approved === true;
 }
 
-function wrapText(text: string, width: number): string[] {
-  const lines: string[] = [];
-  let line = "";
-  for (const word of text.split(/\s+/)) {
-    if (line && line.length + word.length + 1 > width) {
-      lines.push(line);
-      line = word;
-    } else line = line ? `${line} ${word}` : word;
-  }
-  if (line) lines.push(line);
-  return lines.length > 3 ? [...lines.slice(0, 2), `${lines[2]!.slice(0, width - 1)}…`] : lines;
-}
 
 export type Live = { setSnapshot: (snapshot: Snapshot | undefined) => void; view: (width: number, height: number) => string[]; key: (key: Key, height: number) => Promise<"quit" | "close" | undefined> | "quit" | "close" | undefined };
 
@@ -645,6 +648,7 @@ export async function runLive(controller: Live): Promise<number> {
         if (outcome === "quit" || outcome === "close") return done.resolve();
         await reload();
       }),
+    () => draw(),
     () => {
       draw();
       void reload();

@@ -112,7 +112,7 @@ export function whyOf(strand: StrandView, now: number): Why {
   switch (own.whose) {
     case "you": {
       const pr = prs.find((candidate) => candidate.state === "yours");
-      if (pr) return { text: pr.what, paint: /^approved/.test(pr.what) ? style.ok : style.muted };
+      if (pr) return { text: pr.what, paint: pr.approved ? style.ok : style.muted };
       if (isTour(strand)) return muted("tour ready");
       const move = at(strand.open.filter((candidate) => candidate.player === "you"));
       if (move?.answers?.kind === "agent") return muted(replied(move.answers.who, move.what));
@@ -293,6 +293,19 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
     case "link.removed":
       return "link removed";
   }
+}
+
+export function wrap(text: string, width: number, most = 4): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    if (line && line.length + word.length + 1 > width) {
+      lines.push(line);
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  return lines.length > most ? [...lines.slice(0, most - 1), `${lines[most - 1]!.slice(0, width - 1)}…`] : lines;
 }
 
 export function fit(text: string, width: number): string {

@@ -1,4 +1,4 @@
-import { ask } from "../client.ts";
+import { ask, Down } from "../client.ts";
 import type { Request } from "../server.ts";
 import { jobPlayerId } from "./translate.ts";
 
@@ -6,9 +6,10 @@ export type Claim = { strand: string; command: string[] };
 
 export function readFor(args: string[], env: Record<string, string | undefined>): Claim | string {
   const split = args.indexOf("--");
-  const before = split >= 0 ? args.slice(0, split) : args.slice(0, 1);
-  const command = split >= 0 ? args.slice(split + 1) : args.slice(1);
-  const strand = before.join(" ").trim() || env.PONPOKO_STRAND?.trim() || "";
+  const fromEnv = env.PONPOKO_STRAND?.trim() ?? "";
+  const before = split >= 0 ? args.slice(0, split) : fromEnv ? [] : args.slice(0, 1);
+  const command = split >= 0 ? args.slice(split + 1) : fromEnv ? args : args.slice(1);
+  const strand = before.join(" ").trim() || fromEnv;
   if (strand === "") return "name the strand the job is for, or set PONPOKO_STRAND";
   return { strand, command };
 }
@@ -27,7 +28,17 @@ export async function runFor(args: string[], env = process.env, send: (request: 
   }
   const request = forRequest(claim.strand, env, process.cwd());
   if (!request) console.error("ponpoko for: not running as a komux job, so the strand isn't told");
-  else await send(request).catch((error: Error) => console.error(`ponpoko for: ${error.message}`));
+  else {
+    const failed = await send(request).then(
+      () => undefined,
+      (error: Error) => error,
+    );
+    if (failed instanceof Down) console.error(`ponpoko for: ${failed.message}; running the command anyway`);
+    else if (failed) {
+      console.error(`ponpoko for: ${failed.message}`);
+      return 1;
+    }
+  }
   if (claim.command.length === 0) return 0;
   const child = Bun.spawn(claim.command, { stdin: "inherit", stdout: "inherit", stderr: "inherit", env });
   process.on("SIGINT", () => undefined);

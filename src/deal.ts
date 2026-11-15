@@ -1,14 +1,14 @@
-import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
+import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, readyChoice, readyLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
 import { isPooled, mentionLink, mentionsId, ownPrs, reviewsId } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
-import { blockersOf, fit, headline, moveKind, onOwnJob, snoozedLabel, standingOf, whyOf, type MoveKind } from "./render.ts";
+import { blockersOf, fit, headline, wrap, moveKind, onOwnJob, snoozedLabel, standingOf, whyOf, type MoveKind } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { parseWhen } from "./when.ts";
 
-type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | Purpose;
+type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | "ready" | Purpose;
 type Purpose = "add" | "note" | "move" | "rename" | "title" | "wait";
 export type TabRef = { server: string; tabId: number };
 
@@ -146,6 +146,12 @@ export class Dealer {
       }
       return undefined;
     }
+    if (this.mode === "ready") {
+      this.mode = "card";
+      const pr = card ? readyChoice(draftsOf(card), key.name) : undefined;
+      if (pr && card) await this.act(() => this.actions.ready(card, pr.url), (said) => String(said));
+      return undefined;
+    }
     if (this.mode === "forget") {
       this.mode = "card";
       if (key.name === "y" && card) await this.act(() => this.actions.forget(card.id), `Forgot ${card.name}`);
@@ -229,10 +235,13 @@ export class Dealer {
         else await this.act(() => this.actions.open(link), `Opened ${link.label ?? link.ref}`);
         return undefined;
       }
-      case "R":
-        if (!card || draftsOf(card).length === 0) this.message = "This strand has no draft pull request to mark ready";
-        else await this.act(() => this.actions.ready(card), (said) => String(said));
+      case "R": {
+        const drafts = card ? draftsOf(card) : [];
+        if (!card || drafts.length === 0) this.message = "This strand has no draft pull request to mark ready";
+        else if (drafts.length === 1) await this.act(() => this.actions.ready(card, drafts[0]!.url), (said) => String(said));
+        else this.mode = "ready";
         return undefined;
+      }
     }
     const numbered = this.items().flatMap((item, at) => (item.strand ? [at] : []));
     if (/^[1-9]$/.test(key.name) && Number(key.name) <= numbered.length) this.selected = numbered[Number(key.name) - 1]!;
@@ -377,6 +386,7 @@ export class Dealer {
     const ask = (text: string) => style.you(` ${text}`);
     const options = card ? pickupOffer(card, this.strands()) : undefined;
     if (this.mode === "snooze") return ask(snoozeLine());
+    if (this.mode === "ready" && card) return ask(readyLine(draftsOf(card)));
     if (this.mode === "time") return ask(timeLine(this.typed, this.now()));
     if (this.mode === "forget" && card) return ask(`forget ${card.name}?  y yes   any other key no`);
     if (this.mode === "pickup" && options && this.snapshot) return ask(pickupLine(options, this.snapshot.now));
@@ -458,6 +468,7 @@ export async function runDeal(args: string[]): Promise<number> {
         if (outcome === "close") return done.resolve();
         await reload();
       }),
+    () => draw(),
     () => {
       draw();
       void reload();
@@ -525,15 +536,3 @@ function sideBySide(left: string[], right: string[], column: number): string[] {
   });
 }
 
-function wrap(text: string, width: number): string[] {
-  const lines: string[] = [];
-  let line = "";
-  for (const word of text.split(/\s+/)) {
-    if (line && line.length + word.length + 1 > width) {
-      lines.push(line);
-      line = word;
-    } else line = line ? `${line} ${word}` : word;
-  }
-  if (line) lines.push(line);
-  return lines.length > 4 ? [...lines.slice(0, 3), `${lines[3]!.slice(0, width - 1)}…`] : lines;
-}

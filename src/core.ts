@@ -264,9 +264,7 @@ export class Ponpoko {
       const kind = this.model.players.get(move.player)?.kind;
       return move.player === you || kind === "person" || kind === "machine";
     });
-    const blocking = Object.keys(this.model.strands.get(strand)?.blockedOn ?? {});
     for (const move of waits) facts.push({ type: "move.closed", move: move.id });
-    if (waits.length === 0 && !players) for (const on of blocking) facts.push({ type: "strand.unblocked", strand, on });
     for (const player of new Set(waits.map((move) => move.player))) {
       if (player === you) continue;
       const elsewhere = [...this.model.moves.values()].some((move) => move.player === player && move.until === undefined && !waits.includes(move));

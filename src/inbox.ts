@@ -44,7 +44,7 @@ export function inboxFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: s
   return [...new Reconciler(knowledge, newId, inbox.complete ?? { reviews: true, mentioned: true }).run([...reviewWants(inbox), ...mentionWants(inbox)]), ...ownFacts(knowledge, inbox, newId)];
 }
 
-export type OwnPrView = { url: string; repo: string; number: number; title: string; branch: string; draft: boolean; state: "waiting" | "yours" | "draft" | "closed"; who?: string; what: string };
+export type OwnPrView = { url: string; repo: string; number: number; title: string; branch: string; draft: boolean; state: "waiting" | "yours" | "draft" | "closed"; who?: string; what: string; approved?: true };
 
 const parsedPrs = new WeakMap<object, OwnPrView[]>();
 
@@ -187,7 +187,7 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
       for (const move of ours(stale.strand!, pr.url)) facts.push({ type: "move.closed", move: move.id });
     }
     const state = ownState(pr);
-    const view: OwnPrView = { url: pr.url, repo: pr.repo, number: pr.number, title: pr.title, branch: pr.branch, draft: pr.draft, state: state.kind, ...(state.kind === "waiting" ? { who: state.who } : {}), what: state.what };
+    const view: OwnPrView = { url: pr.url, repo: pr.repo, number: pr.number, title: pr.title, branch: pr.branch, draft: pr.draft, state: state.kind, ...(state.kind === "waiting" ? { who: state.who } : {}), what: state.what, ...(state.kind === "yours" && state.approved ? { approved: true as const } : {}) };
     const current = stateOf(strand, pr.url);
     const before = current ? readOwnPrView(current.ref) : undefined;
     setState(strand, current, view);
@@ -199,6 +199,7 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
     const before = readOwnPrView(link.ref);
     if (!before || before.state === "closed" || seen.has(prKey(before.url)) || stateOf(link.strand!, before.url) !== link) continue;
     const view: OwnPrView = { ...before, state: "closed", what: "merged or closed" };
+    delete view.approved;
     delete view.who;
     setState(link.strand!, link, view);
     for (const move of ours(link.strand!, before.url)) facts.push({ type: "move.closed", move: move.id });

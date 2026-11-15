@@ -233,7 +233,7 @@ export class Translator {
       }
     }
     if (wanted === ready && yours.length > 0) return;
-    const prompted = out.model.answered.has(id) || (entry.sessionId !== undefined && out.model.answered.has(entry.sessionId));
+    const prompted = out.model.answered.has(id) || (entry.sessionId !== undefined && out.model.answered.has(entry.sessionId)) || mine.some((move) => backgroundMove.test(move.what));
     if (wanted === ready && !prompted) {
       for (const move of mine) out.close(move);
       return;

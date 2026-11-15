@@ -9,7 +9,7 @@ export type Area = "work" | "reviews" | "mentions";
 export const areas: Area[] = ["work", "reviews", "mentions"];
 export const areaNames: Record<Area, string> = { work: "Work", reviews: "Reviews", mentions: "Mentions" };
 
-export type MapRow = { text: string; key?: string; strand?: StrandView; fold?: boolean; pr?: OwnPrView };
+export type MapRow = { text: string; picked?: string; key?: string; strand?: StrandView; fold?: boolean; pr?: OwnPrView };
 
 type Ctx = { snapshot: Snapshot; width: number; opened: Set<string>; selected?: string; kids: Map<string | undefined, StrandView[]> };
 
@@ -17,7 +17,11 @@ type Line = { key: string; strand?: StrandView; indent: number; glyph: string; p
 
 function context(snapshot: Snapshot, width: number, opened: Set<string>, selected: string | undefined): Ctx {
   const kids = new Map<string | undefined, StrandView[]>();
-  for (const strand of snapshot.strands) kids.set(strand.parent, [...(kids.get(strand.parent) ?? []), strand]);
+  for (const strand of snapshot.strands) {
+    const siblings = kids.get(strand.parent);
+    if (siblings) siblings.push(strand);
+    else kids.set(strand.parent, [strand]);
+  }
   return { snapshot, width, opened, selected, kids };
 }
 
@@ -25,8 +29,18 @@ function asleep(strand: StrandView, now: number): boolean {
   return (strand.snoozedUntil ?? 0) > now;
 }
 
+function both(ctx: Ctx, key: string | undefined, draw: (picked: boolean) => string): { text: string; picked?: string } {
+  if (key === undefined) return { text: draw(false) };
+  const plain = draw(false);
+  const picked = style.selected(draw(true));
+  return { text: key === ctx.selected ? picked : plain, picked };
+}
+
 function row(ctx: Ctx, line: Line): MapRow {
-  const picked = line.key === ctx.selected;
+  return { ...both(ctx, line.key, (picked) => rowText(ctx, line, picked)), key: line.key, ...(line.strand ? { strand: line.strand } : {}), ...(line.pr ? { pr: line.pr } : {}) };
+}
+
+function rowText(ctx: Ctx, line: Line, picked: boolean): string {
   const width = ctx.width;
   const whyW = Math.max(16, Math.min(36, Math.floor(width * 0.28)));
   const idW = Math.max(8, Math.min(18, Math.floor(width * 0.12)));
@@ -50,20 +64,18 @@ function row(ctx: Ctx, line: Line): MapRow {
     ],
     width,
   );
-  return { text: picked ? style.selected(text) : text, key: line.key, ...(line.strand ? { strand: line.strand } : {}), ...(line.pr ? { pr: line.pr } : {}) };
+  return text;
 }
 
 function heading(ctx: Ctx, title: string, rest: Part[] = [], key?: string, strand?: StrandView): MapRow {
-  const picked = key !== undefined && key === ctx.selected;
-  const text = cells([[picked ? "▎ " : "  ", style.accent], [title, (text) => style.text(style.bold(text))], ...rest], ctx.width);
-  return { text: picked ? style.selected(text) : text, ...(key ? { key } : {}), ...(strand ? { strand } : {}) };
+  const drawn = both(ctx, key, (picked) => cells([[picked ? "▎ " : "  ", style.accent], [title, (text) => style.text(style.bold(text))], ...rest], ctx.width));
+  return { ...drawn, ...(key ? { key } : {}), ...(strand ? { strand } : {}) };
 }
 
 function foldRow(ctx: Ctx, key: string, indent: number, text: string, strand?: StrandView): MapRow {
-  const picked = key === ctx.selected;
   const open = ctx.opened.has(key);
-  const line = cells([[picked ? "▎ " : "  ", style.accent], " ".repeat(indent), [`${open ? "▾" : "▸"} ${text}`, picked ? (shown) => style.text(style.bold(shown)) : style.faint]], ctx.width);
-  return { text: picked ? style.selected(line) : line, key, fold: true, ...(strand ? { strand } : {}) };
+  const drawn = both(ctx, key, (picked) => cells([[picked ? "▎ " : "  ", style.accent], " ".repeat(indent), [`${open ? "▾" : "▸"} ${text}`, picked ? (shown) => style.text(style.bold(shown)) : style.faint]], ctx.width));
+  return { ...drawn, key, fold: true, ...(strand ? { strand } : {}) };
 }
 
 export function isStory(strand: { name: string; kind?: string }): boolean {
@@ -213,7 +225,7 @@ export function myPrs(snapshot: Snapshot): { strand: StrandView; pr: OwnPrView }
 }
 
 function prWhy(pr: OwnPrView): { glyph: string; paint: (text: string) => string; why: Why } {
-  if (pr.state === "yours") return { glyph: "●", paint: style.you, why: { text: pr.what, paint: /^approved/.test(pr.what) ? style.ok : style.you } };
+  if (pr.state === "yours") return { glyph: "●", paint: style.you, why: { text: pr.what, paint: pr.approved ? style.ok : style.you } };
   if (pr.state === "waiting") return { glyph: "⊘", paint: style.wait, why: { text: `${pr.who} · ${pr.what}`, paint: style.muted } };
   return { glyph: "○", paint: style.muted, why: { text: "draft", paint: style.muted } };
 }
