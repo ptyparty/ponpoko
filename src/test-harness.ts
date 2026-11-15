@@ -6,6 +6,8 @@ import { handle, request } from "./server.ts";
 import type { TitleLookup } from "./shortcut.ts";
 import { Store } from "./store.ts";
 
+process.env.PONPOKO_PROJECT_ROOTS ??= "";
+
 export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko, lookupTitle: TitleLookup = async () => ({ kind: "story", title: "Widget CSV import" }), strandsExist = true) {
   let now = start;
   let ids = 0;

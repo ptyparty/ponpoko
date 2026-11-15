@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { harness, strandNamed } from "../test-harness.ts";
 import { inboxFacts } from "../inbox.ts";
+import { handle } from "../server.ts";
+import { forRequest, readFor, runFor } from "./for.ts";
 import { Bridge } from "./bridge.ts";
 import { komuxLine } from "./stream.ts";
 import { brief, goInKomux, goTarget, pickup, pickupOffer, pickUpInKomux } from "./go.ts";
@@ -75,6 +80,20 @@ describe("the komux bridge", () => {
       "agent working",
       "you ready for a prompt",
     ]);
+  });
+
+  test("a docked Claude that wakes and settles before you've ever prompted it isn't your move, even on a strand that exists, such as an epic's", async () => {
+    const { core, hear } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "epic", dir: "/w/stories/sc-900", labels: { strand: "sc-900" } }], agents: [{ paneId: 9, tabId: 3, state: "idle", sessionId: "e1" }], jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "idle", sessionId: "e1" } });
+    expect(line(core, "sc-900")).toBe("sc-900 you");
+    expect(strandNamed(core, "sc-900").open).toEqual([]);
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "done", sessionId: "e1" } });
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "idle", sessionId: "e1" } });
+    expect(line(core, "sc-900")).toBe("sc-900 you you(pane:s1:9): ready for a prompt");
   });
 
   test("a question open in komux is your move, and answering it hands the move back", async () => {
@@ -195,6 +214,45 @@ describe("the komux bridge", () => {
     expect(store.all().length).toBe(facts);
     await hear({ type: "job.finished", job: { ...build, state: "succeeded", code: 0 } });
     expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
+  });
+
+  test("a job that says which strand it's for waits there, not on the strand of the tab whose Claude started it, whichever comes first", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    core.add(strandNamed(core, "sc-1234").id, "gadgets");
+    core.add(strandNamed(core, "sc-1234").id, "widgets");
+    const build = { id: 9, tabId: 1, name: "build", state: "running", agent: false, startedBy: 2 };
+    await hear({ type: "job.started", job: build });
+    expect(handle(core, { method: "for", params: { strand: "gadgets", player: "job:s1:9", dir: story } })).toEqual({ ok: true, result: { strand: "sc-1234 › gadgets" } });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(line(core, "sc-1234 ")).toBeUndefined();
+    expect(shown(core)).toContain("  gadgets machine job:s1:9: running");
+    expect(strandNamed(core, "sc-1234 › gadgets").open[0]?.answers?.id).toBe("pane:s1:2");
+    const rerun = { ...build, id: 10 };
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
+    await hear({ type: "job.started", job: rerun });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(shown(core)).toContain("sc-1234 machine job:s1:10: running");
+    core.workFor({ strand: "widgets", player: "job:s1:10", dir: story });
+    expect(shown(core)).toContain("  widgets machine job:s1:10: running");
+    expect(strandNamed(core, "sc-1234").own.whose).toBeUndefined();
+    await hear({ type: "job.finished", job: { ...rerun, state: "succeeded", code: 0 } });
+    expect(strandNamed(core, "sc-1234 › widgets").open).toEqual([]);
+    await hear({ type: "job.finished", job: { ...build, state: "failed", code: 1 } });
+    expect(strandNamed(core, "sc-1234 › gadgets").open).toEqual([]);
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
+  });
+
+  test("ponpoko for reads the strand from its arguments or PONPOKO_STRAND, and names the job it runs in", async () => {
+    expect(readFor(["sc-1 › gadgets", "--", "scripts/build", "-v"], {})).toEqual({ strand: "sc-1 › gadgets", command: ["scripts/build", "-v"] });
+    expect(readFor(["--", "scripts/build"], { PONPOKO_STRAND: "gadgets" })).toEqual({ strand: "gadgets", command: ["scripts/build"] });
+    expect(readFor(["--", "scripts/build"], {})).toContain("name the strand");
+    expect(forRequest("gadgets", { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9" }, "/w")).toEqual({ method: "for", params: { strand: "gadgets", player: "job:s1:9", dir: "/w" } });
+    expect(forRequest("gadgets", {}, "/w")).toBeUndefined();
+    const sent: unknown[] = [];
+    expect(await runFor(["gadgets", "--", "true"], { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9", PATH: process.env.PATH }, async (request) => sent.push(request))).toBe(0);
+    expect(await runFor(["gadgets", "--", "false"], { PATH: process.env.PATH }, async (request) => sent.push(request))).toBe(1);
+    expect(sent).toHaveLength(1);
   });
 
   test("a Claude whose turn ends after reporting a wait on someone or on another strand leaves the strand waiting, not yours", async () => {
@@ -460,6 +518,32 @@ describe("go in komux", () => {
     await goInKomux(rename, strands, env, control);
     await expect(goInKomux(rename, [], env, control)).rejects.toThrow("doesn't know where this strand lives");
     expect(sent).toEqual([{ method: "project.open", params: { target: "/w/acme-libraries", layout: "pr-review", args: { pr: "540", strand: "sc-1235" } } }]);
+  });
+
+  test("a story under an epic opens its own komux project rather than the epic's tab, the deepest strand with a project winning", async () => {
+    const work = mkdtempSync(join(tmpdir(), "ponpoko-projects-"));
+    for (const dir of ["stories/sc-900", "stories/sc-901", "repos/gadgets"]) mkdirSync(join(work, dir), { recursive: true });
+    const projects = { ...env, PONPOKO_PROJECT_ROOTS: `${work}/stories/*:${work}/repos/*` };
+    const { core, hear } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 4, number: 4, name: "epic", dir: join(work, "stories/sc-900"), labels: { strand: "sc-900" } }], agents: [{ paneId: 9, tabId: 4, state: "working", sessionId: "e1" }], jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 4, state: "done", sessionId: "e1" } });
+    core.add(strandNamed(core, "sc-900").id, "sc-901 › implement");
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:9"], spaces: [] });
+    core.status({ self: "komux:s1:9", strand: "sc-901", text: "mapping the story" });
+    core.status({ self: "komux:s1:9", strand: "sc-900", text: "back on the epic" });
+    const strands = core.snapshot().strands;
+    const story = strandNamed(core, "sc-900 › sc-901");
+    const step = strandNamed(core, "sc-900 › sc-901 › implement");
+    expect(goTarget(story, strands, projects)).toBeUndefined();
+    const { sent, control } = recorder();
+    await goInKomux(story, strands, projects, control);
+    await goInKomux(step, strands, projects, control);
+    await goInKomux(story, strands, { ...projects, PONPOKO_PROJECT_ROOTS: "" }, control);
+    expect(sent).toEqual([
+      { method: "project.open", params: { target: join(work, "stories/sc-901") } },
+      { method: "project.open", params: { target: join(work, "stories/sc-901") } },
+      { method: "tab.focus", params: { tabId: 4 } },
+    ]);
   });
 
   test("a strand no one is on goes to a Claude already in the tab it lives in, rather than offering a new one", async () => {

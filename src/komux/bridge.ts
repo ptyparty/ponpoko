@@ -32,7 +32,7 @@ export class Bridge {
   private readonly badgesSent = new Map<number, string>();
   private behind = false;
   private cached: Knowledge | undefined;
-  private last: Knowledge = { strands: [], closed: [], players: [], open: [], links: [], on: {}, resumed: {}, spoke: [] };
+  private last: Knowledge = { strands: [], closed: [], players: [], open: [], links: [], on: {}, resumed: {}, spoke: [], answered: [] };
   private readonly titled = new Set<string>();
   private readonly titling = new Set<string>();
   private readonly titleFailed = new Map<string, number>();

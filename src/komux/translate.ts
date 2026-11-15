@@ -1,4 +1,4 @@
-import type { Knowledge, Space } from "../core.ts";
+import { forAdapter, type Knowledge, type Space } from "../core.ts";
 import type { Fact } from "../events.ts";
 import type { Link, Move, Player, Strand } from "../model.ts";
 import type { KomuxAgent, KomuxJob, KomuxLine, KomuxTab } from "./stream.ts";
@@ -16,7 +16,7 @@ export type KomuxPlace = {
   asking?: boolean;
 };
 
-export type Known = { strands: Map<string, Strand>; closed: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string> };
+export type Known = { strands: Map<string, Strand>; closed: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string>; answered: Set<string> };
 type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob> };
 
 export const yourMoves: Record<string, string> = {
@@ -58,6 +58,7 @@ export function known(knowledge: Knowledge): Known {
     on: new Map(Object.entries(knowledge.on)),
     resumed: new Map(Object.entries(knowledge.resumed ?? {})),
     spoke: new Set(knowledge.spoke),
+    answered: new Set(knowledge.answered ?? []),
   };
 }
 
@@ -204,7 +205,10 @@ export class Translator {
     if (wanted !== undefined && wanted !== asking && running.length > 0) {
       for (const move of [...mine, ...yours]) out.close(move);
       const on = strand(false);
-      if (on) for (const job of running) this.awaitJob(live, job, on, id, out);
+      for (const job of running) {
+        const target = out.claimed(jobPlayerId(live.server, job.id)) ?? on;
+        if (target) this.awaitJob(live, job, target, id, out);
+      }
       return;
     }
     if (wanted === yourMoves.done) {
@@ -215,6 +219,11 @@ export class Translator {
       }
     }
     if (wanted === ready && yours.length > 0) return;
+    const prompted = out.model.answered.has(id) || (entry.sessionId !== undefined && out.model.answered.has(entry.sessionId));
+    if (wanted === ready && !prompted) {
+      for (const move of mine) out.close(move);
+      return;
+    }
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
       const on = mine.length === 0 ? strand(true) : undefined;
@@ -254,7 +263,7 @@ export class Translator {
     const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tab.dir };
     out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
     const why = entry.code === null || entry.code === undefined ? `${entry.name} failed` : `${entry.name} failed (exit ${entry.code})`;
-    const on = out.strandFor(id, tab, true) ?? out.make(`${entry.name} in ${tab.name}`, "loose");
+    const on = out.claimed(id) ?? out.strandFor(id, tab, true) ?? out.make(`${entry.name} in ${tab.name}`, "loose");
     out.open(on, "you", why, id);
   }
 }
@@ -289,7 +298,8 @@ class Facts {
     const move = this.newId("m");
     this.push({ type: "move.opened", move, strand, player, what, ...(answers ? { with: answers } : {}) });
     this.model.open.push({ id: move, strand, player, what, from: 0, source: "komux", ...(answers ? { with: answers } : {}) });
-    this.model.on.set(answers ?? player, strand);
+    if (!player.startsWith("job:")) this.model.on.set(answers ?? player, strand);
+    if (answers && player === "you") this.model.answered.add(answers);
   }
 
   strandFor(player: string, tab: KomuxTab, reopen: boolean, resume?: string): string | undefined {
@@ -326,6 +336,13 @@ class Facts {
     const link = this.newId("l");
     this.push({ type: "link.added", link, strand, adapter: "komux", ref, label: tab.name });
     this.model.links.push({ id: link, strand, adapter: "komux", ref, label: tab.name, at: Date.now() });
+  }
+
+  claimed(player: string): string | undefined {
+    return this.model.links
+      .filter((link) => link.adapter === forAdapter && link.ref === player && link.strand !== undefined && this.model.strands.has(link.strand))
+      .sort((a, b) => a.at - b.at)
+      .at(-1)?.strand;
   }
 
   githubYours(strand: string): Move[] {

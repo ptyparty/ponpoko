@@ -47,15 +47,17 @@ export type StrandView = Strand & {
   dir?: string;
 };
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string> };
-export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[] };
+export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[]; answered: string[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
 export type LinkReport = { adapter: string; ref: string; label?: string };
 export type StatusReport = Where & { text: string; page?: string; title?: string; link?: LinkReport };
 export type Tour = { repo: string; name: string };
 export type Named = string | { name: string; title?: string; tour?: Tour };
-export type WaitReport = Where & { who: string; kind: "you" | "person" | "machine"; what: string; over?: boolean };
+export type WaitReport = Where & { who?: string; kind?: "you" | "person" | "machine"; what?: string; over?: boolean };
 export type BlockReport = Where & { on: string; over?: boolean };
+export type ForReport = Where & { strand: string; player: string };
+export const forAdapter = "player-for";
 
 const presenceMs = 90_000;
 const recentMoves = 12;
@@ -110,22 +112,28 @@ export class Ponpoko {
     const moves = [...this.model.moves.values()];
     const on: Record<string, string> = {};
     const resumed: Record<string, string> = {};
+    const answered = new Set<string>();
     for (const move of [...moves].sort((a, b) => a.from - b.from)) {
       const player = move.with ?? move.player;
-      on[player] = move.strand;
+      if (this.model.players.get(move.player)?.kind !== "job") on[player] = move.strand;
       const resume = this.model.players.get(player)?.resume;
       const strand = this.model.strands.get(move.strand);
       if (resume && strand && isLive(this.model, strand)) resumed[resume] = move.strand;
+      if (move.player === you && move.with) {
+        answered.add(move.with);
+        if (resume) answered.add(resume);
+      }
     }
     return {
       strands: [...this.model.strands.values()].filter((strand) => isLive(this.model, strand)),
       closed: [...this.model.strands.values()].filter((strand) => strand.done !== undefined),
       players: [...this.model.players.values()].filter((player) => player.gone === undefined),
       open: moves.filter((move) => move.until === undefined),
-      links: [...this.model.links.values()].filter((link) => link.adapter === "dir" || link.adapter === "komux" || link.adapter.startsWith("github")),
+      links: [...this.model.links.values()].filter((link) => link.adapter === "dir" || link.adapter === "komux" || link.adapter === forAdapter || link.adapter.startsWith("github")),
       on,
       resumed,
       spoke: [...new Set(moves.filter((move) => move.source === "agent" || (move.described !== undefined && move.player !== you)).map((move) => move.strand))],
+      answered: [...answered],
     };
   }
 
@@ -231,19 +239,54 @@ export class Ponpoko {
   wait(report: WaitReport, source: Source = "agent"): string {
     const agent = this.agentOf(report.self);
     const facts: Fact[] = [];
-    const strand = report.strand ? this.resolve(report.strand, facts, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(report, agent);
+    const strand = report.strand ? (report.over ? this.named(report.strand, agent ? this.strandOf(agent.id) : undefined) : this.resolve(report.strand, facts, agent ? this.strandOf(agent.id) : undefined)) : this.whereIs(report, agent);
     if (!strand) throw new Error("name the strand this wait is on, such as \"sc-1234\"");
+    if (report.over) return this.endWait(strand, report, agent, source);
+    if (!report.who || !report.kind || !report.what) throw new Error("name who, kind and what, or the strand it waits on with on");
     const player = report.kind === "you" ? you : `${report.kind}:${slug(report.who)}`;
     const open = [...this.model.moves.values()].filter((move) => move.player === player && move.strand === strand && move.until === undefined && (player !== you || move.with === agent?.id));
-    if (report.over) {
-      for (const move of open) facts.push({ type: "move.closed", move: move.id });
-      const elsewhere = [...this.model.moves.values()].some((move) => move.player === player && move.strand !== strand && move.until === undefined);
-      if (player !== you && !elsewhere) facts.push({ type: "player.gone", player, why: "wait over" });
-    } else {
-      if (player !== you && (!this.model.players.has(player) || this.model.players.get(player)!.gone !== undefined)) facts.push({ type: "player.joined", player, kind: report.kind, who: report.who });
-      for (const move of open) facts.push({ type: "move.closed", move: move.id });
-      if (player !== you) this.closeTurnsOver(strand, agent?.id, facts);
-      facts.push({ type: "move.opened", move: this.newId("m"), strand, player, ...(agent ? { with: agent.id } : {}), what: report.what });
+    if (player !== you && (!this.model.players.has(player) || this.model.players.get(player)!.gone !== undefined)) facts.push({ type: "player.joined", player, kind: report.kind, who: report.who });
+    for (const move of open) facts.push({ type: "move.closed", move: move.id });
+    if (player !== you) this.closeTurnsOver(strand, agent?.id, facts);
+    facts.push({ type: "move.opened", move: this.newId("m"), strand, player, ...(agent ? { with: agent.id } : {}), what: report.what });
+    this.record(source, facts);
+    return path(this.model, strand).join(" › ");
+  }
+
+  private endWait(strand: string, report: WaitReport, agent: Player | undefined, source: Source): string {
+    const facts: Fact[] = [];
+    const named = report.who ? slug(report.who) : undefined;
+    const players = named === undefined ? undefined : report.kind ? [report.kind === "you" ? you : `${report.kind}:${named}`] : named === "you" ? [you] : [`person:${named}`, `machine:${named}`];
+    const waits = openMoves(this.model, strand).filter((move) => {
+      if (players) return players.includes(move.player) && (move.player !== you || move.with === agent?.id);
+      if (move.player === you) return move.source === "agent" && move.with !== undefined && move.with === agent?.id;
+      const kind = this.model.players.get(move.player)?.kind;
+      return kind === "person" || kind === "machine";
+    });
+    const blocking = Object.keys(this.model.strands.get(strand)?.blockedOn ?? {});
+    for (const move of waits) facts.push({ type: "move.closed", move: move.id });
+    if (waits.length === 0 && !players) for (const on of blocking) facts.push({ type: "strand.unblocked", strand, on });
+    for (const player of new Set(waits.map((move) => move.player))) {
+      if (player === you) continue;
+      const elsewhere = [...this.model.moves.values()].some((move) => move.player === player && move.until === undefined && !waits.includes(move));
+      if (!elsewhere) facts.push({ type: "player.gone", player, why: "wait over" });
+    }
+    this.record(source, facts);
+    return path(this.model, strand).join(" › ");
+  }
+
+  workFor(report: ForReport, source: Source = "agent"): string {
+    const agent = this.agentOf(report.self);
+    const near = agent ? this.strandOf(agent.id) : this.whereIs({ dir: report.dir }, undefined);
+    const strand = this.named(report.strand, near);
+    const facts: Fact[] = [];
+    if (![...this.model.links.values()].some((link) => link.strand === strand && link.adapter === forAdapter && link.ref === report.player)) {
+      facts.push({ type: "link.added", link: this.newId("l"), strand, adapter: forAdapter, ref: report.player });
+    }
+    for (const move of this.openMovesBy(report.player)) {
+      if (move.strand === strand) continue;
+      facts.push({ type: "move.closed", move: move.id });
+      facts.push({ type: "move.opened", move: this.newId("m"), strand, player: move.player, ...(move.with ? { with: move.with } : {}), what: move.what });
     }
     this.record(source, facts);
     return path(this.model, strand).join(" › ");
@@ -296,8 +339,9 @@ export class Ponpoko {
   doneBy(where: Where, why: string, source: Source = "agent"): string {
     const agent = this.agentOf(where.self);
     const facts: Fact[] = [];
-    const strand = where.strand ? this.find(where.strand, agent ? this.strandOf(agent.id) : undefined) : this.whereIs(where, agent);
-    if (!strand) throw new Error(where.strand ? `no strand ${where.strand}` : "name the strand that's done");
+    const near = agent ? this.strandOf(agent.id) : undefined;
+    const strand = where.strand ? this.find(where.strand, near) : this.whereIs(where, agent);
+    if (!strand) throw new Error(where.strand ? this.unknown(where.strand, near) : "name the strand that's done");
     this.finish(strand, why, facts);
     const name = path(this.model, strand).join(" › ");
     this.record(source, facts);
@@ -490,7 +534,29 @@ export class Ponpoko {
       return isLive(this.model, strand) && names.length === wanted.length && names.every((name, at) => name === wanted[at]);
     });
     if (ending.length === 1) return ending[0]!.id;
-    throw new Error(ending.length === 0 ? `ponpoko knows of no strand ${text}` : `${text} could be ${ending.length} strands; give more of its path`);
+    throw new Error(ending.length === 0 ? this.unknown(text, near) : `${text} could be ${ending.length} strands; give more of its path`);
+  }
+
+  private unknown(text: string, near: string | undefined): string {
+    const nearest = this.nearest(text, near);
+    return `ponpoko knows of no strand ${text}${nearest ? `; the nearest is ${path(this.model, nearest).join(" › ")}` : ""}`;
+  }
+
+  nearest(text: string, near: string | undefined): string | undefined {
+    const wanted = splitPath(text).map((name) => name.toLowerCase());
+    const last = wanted.at(-1);
+    if (!last) return undefined;
+    const close = new Set(near && this.model.strands.has(near) ? [near, ...ancestors(this.model, near), ...descendants(this.model, near)] : []);
+    const scored = [...this.model.strands.values()].filter((strand) => isLive(this.model, strand)).flatMap((strand) => {
+      const name = strand.name.toLowerCase();
+      const title = strand.title?.toLowerCase() ?? "";
+      const above = path(this.model, strand.id).slice(0, -1).map((segment) => segment.toLowerCase());
+      const base = name === last ? 0 : name.includes(last) || last.includes(name) || (title !== "" && title.includes(last)) ? 1 : distance(name, last) <= Math.max(2, Math.floor(last.length / 4)) ? 2 : undefined;
+      if (base === undefined) return [];
+      const shared = wanted.slice(0, -1).filter((segment) => above.includes(segment)).length;
+      return [{ strand: strand.id, score: base * 10 - shared * 3 - (close.has(strand.id) ? 2 : 0) }];
+    });
+    return scored.sort((a, b) => a.score - b.score)[0]?.strand;
   }
 
   private find(text: string, near: string | undefined): string | undefined {
@@ -586,6 +652,20 @@ export function aboveOf(strands: StrandView[], strand: StrandView): StrandView[]
   const out: StrandView[] = [];
   for (let at = strand.parent ? byId.get(strand.parent) : undefined; at && !out.includes(at); at = at.parent ? byId.get(at.parent) : undefined) out.push(at);
   return out;
+}
+
+function distance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, at) => at);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0]!;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const above = row[j]!;
+      row[j] = Math.min(row[j]! + 1, row[j - 1]! + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return row[b.length]!;
 }
 
 export function splitPath(text: string): string[] {

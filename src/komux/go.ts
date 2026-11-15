@@ -2,6 +2,7 @@ import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } fro
 import { prRef } from "../github.ts";
 import { isBookkeeping, mentionLink, prAdapter } from "../inbox.ts";
 import { sendKomux } from "./stream.ts";
+import { komuxProjects, projectNamed, type Project } from "./projects.ts";
 import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
 export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string; result?: unknown }>;
@@ -33,7 +34,7 @@ export async function goInKomux(strand: StrandView, strands: StrandView[], env =
     if (!opened.ok) throw new Error(opened.error ?? "komux refused");
     return landed("opened", opened.result);
   }
-  const where = goPlace(strand, aboveOf(strands, strand));
+  const where = goPlace(strand, aboveOf(strands, strand), env);
   if (!where) throw new Error("ponpoko doesn't know where this strand lives");
   const opened = await send({ method: "project.open", params: { target: where.dir, ...layoutAt(where.tab, where.dir) } });
   if (!opened.ok) throw new Error(opened.error ?? "komux refused");
@@ -61,9 +62,9 @@ export function goTarget(strand: StrandView, strands: StrandView[] = [], env: Re
     if (player.live && komuxPlace(player)) return { player, move };
   }
   if (strands.length === 0 || openTab(strand, env)) return undefined;
-  const options = pickup(strand);
-  const dir = options?.resume?.dir ?? options?.dir ?? goPlace(strand, aboveOf(strands, strand))?.dir;
-  return dir ? claudeIn([...aboveOf(strands, strand), ...strands], dir, env) : undefined;
+  const options = pickup(strand, env);
+  const dir = options?.resume?.dir ?? options?.dir ?? goPlace(strand, aboveOf(strands, strand), env)?.dir;
+  return dir ? claudeIn([strand, ...aboveOf(strands, strand), ...strands], dir, env) : undefined;
 }
 
 function claudeIn(strands: StrandView[], dir: string, env: Record<string, string | undefined>): { player: PlayerView; move: MoveView } | undefined {
@@ -98,13 +99,17 @@ export function tabStrands(strands: StrandView[], server: string, tabId: number)
   return roots.flatMap((root) => [root, ...underOf(strands, root)]);
 }
 
-export function goPlace(strand: StrandView, above: StrandView[]): { dir: string; tab?: KomuxTabRef } | undefined {
+export function goPlace(strand: StrandView, above: StrandView[], env: Record<string, string | undefined> = process.env): { dir: string; tab?: KomuxTabRef } | undefined {
   for (const at of [strand, ...above]) {
     const tab = tabOf(at);
-    const dir = tab?.dir ?? at.links.find((link) => link.adapter === "dir")?.ref ?? lastDir(at);
+    const dir = tab?.dir ?? at.links.find((link) => link.adapter === "dir")?.ref ?? projectOf(at, env)?.dir ?? lastDir(at);
     if (dir) return { dir, ...(tab ? { tab } : {}) };
   }
   return strand.dir ? { dir: strand.dir } : undefined;
+}
+
+export function projectOf(strand: { name: string }, env: Record<string, string | undefined> = process.env): Project | undefined {
+  return projectNamed(strand.name, komuxProjects(env));
 }
 
 export function tabOf(strand: StrandView): KomuxTabRef | undefined {
@@ -127,12 +132,12 @@ function lastDir(strand: StrandView): string | undefined {
 
 export type Pickup = { resume?: { session: string; dir: string; who: string; at: number }; dir?: string };
 
-export function pickup(strand: StrandView): Pickup | undefined {
-  if (goTarget(strand) || strand.own.whose === undefined) return undefined;
-  return startsAt(strand);
+export function pickup(strand: StrandView, env: Record<string, string | undefined> = process.env): Pickup | undefined {
+  if (goTarget(strand, [], env) || strand.own.whose === undefined) return undefined;
+  return startsAt(strand, env);
 }
 
-export function startsAt(strand: StrandView): Pickup | undefined {
+export function startsAt(strand: StrandView, env: Record<string, string | undefined> = process.env): Pickup | undefined {
   const last = [...strand.recent].reverse().find((move) => {
     const player = move.answers ?? move.by;
     return player.kind === "agent" && player.resume && komuxPlace(player)?.dir;
@@ -140,14 +145,14 @@ export function startsAt(strand: StrandView): Pickup | undefined {
   const agent = last ? (last.answers ?? last.by) : undefined;
   const place = agent ? komuxPlace(agent) : undefined;
   const resume = last && agent && place ? { session: agent.resume!, dir: place.dir, who: agent.who, at: last.until ?? last.from } : undefined;
-  const dir = tabOf(strand)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand);
+  const dir = tabOf(strand)?.dir ?? strand.links.find((link) => link.adapter === "dir")?.ref ?? projectOf(strand, env)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand);
   if (!resume && !dir) return undefined;
   return { ...(resume ? { resume } : {}), ...(dir ? { dir } : {}) };
 }
 
 export function pickupOffer(strand: StrandView, strands: StrandView[], env: Record<string, string | undefined> = process.env): Pickup | undefined {
   if (mentionLink(strand) || (reviewOf(strand) && !tabOf(strand))) return undefined;
-  return goTarget(strand, strands, env) || openTab(strand, env) ? undefined : pickup(strand);
+  return goTarget(strand, strands, env) || openTab(strand, env) ? undefined : pickup(strand, env);
 }
 
 export function claudeCommand(env: Record<string, string | undefined> = process.env): string[] {
@@ -173,7 +178,7 @@ export async function pickUpInKomux(strand: StrandView, how: "resume" | "fresh",
   const socket = env.KOMUX_SOCKET;
   if (!socket) throw new Error("picking a strand up works from inside komux");
   const send = control ?? ((request: unknown) => sendKomux(socket, request));
-  const options = how === "fresh" ? startsAt(strand) : pickup(strand);
+  const options = how === "fresh" ? startsAt(strand, env) : pickup(strand, env);
   const resume = how === "resume" ? options?.resume : undefined;
   if (how === "resume" && !resume) throw new Error("no Claude on this strand to resume");
   const dir = resume?.dir ?? options?.dir;

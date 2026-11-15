@@ -76,4 +76,21 @@ describe("the ponpoko MCP", () => {
     expect(parseSince("2026-11-06T00:00:00Z", 0)).toBe(Date.parse("2026-11-06T00:00:00Z"));
     expect(parseSince("soon", 0)).toBeUndefined();
   });
+  test("forgives the usual slips: ending a wait with just who or just the strand, line for text, strands for names, and a done on a path that doesn't exist", async () => {
+    const { core, call } = await setup();
+    expect(await call("status", { line: "warming up" })).toBe("Now on sc-7.");
+    expect(await call("split", { strands: ["review merlin", "docs"] })).toBe("Made sc-7 › review merlin; sc-7 › docs.");
+    await call("wait", { who: "Copilot", kind: "machine", what: "reviewing PR #821", strand: "docs" });
+    await call("wait", { who: "Sam", kind: "person", what: "the terms question", strand: "docs" });
+    expect(await call("wait", { who: "copilot", over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.by.who)).toEqual(["Sam"]);
+    expect(await call("wait", { over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open).toEqual([]);
+    expect(await call("wait", { over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    expect(await call("wait", { over: true, strand: "nowhere at all" })).toContain("ponpoko knows of no strand nowhere at all");
+    expect(await call("done", { strand: "sc-7 › review merlins" })).toBe("ponpoko: ponpoko knows of no strand sc-7 › review merlins; the nearest is sc-7 › review merlin");
+    expect(await call("done", { strand: "merlin" })).toContain("the nearest is sc-7 › review merlin");
+    expect(await call("status", {})).toContain("say what you're doing now in text");
+    expect(await call("split", {})).toContain("give the strands to make in names");
+  });
 });

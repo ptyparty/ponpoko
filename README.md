@@ -33,7 +33,7 @@ import ponpoko from "./plugins/ponpoko.ts";
 plugins: [ponpoko()],
 ```
 
-Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs work on that strand, once the strand exists. A tab whose label names no strand, or that has no label, makes nothing on its own: a quick look at a repo leaves no trace. Its Claude's turns start counting once it says what it's working on through ponpoko's `status`, which makes the strand if needed, or once you add the strand (`a`) or point the tab's directory at one (`p`). A Claude you never prompt doesn't show up.
+Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs work on that strand, once the strand exists. A tab whose label names no strand, or that has no label, makes nothing on its own: a quick look at a repo leaves no trace. Its Claude's turns start counting once it says what it's working on through ponpoko's `status`, which makes the strand if needed, or once you add the strand (`a`) or point the tab's directory at one (`p`). A Claude you never prompt doesn't show up, and a docked Claude that wakes and settles before you've ever prompted it isn't your move, so opening an epic's tab by accident leaves the epic alone.
 
 ## In komux
 
@@ -56,7 +56,9 @@ The picked strand's card sits beside the list on a wide screen and below it othe
 
 Enter on a strand no one is on offers to resume the last Claude that worked on it, or to start a fresh one briefed with the strand's moves and links. Either way it opens the strand's project with its layout and wakes the Claude docked there. Only when that Claude is busy, or the layout has none, does it open a pane running `komux claude`; set `PONPOKO_CLAUDE` in komux's `env`, such as `komux claude --mode auto`, to run something else.
 
-A strand ponpoko has no tab or directory for goes to the place of the nearest strand above it that has one, opened with that strand's layout.
+Going to a strand prefers its own tab and place over its parent's. A strand ponpoko has no tab or directory for opens the komux project named like it, such as `~/work/stories/sc-52596` for `sc-52596`, even when no tab for it is open yet; failing that it goes to the place of the nearest strand above it that has one, so a story under an epic opens the story's directory, not the epic's. ponpoko finds the projects from `projects.roots` in komux's config, or from `PONPOKO_PROJECT_ROOTS` (globs separated by `:`) when that's set.
+
+A build an agent runs from one strand's tab for another strand can say which it's for: `ponpoko for "sc-52734 › consolidation toggle" -- scripts/build`, or `PONPOKO_STRAND` in its environment with `ponpoko for -- scripts/build`. Run as a komux job, it tells ponpoko that job belongs to that strand, so the strand waits on the build ("claude · on its build" in the deck) instead of showing as your move, and the agent stays on its own strand.
 
 When the tab a strand lives in already has a Claude in it, such as a story's Claude when you pick one of the story's smaller strands, Enter goes to that Claude instead of offering a new one. `f` starts a fresh Claude on a strand whenever you want one anyway, in the deck or the command tab.
 
