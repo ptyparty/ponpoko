@@ -11,8 +11,8 @@ ponpoko tracks the user's work as **strands**, lines of work that nest: a projec
 
 - **You start on a piece of work, or switch to another:** call `status` with one line on what you're doing now and `strand` set to its path, plus the notebook page with the detail if there is one. A path resolves near the strand you're on first, so `review findings › 4` finds the one in your project. A path that matches nothing is made under the strand you're on; start it with `›`, as in `› sc-1250`, to make it at the top. Add `title` to give the strand a longer title, such as the story's full name, or to change the one it has.
 - **You move between steps:** call `status` again, leaving `strand` out. Each call is a move in the strand's record, so keep them to real steps, not every edit.
+- **You open a pull request for the strand, or push to one:** call `status` with `pr` set to its URL. ponpoko then watches its reviews: the strand waits on Copilot, the requested reviewers or the team while a review is pending, and comes back to the user when it's approved or gets comments. Don't report those review waits yourself. A story's pull request is also linked without this when its branch names the story, such as `sc-52751/partner-services`.
 - **You're waiting on someone or something other than the user:** call `wait` with `who`, `kind` (`machine` or `person`) and `what`:
-  - a Copilot or human review: `who: "Copilot"`, `kind: "machine"`, `what: "reviewing PR #821"`
   - CI or a deploy: `who: "CI"`, `kind: "machine"`
   - a person's answer: `who: "Sam"`, `kind: "person"`
 - **The user has to do something komux can't see,** such as test in a browser: call `wait` with `who: "you"`, `kind: "you"` and what they need to do.

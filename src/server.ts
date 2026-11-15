@@ -27,7 +27,10 @@ export const request = z.discriminatedUnion("method", [
     }),
   }),
   z.object({ method: z.literal("absent"), params: z.object({ adapter: z.string(), scope: z.string() }) }),
-  z.object({ method: z.literal("status"), params: z.object({ ...where, text: z.string().min(1).max(120), page: z.string().max(200).optional(), title: z.string().max(200).optional() }) }),
+  z.object({
+    method: z.literal("status"),
+    params: z.object({ ...where, text: z.string().min(1).max(120), page: z.string().max(200).optional(), title: z.string().max(200).optional(), link: z.object({ adapter: z.string().min(1).max(40), ref: z.string().min(1).max(400), label: z.string().max(120).optional() }).optional() }),
+  }),
   z.object({ method: z.literal("wait"), params: z.object({ ...where, who: z.string().min(1).max(80), kind: z.enum(["you", "person", "machine"]), what: z.string().min(1).max(200), over: z.boolean().optional() }) }),
   z.object({ method: z.literal("block-by"), params: z.object({ ...where, on: z.string().min(1).max(200), over: z.boolean().optional() }) }),
   z.object({ method: z.literal("block"), params: z.object({ strand: z.string(), on: z.string().min(1).max(200) }) }),

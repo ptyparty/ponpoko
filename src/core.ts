@@ -50,7 +50,8 @@ export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; mov
 export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
-export type StatusReport = Where & { text: string; page?: string; title?: string };
+export type LinkReport = { adapter: string; ref: string; label?: string };
+export type StatusReport = Where & { text: string; page?: string; title?: string; link?: LinkReport };
 export type Tour = { repo: string; name: string };
 export type Named = string | { name: string; title?: string; tour?: Tour };
 export type WaitReport = Where & { who: string; kind: "you" | "person" | "machine"; what: string; over?: boolean };
@@ -220,6 +221,9 @@ export class Ponpoko {
       facts.push({ type: "move.opened", move, strand: target, player: agent.id, what: report.text });
     }
     if (report.page) facts.push({ type: "link.added", link: this.newId("l"), move, adapter: "quoll", ref: report.page });
+    if (report.link && ![...this.model.links.values()].some((link) => link.strand === target && link.adapter === report.link!.adapter && link.ref === report.link!.ref)) {
+      facts.push({ type: "link.added", link: this.newId("l"), strand: target, adapter: report.link.adapter, ref: report.link.ref, ...(report.link.label ? { label: report.link.label } : {}) });
+    }
     this.record(source, facts);
     return path(this.model, target).join(" › ");
   }

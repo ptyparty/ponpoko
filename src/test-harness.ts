@@ -67,6 +67,7 @@ export function recordingActions() {
     title: record("title"),
     done: record("done"),
     open: async (link: { ref: string }) => void calls.push(["open", link.ref]),
+    ready: async (strand: { id: string }) => void calls.push(["ready", strand.id]),
   } as Actions;
   return { actions, calls };
 }

@@ -6,8 +6,11 @@ Work is a tree of **strands**. A project holds stories, a story holds smaller st
 
 ```
 ponpoko                  the command tab: every strand, whose move it is, and what ponpoko heard
+ponpoko tab --reviews    the command tab, starting on the pull requests waiting for a review
 ponpoko list             your moves, then everything else, printed once
 ponpoko tray [--stream]  one line for komux's tray; --stream prints a new one as it changes
+ponpoko tray --unreviewed [--stream]
+                         the tray's count of team pull requests nobody has reviewed yet
 ponpoko deal [--unseen]  deal your oldest move as a card, for a komux popup
 ponpoko serve            run the service (ponpoko.service runs this)
 ponpoko setup [--yes]    install the service, komux plugin, skill and MCP
@@ -35,14 +38,15 @@ Give a komux layout `labels: { strand: "sc-{story}" }` so agents in its tabs wor
 ## In komux
 
 - The tray shows how many moves are yours and how long the oldest has waited. Click it to open the command tab.
-- **Alt m** deals your moves as a short list: anything a Claude is asking you first, then the newest, with Claudes only ready for a prompt last. Beside them, on the right when the popup is wide enough, it lists the strands agents are working, those waiting on others, and those snoozed; Tab, `h`/`l` or the arrow keys move between the two sides, and Enter goes to any of them. The picked card shows the strand's whole path, and the tree of strands under it with how each stands. `j`/`k` or `1`–`9` pick a card, Enter goes to it, `f` starts a fresh Claude on it, `d` marks it done, `z` snoozes it, `x` forgets it.
+- A second tray chip, "to review", counts the team's pull requests nobody has taken or reviewed yet, green up to 2, yellow from 3, orange from 6 and red from 10. Click it to open the command tab on the reviews.
+- **Alt m** deals your moves as a short list: anything a Claude is asking you first, then the newest, with Claudes only ready for a prompt last. Beside them, on the right when the popup is wide enough, it lists the strands agents are working, those waiting on others, and those snoozed; Tab, `h`/`l` or the arrow keys move between the two sides, and Enter goes to any of them. The picked card shows the strand's whole path, and the tree of strands under it with how each stands. `j`/`k` or `1`–`9` pick a card, Enter goes to it, `f` starts a fresh Claude on it, `o` opens its pull request or link, `R` marks its draft pull request ready, `d` marks it done, `z` snoozes it, `x` forgets it.
 - **Ctrl Space m t** opens the deck on the current tab's strands: the tab's own strand and any strand an agent in it is on, each with the strands under it. Besides the deck's keys, `a` adds a strand under the picked one, `n` adds a note, `m` moves it under another strand and `r` renames it and `t` titles it; these work in the main deck too.
 - **Alt shift m** deals what changed since you last caught up.
-- **Ctrl Space m** opens ponpoko's mode: `m` and `M` deal the same way, and `o` opens the command tab.
+- **Ctrl Space m** opens ponpoko's mode: `m` and `M` deal the same way, `o` opens the command tab, and `r` opens it on the reviews.
 
 Pass `ponpoko({ deal, catchUp, leader })` to pick other keys.
 
-In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens what its latest move links to (a notebook page in quoll), `z` snoozes (`t` then types a time such as `14:30`, `mon 9`, `2h` or `nov 12`, and `0` snoozes it till woken: until it moves again, such as when you prompt its Claude, a strand is added under it, or a strand right under it or one it waits on is done), `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
+In the command tab, `j`/`k` move between strands, Enter goes to a strand, space shows its moves, `a` adds a strand under it, `m` moves it under another, `d` marks it done, `o` opens its pull request on GitHub, or else what its latest move links to (a notebook page in quoll), `R` marks its draft pull request ready for review, `z` snoozes (`t` then types a time such as `14:30`, `mon 9`, `2h` or `nov 12`, and `0` snoozes it till woken: until it moves again, such as when you prompt its Claude, a strand is added under it, or a strand right under it or one it waits on is done), `n` adds a note, `x` forgets it, `p` points its directory at a strand, `c` marks it caught up, `?` lists the keys and glyphs, and `q` quits.
 
 Enter on a strand no one is on offers to resume the last Claude that worked on it, or to start a fresh one briefed with the strand's moves and links. Either way it opens the strand's project with its layout and wakes the Claude docked there. Only when that Claude is busy, or the layout has none, does it open a pane running `komux claude`; set `PONPOKO_CLAUDE` in komux's `env`, such as `komux claude --mode auto`, to run something else.
 
@@ -60,13 +64,25 @@ When the tab a strand lives in already has a Claude in it, such as a story's Cla
 - A mention is yours until you reply or react to it. Enter opens it on GitHub.
 - Marking a review or mention done keeps it done until it changes: a push, a new request for your review, or a new mention.
 
+### Your own pull requests
+
+ponpoko also watches your own open pull requests, once one is linked to a strand. An agent links it by calling `status` with the pull request's URL, and ponpoko links a story strand by itself to an open pull request of yours whose branch names it, such as `sc-52751/partner-services` for `sc-52751`. A story spanning several repositories can link several.
+
+- While a review is pending, the strand waits on the reviewer: `Copilot · reviewing`, `Sam · reviewing`, or `the team · 0 of 1 reviews` for a ready pull request nobody has reviewed yet. A draft nobody is reviewing waits on no one.
+- An approval, changes requested, a reviewer's comments, or Copilot's comments make it your move with what happened: `approved by Sam · merge it`, `Sam requested changes · 3 threads`, `Copilot left 4 comments`.
+- Pushing after changes were requested waits on that reviewer again (`Sam · re-review`), and pushing past Copilot's comments, or resolving them, goes back to waiting on the team.
+- Once the pull request is merged or closed, its moves end; the strand isn't marked done.
+- ponpoko only acts when a pull request's state changes, so moves you or agents make in between stay as they are. When it starts waiting on a reviewer, it closes finished turns on the strand and any wait an agent reported on the same review.
+
+### Configuration
+
 Which pull requests count as waiting for a review comes from `~/.config/ponpoko/config.json` (or the file `PONPOKO_CONFIG` names):
 
 ```json
-{ "github": { "reviewQuery": "is:open is:pr org:my-org draft:false -label:dependencies" } }
+{ "github": { "reviewQuery": "is:open is:pr org:my-org draft:false -label:dependencies", "unreviewed": { "yellow": 3, "orange": 6, "red": 10 } } }
 ```
 
-Without it, only reviews assigned to you or requesting you show up. Set `PONPOKO_GITHUB=off` in komux's `env` to stop asking GitHub.
+Without `reviewQuery`, only reviews assigned to you or requesting you show up, and the "to review" chip shows `?`. `unreviewed` sets the counts at which the chip turns yellow, orange and red. The bridge polling GitHub writes the count to `$XDG_RUNTIME_DIR/ponpoko/unreviewed.json`, and the chip greys out when that's more than ten minutes old. Set `PONPOKO_GITHUB=off` in komux's `env` to stop asking GitHub.
 
 Glyphs: ● yours, ◐ an agent's, ⊘ waiting on someone or something, ◷ snoozed, ○ nothing to do.
 

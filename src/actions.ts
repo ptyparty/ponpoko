@@ -3,8 +3,8 @@ import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
 import { age } from "./render.ts";
 import { dormant, type Link } from "./model.ts";
-import { assignMe, prRef } from "./github.ts";
-import { assignFacts, mentionLink, prAdapter, source as githubSource } from "./inbox.ts";
+import { assignMe, markReady, prName, prRef, samePr, type Gh } from "./github.ts";
+import { assignFacts, isBookkeeping, mentionLink, ownPrs, prAdapter, source as githubSource, type OwnPrView } from "./inbox.ts";
 import { showTour, strandTour } from "./remax.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -25,7 +25,32 @@ export type Actions = {
   title: (strand: string, title: string) => Promise<unknown>;
   done: (strand: string) => Promise<unknown>;
   open: (link: Link) => Promise<unknown>;
+  ready: (strand: StrandView) => Promise<unknown>;
 };
+
+export function draftsOf(strand: StrandView): OwnPrView[] {
+  return ownPrs(strand).filter((pr) => pr.draft && pr.state !== "closed");
+}
+
+export async function readyDrafts(strand: StrandView, gh?: Gh): Promise<string> {
+  const drafts = draftsOf(strand);
+  if (drafts.length === 0) throw new Error(`${strand.name} has no draft pull request`);
+  for (const pr of drafts) await markReady(pr.url, gh);
+  return `Marked ${drafts.map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`;
+}
+
+export function openableLink(strand: StrandView): Link | undefined {
+  const moveLinks = strand.recent.flatMap((move) => move.links);
+  const prs = ownPrs(strand).filter((pr) => pr.state !== "closed");
+  if (prs.length > 0) {
+    const pr = [...moveLinks].sort((a, b) => a.at - b.at).reverse().find((link) => link.adapter === prAdapter && prs.some((own) => samePr(own.url, link.ref)));
+    return pr ?? strand.links.find((link) => link.adapter === prAdapter && prs.some((own) => samePr(own.url, link.ref)));
+  }
+  return [...moveLinks, ...strand.links]
+    .filter((candidate) => candidate.adapter !== "dir" && !isBookkeeping(candidate))
+    .sort((a, b) => a.at - b.at)
+    .at(-1);
+}
 
 export const serviceActions: Actions = {
   go: async (strand, strands) => {
@@ -61,6 +86,7 @@ export const serviceActions: Actions = {
   rename: (strand, name) => ask({ method: "rename", params: { strand, name } }),
   title: (strand, title) => ask({ method: "title", params: { strand, title } }),
   done: (strand) => ask({ method: "done", params: { strand } }),
+  ready: (strand) => readyDrafts(strand),
   open: async (link) => {
     if (link.adapter === "remax") return showTour(link, process.env.KOMUX_TAB_DIR);
     if (link.adapter === prAdapter) return openUrl(link.ref);

@@ -1,7 +1,8 @@
 import { slug, type Knowledge } from "./core.ts";
 import type { Fact } from "./events.ts";
-import { pendingMentions, prName, reviewState, type Inbox } from "./github.ts";
+import { ownState, pendingMentions, prName, prRef, reviewState, samePr, theTeam, type Inbox, type OwnPr } from "./github.ts";
 import { isBookkeeping, you } from "./model.ts";
+import { storyNumber } from "./shortcut.ts";
 
 export const source = "github";
 export const githubPlayer = "github";
@@ -9,6 +10,7 @@ export const reviewsId = "github:reviews";
 export const mentionsId = "github:mentions";
 export const prAdapter = "github";
 export const stateAdapter = "github-state";
+export const ownStateAdapter = "github-pr-state";
 
 type Desired = { player: string; who?: string; what: string; with?: { id: string; who: string }; link?: { ref: string; label: string } };
 type Want = { id: string; parent: string; kind: "review" | "mention"; name: string; title: string; url: string; key: string; wanted: boolean; desired?: Desired; done?: string };
@@ -37,7 +39,135 @@ export function personId(login: string): string {
 export { isBookkeeping };
 
 export function inboxFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string): Fact[] {
-  return new Reconciler(knowledge, newId, inbox.complete ?? { reviews: true, mentioned: true }).run([...reviewWants(inbox), ...mentionWants(inbox)]);
+  return [...new Reconciler(knowledge, newId, inbox.complete ?? { reviews: true, mentioned: true }).run([...reviewWants(inbox), ...mentionWants(inbox)]), ...ownFacts(knowledge, inbox, newId)];
+}
+
+export type OwnPrView = { url: string; repo: string; number: number; title: string; branch: string; draft: boolean; state: "waiting" | "yours" | "draft" | "closed"; who?: string; what: string };
+
+export function ownPrs(strand: { links: { adapter: string; ref: string; at: number }[] }): OwnPrView[] {
+  const latest = new Map<string, { at: number; view: OwnPrView }>();
+  for (const link of strand.links) {
+    if (link.adapter !== ownStateAdapter) continue;
+    const view = readOwnPrView(link.ref);
+    if (!view) continue;
+    const key = prKey(view.url);
+    if ((latest.get(key)?.at ?? -1) <= link.at) latest.set(key, { at: link.at, view });
+  }
+  return [...latest.values()].map((entry) => entry.view);
+}
+
+export function readOwnPrView(ref: string): OwnPrView | undefined {
+  try {
+    const view = JSON.parse(ref) as OwnPrView;
+    return typeof view?.url === "string" && typeof view.state === "string" ? view : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function prKey(url: string): string {
+  const ref = prRef(url);
+  return ref ? `${ref.repo.toLowerCase()}#${ref.number}` : url;
+}
+
+export function unwatchedPrs(knowledge: Knowledge): string[] {
+  const watched = new Set(knowledge.links.filter((link) => link.adapter === ownStateAdapter).flatMap((link) => readOwnPrView(link.ref)?.url ?? []).map(prKey));
+  const live = new Set(knowledge.strands.map((strand) => strand.id));
+  return knowledge.links.filter((link) => link.adapter === prAdapter && link.strand && live.has(link.strand) && !link.strand.startsWith("github:") && prRef(link.ref) && !watched.has(prKey(link.ref))).map((link) => link.ref);
+}
+
+export function hasOwnPr(knowledge: Knowledge, strand: string): boolean {
+  return knowledge.links.some((link) => link.strand === strand && link.adapter === prAdapter && !strand.startsWith("github:"));
+}
+
+export function branchStrand(knowledge: Knowledge, branch: string): string | undefined {
+  const wanted = branch.toLowerCase();
+  const found = knowledge.strands.filter((strand) => {
+    if (strand.id.startsWith("github:") || storyNumber(strand.name) === undefined) return false;
+    const name = strand.name.toLowerCase();
+    let at = wanted.indexOf(name);
+    while (at >= 0) {
+      const before = wanted[at - 1];
+      const after = wanted[at + name.length];
+      if ((before === undefined || !/[a-z0-9]/.test(before)) && (after === undefined || !/[a-z0-9]/.test(after))) return true;
+      at = wanted.indexOf(name, at + 1);
+    }
+    return false;
+  });
+  return found.length === 1 ? found[0]!.id : undefined;
+}
+
+const keptAsks = new Set(["asking you", "waiting on you"]);
+
+function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string): Fact[] {
+  if (!inbox.mine) return [];
+  const facts: Fact[] = [];
+  const live = new Set(knowledge.strands.map((strand) => strand.id));
+  const players = new Map(knowledge.players.map((player) => [player.id, player]));
+  const prLinks = knowledge.links.filter((link) => link.adapter === prAdapter && link.strand && live.has(link.strand) && !link.strand.startsWith("github:"));
+  const stateLinks = knowledge.links.filter((link) => link.adapter === ownStateAdapter && link.strand && live.has(link.strand));
+  const ours = (strand: string, url: string) =>
+    knowledge.open.filter((move) => move.strand === strand && move.source === source && knowledge.links.some((link) => link.move === move.id && link.adapter === prAdapter && samePr(link.ref, url)));
+  const stateOf = (strand: string, url: string) =>
+    stateLinks
+      .filter((link) => link.strand === strand && samePr(readOwnPrView(link.ref)?.url ?? "", url))
+      .sort((a, b) => a.at - b.at)
+      .at(-1);
+  const setState = (strand: string, current: Knowledge["links"][number] | undefined, view: OwnPrView) => {
+    const ref = JSON.stringify(view);
+    if (current?.ref === ref) return;
+    if (current) facts.push({ type: "link.removed", link: current.id });
+    facts.push({ type: "link.added", link: newId("l"), strand, adapter: ownStateAdapter, ref });
+  };
+  const join = (player: string, kind: "person" | "machine", who: string) => {
+    if (players.has(player)) return;
+    players.set(player, { id: player, kind, who, joined: 0 });
+    facts.push({ type: "player.joined", player, kind, who, adapter: source });
+  };
+  const react = (strand: string, pr: OwnPr, view: OwnPrView) => {
+    for (const move of ours(strand, pr.url)) facts.push({ type: "move.closed", move: move.id });
+    if (view.state === "draft" || view.state === "closed") return;
+    const player = view.state === "yours" ? you : view.who === "Copilot" ? "machine:copilot" : personId(view.who!);
+    for (const move of knowledge.open) {
+      if (move.strand !== strand || move.source === source) continue;
+      const kind = players.get(move.player)?.kind;
+      const aboutPr = new RegExp(`(#|\\bPR\\s*#?)${pr.number}\\b`, "i").test(move.what);
+      const reviewerWait = (kind === "person" || kind === "machine") && (aboutPr || move.player === player || move.player === "machine:copilot" || move.player === personId(theTeam));
+      const turnOver = view.state === "waiting" && move.player === you && !keptAsks.has(move.what);
+      if (reviewerWait || turnOver) facts.push({ type: "move.closed", move: move.id });
+    }
+    if (view.state === "waiting") join(player, view.who === "Copilot" ? "machine" : "person", view.who!);
+    const move = newId("m");
+    facts.push({ type: "move.opened", move, strand, player, what: view.what });
+    facts.push({ type: "link.added", link: newId("l"), move, adapter: prAdapter, ref: pr.url, label: prName(pr.repo, pr.number) });
+  };
+  const seen = new Set<string>();
+  for (const pr of inbox.mine) {
+    seen.add(prKey(pr.url));
+    let strand = prLinks.filter((link) => samePr(link.ref, pr.url)).sort((a, b) => a.at - b.at).at(-1)?.strand;
+    if (!strand) {
+      strand = branchStrand(knowledge, pr.branch);
+      if (!strand) continue;
+      facts.push({ type: "link.added", link: newId("l"), strand, adapter: prAdapter, ref: pr.url, label: prName(pr.repo, pr.number) });
+    }
+    const state = ownState(pr);
+    const view: OwnPrView = { url: pr.url, repo: pr.repo, number: pr.number, title: pr.title, branch: pr.branch, draft: pr.draft, state: state.kind, ...(state.kind === "waiting" ? { who: state.who } : {}), what: state.what };
+    const current = stateOf(strand, pr.url);
+    const before = current ? readOwnPrView(current.ref) : undefined;
+    setState(strand, current, view);
+    if (before && before.state === view.state && before.who === view.who && before.what === view.what) continue;
+    react(strand, pr, view);
+  }
+  if (inbox.complete?.mine === false) return facts;
+  for (const link of stateLinks) {
+    const before = readOwnPrView(link.ref);
+    if (!before || before.state === "closed" || seen.has(prKey(before.url)) || stateOf(link.strand!, before.url) !== link) continue;
+    const view: OwnPrView = { ...before, state: "closed", what: "merged or closed" };
+    delete view.who;
+    setState(link.strand!, link, view);
+    for (const move of ours(link.strand!, before.url)) facts.push({ type: "move.closed", move: move.id });
+  }
+  return facts;
 }
 
 function reviewWants(inbox: Inbox): Want[] {

@@ -1,6 +1,7 @@
-import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
+import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
+import { prName } from "./github.ts";
 import { isPooled, mentionLink, mentionsId, reviewsId } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
@@ -175,6 +176,16 @@ export class Dealer {
       case "d":
         if (card) await this.act(() => this.actions.done(card.id), `${card.name} is done`);
         return undefined;
+      case "o": {
+        const link = card ? openableLink(card) : undefined;
+        if (!link) this.message = "Nothing on this strand links anywhere";
+        else await this.act(() => this.actions.open(link), `Opened ${link.label ?? link.ref}`);
+        return undefined;
+      }
+      case "R":
+        if (!card || draftsOf(card).length === 0) this.message = "This strand has no draft pull request to mark ready";
+        else await this.act(() => this.actions.ready(card), `Marked ${draftsOf(card).map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`);
+        return undefined;
     }
     if (/^[1-9]$/.test(key.name) && Number(key.name) <= this.rows().length) this.selected = Number(key.name) - 1;
     return undefined;
@@ -312,7 +323,7 @@ export class Dealer {
               ? ask(pickupLine(options, this.snapshot.now))
               : this.mode in prompts
                 ? ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`)
-                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["t", "title"], ["w", "wait on"], ["esc", "close"]]);
+                : keyLine([["j k", "pick"], ...(this.wide ? [["tab", "side"] as [string, string]] : []), ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ...(openableLink(card) ? [["o", "open"] as [string, string]] : []), ...(draftsOf(card).length > 0 ? [["R", "mark ready"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["t", "title"], ["w", "wait on"], ["esc", "close"]]);
     const body = [...list, "", ...detail];
     while (body.length < height - 3) body.push("");
     return [...body, "", this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(where))}`, footer];

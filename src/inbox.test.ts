@@ -232,7 +232,7 @@ describe("fetching the inbox", () => {
       return JSON.stringify({ data: { search: { nodes: [node({}), node({ number: 2, url: "https://github.com/acme/widgets/pull/2", author: { login: "octo" } })] } } });
     };
     const inbox = await fetchInbox(gh, "is:open is:pr org:acme");
-    expect(calls).toEqual(["is:open is:pr org:acme -author:octo", "is:open is:pr draft:false assignee:octo", "is:open is:pr draft:false review-requested:octo", "is:open is:pr draft:false reviewed-by:octo", "is:pr is:open mentions:octo"]);
+    expect(calls).toEqual(["is:open is:pr org:acme -author:octo", "is:open is:pr draft:false assignee:octo", "is:open is:pr draft:false review-requested:octo", "is:open is:pr draft:false reviewed-by:octo", "is:pr is:open mentions:octo", "is:pr is:open author:octo"]);
     expect(inbox.reviews.map((found) => found.number)).toEqual([1]);
     expect(inbox.reviews[0]).toMatchObject({ head: "c1", author: "alice", repo: "acme/widgets" });
   });
@@ -245,7 +245,7 @@ describe("fetching the inbox", () => {
       return JSON.stringify({ data: { search: { nodes: [] } } });
     };
     await fetchInbox(gh, "");
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(5);
   });
 
   test("treats a review asked of your team as asked of you", async () => {
@@ -282,7 +282,7 @@ describe("fetching the inbox", () => {
     };
     const inbox = await fetchInbox(gh, "is:open is:pr org:acme");
     expect(pendingMentions(inbox.mentioned[0]!, me).map((mention) => mention.url).sort()).toEqual(["review", "thread"]);
-    expect(inbox.complete).toEqual({ reviews: false, mentioned: true });
+    expect(inbox.complete).toEqual({ reviews: false, mentioned: true, mine: true });
   });
 });
 

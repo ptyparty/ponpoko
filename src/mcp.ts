@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ask, state } from "./client.ts";
 import { komuxSelf } from "./komux/self.ts";
 import { splitPath, type Snapshot, type StrandView } from "./core.ts";
+import { prName, prRef } from "./github.ts";
 import type { Recorded } from "./events.ts";
 import { age, cause, clock, describe, holder, pathText } from "./render.ts";
 import type { Request } from "./server.ts";
@@ -12,7 +13,8 @@ import type { Request } from "./server.ts";
 const instructions = `ponpoko tracks the user's work as strands, lines of work that nest (a project holds stories, a story holds smaller strands), and whose move each one is. It already hears komux: while you work the move is yours, and when your turn ends it's the user's. Tell it what it can't see:
 
 - You start on a piece of work, or move to another: call status with a line on what you're doing now, and the strand you're on as a path such as "ponpoko review findings › 4". Missing strands on the path are made; add a title to give the strand a longer title, or change the one it has. Leave the strand out to stay where you are. Call it again as you move between steps; each call is a move on the strand.
-- You stop to wait on someone or something other than the user (a Copilot or human PR review, CI, a deploy, a person's answer): call wait with who, kind "machine" or "person", and what you're waiting for. When the wait ends, call wait again with over true.
+- You open a pull request for the strand, or push to one: call status with pr set to its URL. ponpoko then watches its reviews (Copilot, requested reviewers, the team) and makes the strand wait on them or come back to the user, so don't report those review waits yourself.
+- You stop to wait on someone or something other than the user (CI, a deploy, a person's answer): call wait with who, kind "machine" or "person", and what you're waiting for. When the wait ends, call wait again with over true.
 - The user must do something komux can't see, such as a live test: call wait with kind "you".
 - A strand can't go on until another strand lands, such as a story blocked on another story: call wait with on, the other strand's path. When it no longer waits, call wait with on and over true.
 - A strand is finished: call done. A list of work to share out: call split with the names, each with a title if you like.
@@ -46,11 +48,17 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
         text: z.string().min(1).max(120).describe("What you're doing now, such as \"making a pointed directory beat a label\""),
         page: z.string().max(200).optional().describe("Notebook page with the detail, as quoll show takes it, such as ponpoko/build-status.md"),
         title: titleParam,
+        pr: z.string().max(300).optional().describe("The URL of the strand's pull request, such as https://github.com/acme/widgets/pull/821, so ponpoko watches its reviews"),
         strand: strandParam,
       },
       annotations: write,
     },
-    async (input) => attempt(async () => (await send({ method: "status", params: { ...caller, ...input } })) as { strand: string }, (result) => `Now on ${result.strand}.`),
+    async ({ pr, ...input }) => {
+      const ref = pr ? prRef(pr.trim()) : undefined;
+      if (pr && !ref) return reply(`ponpoko: ${pr} isn't a GitHub pull request URL`, true);
+      const link = ref ? { link: { adapter: "github", ref: `https://github.com/${ref.repo}/pull/${ref.number}`, label: prName(ref.repo, ref.number) } } : {};
+      return attempt(async () => (await send({ method: "status", params: { ...caller, ...input, ...link } })) as { strand: string }, (result) => `Now on ${result.strand}${ref ? `, watching ${prName(ref.repo, ref.number)}` : ""}.`);
+    },
   );
 
   server.registerTool(

@@ -52,7 +52,9 @@ describe("ponpoko setup", () => {
     expect(ponpoko({ deal: "alt+y" }).keys.map((binding: { key: string }) => binding.key)).toEqual(["alt+y", "alt+shift+m"]);
     const [mode] = ponpoko().modes;
     expect(mode.key).toBe("m");
-    expect(mode.keys.map((binding: { key: string }) => binding.key)).toEqual(["m", "shift+m", "t", "o", "l"]);
+    expect(mode.keys.map((binding: { key: string }) => binding.key)).toEqual(["m", "shift+m", "t", "o", "r", "l"]);
+    expect(mode.keys.find((binding: { key: string }) => binding.key === "r").popup).toEqual(["/usr/bin/bun", "/repo/src/cli.ts", "tab", "--reviews"]);
+    expect(ponpoko().tray.map((widget: { name: string; open: string[] }) => [widget.name, widget.open.slice(2)])).toEqual([["ponpoko", []], ["to review", ["tab", "--reviews"]]]);
     expect(ponpoko({ leader: "y" }).modes[0].key).toBe("y");
   });
 });

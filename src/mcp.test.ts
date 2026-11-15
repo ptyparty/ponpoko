@@ -26,6 +26,13 @@ async function setup() {
 }
 
 describe("the ponpoko MCP", () => {
+  test("agents link the strand to its pull request through status", async () => {
+    const { core, call } = await setup();
+    expect(await call("status", { text: "opened the PR", pr: "https://github.com/acme/widgets/pull/821/files" })).toBe("Now on sc-7, watching widgets#821.");
+    expect(core.snapshot().strands[0]!.links.filter((link) => link.adapter === "github").map((link) => [link.ref, link.label])).toEqual([["https://github.com/acme/widgets/pull/821", "widgets#821"]]);
+    expect(await call("status", { text: "pushed", pr: "acme/widgets#821" })).toContain("isn't a GitHub pull request URL");
+  });
+
   test("agents can title the strands status and split make", async () => {
     const { core, call } = await setup();
     await call("status", { text: "starting", strand: "titles", title: "Let agents title strands" });

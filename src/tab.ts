@@ -1,5 +1,6 @@
-import { pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
-import { isBookkeeping, isPooled, mentionLink } from "./inbox.ts";
+import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
+import { prName } from "./github.ts";
+import { isPooled, mentionLink, reviewsId } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
@@ -26,7 +27,8 @@ const help = [
   "   m         move the strand: pick its new parent with j k ↑ ↓ and ⏎, t for the top, or / to type a path such as ptyparty › ponpoko; a rogue's loose strand merges into it",
   "   w         make the strand wait on another strand: pick it with j k ↑ ↓ and ⏎ (⏎ again stops waiting on it), / to type a path, or c to stop waiting on every strand; when that strand is done, this one is yours again",
   "   d         mark the strand done",
-  "   o         open what the strand's latest move links to, such as a notebook page (📓) in quoll",
+  "   o         open the strand's pull request on GitHub, or else what its latest move links to, such as a notebook page (📓) in quoll",
+  "   R         mark the strand's draft pull request ready for review",
   "   z         snooze the strand, then pick how long, t to type a time such as 14:30, mon 9, 2h or nov 12, or 0 till woken",
   "   n         add a note to the strand",
   "   x         forget a strand ponpoko has wrong",
@@ -63,6 +65,7 @@ export class TabController {
   constructor(
     private readonly actions: Actions,
     private readonly now: () => number = Date.now,
+    private focus: string | undefined = undefined,
   ) {}
 
   setSnapshot(snapshot: Snapshot | undefined): void {
@@ -70,6 +73,12 @@ export class TabController {
     const before = this.current();
     this.snapshot = snapshot;
     this.down = snapshot === undefined;
+    if (snapshot && this.focus) {
+      const focus = this.focus;
+      this.focus = undefined;
+      if (this.select(focus)) return;
+      this.message = "Nothing is waiting for a review";
+    }
     if (!snapshot || !before) return;
     const again = this.selectable().findIndex((row) => row.strand?.id === before.strand?.id);
     if (again >= 0) this.selected = again;
@@ -161,16 +170,15 @@ export class TabController {
         if (strand && !this.expanded.delete(strand.id)) this.expanded.add(strand.id);
         return undefined;
       case "o": {
-        const link = strand
-          ? [...strand.recent.flatMap((move) => move.links), ...strand.links]
-              .filter((candidate) => candidate.adapter !== "dir" && !isBookkeeping(candidate))
-              .sort((a, b) => a.at - b.at)
-              .at(-1)
-          : undefined;
+        const link = strand ? openableLink(strand) : undefined;
         if (!link) this.message = "Nothing on this strand links anywhere";
         else await this.run(() => this.actions.open(link), `Opened ${link.label ?? link.ref}`);
         return undefined;
       }
+      case "R":
+        if (!strand || draftsOf(strand).length === 0) this.message = "This strand has no draft pull request to mark ready";
+        else await this.run(() => this.actions.ready(strand), `Marked ${draftsOf(strand).map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`);
+        return undefined;
       case "a":
       case "A":
         this.mode = { kind: "text", purpose: "add", text: "", top: key.name === "A" || !strand };
@@ -272,7 +280,7 @@ export class TabController {
     if (mode.kind === "text") return ask(`${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`);
     const strand = this.current()?.strand;
     const first = this.message ? style.warn(` ${this.message}`) : ` ${style.enter("⏎")} ${style.text(style.bold(strand ? enterDoes(strand, this.strands()) : "nothing to go to"))}`;
-    return [first, keyLine(keys)];
+    return [first, keyLine(strand && draftsOf(strand).length > 0 ? [...keys.slice(0, -2), ["R", "mark ready"], ...keys.slice(-2)] : keys)];
   }
 
   private async textKey(mode: Extract<Mode, { kind: "text" }>, key: Key): Promise<undefined> {
@@ -474,8 +482,8 @@ export async function runLive(controller: Live): Promise<number> {
   return 0;
 }
 
-export function runTab(): Promise<number> {
-  return runLive(new TabController(serviceActions));
+export function runTab(args: string[] = []): Promise<number> {
+  return runLive(new TabController(serviceActions, Date.now, args.includes("--reviews") ? reviewsId : undefined));
 }
 
 export function enterDoes(strand: StrandView, strands: StrandView[]): string {

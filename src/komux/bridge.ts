@@ -6,7 +6,8 @@ import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
 import { pickWhose, whoseOf } from "../model.ts";
 import { fetchInbox, type Inbox } from "../github.ts";
-import { inboxFacts, isReviewId, source as githubSource } from "../inbox.ts";
+import { hasOwnPr, inboxFacts, isReviewId, source as githubSource, unwatchedPrs } from "../inbox.ts";
+import { savePool, type Pool } from "../unreviewed.ts";
 import { shortcutTitle, storyNumber, type TitleLookup } from "../shortcut.ts";
 import { reviewLayout } from "./go.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
@@ -39,6 +40,7 @@ export class Bridge {
   private inboxDue = Number.POSITIVE_INFINITY;
   private inboxing = false;
   private inboxError: string | undefined;
+  private readonly nudged = new Set<string>();
 
   constructor(
     private readonly service: Service,
@@ -47,6 +49,7 @@ export class Bridge {
     private readonly lookupTitle: TitleLookup = shortcutTitle,
     private readonly lookupInbox: (() => Promise<Inbox>) | undefined = undefined,
     private readonly newId: (prefix: string) => string = (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`,
+    private readonly keepPool: (pool: Pool) => void = () => undefined,
   ) {}
 
   async pollInbox(inTurn: <T>(work: () => Promise<T>) => Promise<T> = (work) => work()): Promise<boolean> {
@@ -56,6 +59,7 @@ export class Bridge {
     this.inboxDue = Number.POSITIVE_INFINITY;
     try {
       const inbox = await this.lookupInbox();
+      if (inbox.unreviewed) this.keepPool({ at: this.now(), complete: inbox.complete?.reviews ?? true, prs: inbox.unreviewed });
       const recorded = await inTurn(async () => {
         this.cached = undefined;
         const facts = inboxFacts(await this.knowledge(), inbox, this.newId);
@@ -108,12 +112,21 @@ export class Bridge {
   async publish(): Promise<void> {
     try {
       const knowledge = await this.knowledge();
+      this.nudgeForNewPrs(knowledge);
       const presence = this.translator.presence(known(knowledge));
       if (presence) await this.service.present({ adapter: "komux", ...presence });
       this.askTitles(knowledge);
       await this.syncBadges(knowledge);
     } catch {
       this.behind = true;
+    }
+  }
+
+  private nudgeForNewPrs(knowledge: Knowledge): void {
+    for (const url of unwatchedPrs(knowledge)) {
+      if (this.nudged.has(url)) continue;
+      this.nudged.add(url);
+      this.inboxDue = Math.min(this.inboxDue, this.now() + inboxSoonMs);
     }
   }
 
@@ -247,7 +260,11 @@ export async function runBridge(env = process.env): Promise<number> {
     console.error("ponpoko komux runs as a komux helper: list it under the plugin's run, so komux gives it KOMUX_EVENTS_SOCKET and KOMUX_SOCKET");
     return 2;
   }
-  const bridge = new Bridge(serviceForBridge, (request) => sendKomux(control, request), Date.now, shortcutTitle, env.PONPOKO_GITHUB === "off" ? undefined : () => fetchInbox());
+  const bridge = new Bridge(serviceForBridge, (request) => sendKomux(control, request), Date.now, shortcutTitle, env.PONPOKO_GITHUB === "off" ? undefined : () => fetchInbox(), undefined, (pool) => {
+    try {
+      savePool(pool);
+    } catch {}
+  });
   let queue = Promise.resolve();
   const serial = (work: () => Promise<void>) => {
     queue = queue.then(work).catch(() => undefined);
@@ -305,7 +322,7 @@ function whoseNow(model: Known, strand: Knowledge["strands"][number]): "you" | "
 function touchesReview(facts: Fact[], knowledge: Knowledge): boolean {
   const parents = new Map(knowledge.strands.map((strand) => [strand.id, strand.parent]));
   const underReview = (strand: string | undefined) => {
-    for (let at = strand, steps = 0; at !== undefined && steps < 50; at = parents.get(at), steps++) if (isReviewId(at)) return true;
+    for (let at = strand, steps = 0; at !== undefined && steps < 50; at = parents.get(at), steps++) if (isReviewId(at) || hasOwnPr(knowledge, at)) return true;
     return false;
   };
   return facts.some((fact) => {

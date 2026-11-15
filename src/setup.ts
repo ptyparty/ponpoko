@@ -56,10 +56,14 @@ export default function ponpoko(options: PonpokoOptions = {}) {
   const deal = { popup: [...command, "deal"], name: "your move", width: 95, height: 75 };
   const catchUp = { popup: [...command, "deal", "--unseen"], name: "catch up", width: 95, height: 75 };
   const thisTab = { popup: [...command, "deal", "--tab"], name: "this tab", width: 95, height: 75 };
+  const reviews = [...command, "tab", "--reviews"];
   return {
     name: "ponpoko",
     run: [[...command, "komux"]],
-    tray: [{ name: "ponpoko", stream: [...command, "tray", "--stream"], open: command }],
+    tray: [
+      { name: "ponpoko", stream: [...command, "tray", "--stream"], open: command },
+      { name: "to review", stream: [...command, "tray", "--unreviewed", "--stream"], open: reviews },
+    ],
     keys: [
       { key: options.deal ?? "alt+m", ...deal },
       { key: options.catchUp ?? "alt+shift+m", ...catchUp },
@@ -74,6 +78,7 @@ export default function ponpoko(options: PonpokoOptions = {}) {
           { key: "shift+m", ...catchUp },
           { key: "t", ...thisTab },
           { key: "o", popup: command, name: "overview" },
+          { key: "r", popup: reviews, name: "reviews" },
           { key: "l", popup: [...command, "log"], name: "log", width: 90, height: 75 },
         ],
       },
@@ -160,7 +165,8 @@ export function komuxConfigHint(places: Places): string {
 
 Alt m deals your oldest move, Alt shift m deals what changed since you last caught up,
 and the tray shows your count. Ctrl Space m opens ponpoko's mode: m and M deal the same
-way, t opens the current tab's strands, and o opens the overview the tray opens.
+way, t opens the current tab's strands, o opens the overview the tray opens, and r opens
+it on the pull requests waiting for a review, as the "to review" tray count does.
 Give a layout labels: { strand: "sc-{story}" } so agents in its tabs work on that strand
 once it exists; elsewhere a Claude counts once it reports a strand or you point its directory at one. Alt n is komux's focus key, so ponpoko doesn't take it.`;
 }

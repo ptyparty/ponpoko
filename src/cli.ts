@@ -4,10 +4,12 @@ import { age, cause, pathText, rows } from "./render.ts";
 import { serve } from "./server.ts";
 
 const usage = `Usage:
-  ponpoko                 The command tab: every strand and whose move it is
+  ponpoko [tab --reviews] The command tab: every strand and whose move it is; --reviews starts on the reviews
   ponpoko log             What ponpoko heard, newest first, for a komux popup
   ponpoko list            Your moves, then everything else, printed once
   ponpoko tray [--stream] One line for komux's tray; --stream prints a new one as it changes
+  ponpoko tray --unreviewed [--stream]
+                          The tray line counting team pull requests nobody has reviewed yet
   ponpoko deal [--unseen] Deal your oldest move as a card, for a komux popup
   ponpoko serve           Run the service (ponpoko.service runs this)
   ponpoko setup [--yes]   Install the service, komux plugin, skill and MCP
@@ -23,7 +25,7 @@ async function main(args: string[]): Promise<number> {
       return -1;
     case undefined:
     case "tab":
-      return (await import("./tab.ts")).runTab();
+      return (await import("./tab.ts")).runTab(args.slice(1));
     case "log": {
       const [{ runLive }, { LogView }] = await Promise.all([import("./tab.ts"), import("./log.ts")]);
       return runLive(new LogView());
@@ -72,7 +74,36 @@ async function list(): Promise<number> {
   }
 }
 
+async function unreviewedTrayLine(): Promise<{ text: string; color: string }> {
+  const [{ readPool, unreviewedLine }, { unreviewedThresholds }] = await Promise.all([import("./unreviewed.ts"), import("./github.ts")]);
+  let thresholds;
+  try {
+    thresholds = unreviewedThresholds();
+  } catch {
+    return { text: "● to review: config ✗", color: "error" };
+  }
+  return unreviewedLine(readPool(), thresholds, Date.now());
+}
+
+async function unreviewedTray(stream: boolean): Promise<number> {
+  if (!stream) {
+    console.log((await unreviewedTrayLine()).text);
+    return 0;
+  }
+  let last = "";
+  const print = async () => {
+    const line = JSON.stringify(await unreviewedTrayLine());
+    if (line === last) return;
+    last = line;
+    console.log(line);
+  };
+  await print();
+  setInterval(() => void print(), 5_000);
+  return -1;
+}
+
 async function tray(args: string[]): Promise<number> {
+  if (args.includes("--unreviewed")) return unreviewedTray(args.includes("--stream"));
   if (!args.includes("--stream")) {
     console.log((await trayLine()).text);
     return 0;
