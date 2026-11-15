@@ -3,6 +3,7 @@ import type { Fact } from "./events.ts";
 import { ownState, pendingMentions, prName, prRef, reviewState, samePr, theTeam, type Inbox, type OwnPr } from "./github.ts";
 import { isBookkeeping, you } from "./model.ts";
 import { storyNumber } from "./shortcut.ts";
+import { ready, yourMoves } from "./komux/translate.ts";
 
 export const source = "github";
 export const githubPlayer = "github";
@@ -76,8 +77,27 @@ export function unwatchedPrs(knowledge: Knowledge): string[] {
   return knowledge.links.filter((link) => link.adapter === prAdapter && link.strand && live.has(link.strand) && !link.strand.startsWith("github:") && prRef(link.ref) && !watched.has(prKey(link.ref))).map((link) => link.ref);
 }
 
-export function hasOwnPr(knowledge: Knowledge, strand: string): boolean {
-  return knowledge.links.some((link) => link.strand === strand && link.adapter === prAdapter && !strand.startsWith("github:"));
+const openPrStrandsOf = new WeakMap<Knowledge, Set<string>>();
+
+export function hasOpenPr(knowledge: Knowledge, strand: string): boolean {
+  let strands = openPrStrandsOf.get(knowledge);
+  if (!strands) {
+    const latest = new Map<string, { at: number; strand: string; open: boolean }>();
+    for (const link of knowledge.links) {
+      if (link.adapter !== ownStateAdapter || !link.strand) continue;
+      const view = readOwnPrView(link.ref);
+      if (!view) continue;
+      const key = `${link.strand} ${prKey(view.url)}`;
+      if ((latest.get(key)?.at ?? -1) <= link.at) latest.set(key, { at: link.at, strand: link.strand, open: view.state !== "closed" });
+    }
+    strands = new Set([...latest.values()].filter((entry) => entry.open).map((entry) => entry.strand));
+    openPrStrandsOf.set(knowledge, strands);
+  }
+  return strands.has(strand);
+}
+
+export function prLinkIds(knowledge: Knowledge): string[] {
+  return knowledge.links.filter((link) => link.adapter === prAdapter && link.strand !== undefined && !link.strand.startsWith("github:")).map((link) => link.id);
 }
 
 export function branchStrand(knowledge: Knowledge, branch: string): string | undefined {
@@ -97,7 +117,7 @@ export function branchStrand(knowledge: Knowledge, branch: string): string | und
   return found.length === 1 ? found[0]!.id : undefined;
 }
 
-const keptAsks = new Set(["asking you", "waiting on you"]);
+const finishedTurns = new Set([yourMoves.done, ready]);
 
 function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string): Fact[] {
   if (!inbox.mine) return [];
@@ -133,7 +153,7 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
       const kind = players.get(move.player)?.kind;
       const aboutPr = new RegExp(`(#|\\bPR\\s*#?)${pr.number}\\b`, "i").test(move.what);
       const reviewerWait = (kind === "person" || kind === "machine") && (aboutPr || move.player === player || move.player === "machine:copilot" || move.player === personId(theTeam));
-      const turnOver = view.state === "waiting" && move.player === you && !keptAsks.has(move.what);
+      const turnOver = view.state === "waiting" && move.player === you && move.source !== "agent" && finishedTurns.has(move.what);
       if (reviewerWait || turnOver) facts.push({ type: "move.closed", move: move.id });
     }
     if (view.state === "waiting") join(player, view.who === "Copilot" ? "machine" : "person", view.who!);
@@ -149,6 +169,10 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
       strand = branchStrand(knowledge, pr.branch);
       if (!strand) continue;
       facts.push({ type: "link.added", link: newId("l"), strand, adapter: prAdapter, ref: pr.url, label: prName(pr.repo, pr.number) });
+    }
+    for (const stale of stateLinks.filter((link) => link.strand !== strand && samePr(readOwnPrView(link.ref)?.url ?? "", pr.url))) {
+      facts.push({ type: "link.removed", link: stale.id });
+      for (const move of ours(stale.strand!, pr.url)) facts.push({ type: "move.closed", move: move.id });
     }
     const state = ownState(pr);
     const view: OwnPrView = { url: pr.url, repo: pr.repo, number: pr.number, title: pr.title, branch: pr.branch, draft: pr.draft, state: state.kind, ...(state.kind === "waiting" ? { who: state.who } : {}), what: state.what };

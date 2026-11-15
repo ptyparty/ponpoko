@@ -1,5 +1,4 @@
 import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
-import { prName } from "./github.ts";
 import { isPooled, mentionLink, reviewsId } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
@@ -177,7 +176,7 @@ export class TabController {
       }
       case "R":
         if (!strand || draftsOf(strand).length === 0) this.message = "This strand has no draft pull request to mark ready";
-        else await this.run(() => this.actions.ready(strand), `Marked ${draftsOf(strand).map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`);
+        else await this.run(() => this.actions.ready(strand), (said) => String(said));
         return undefined;
       case "a":
       case "A":
@@ -421,10 +420,10 @@ export class TabController {
     return strand.dir;
   }
 
-  private async run(action: () => Promise<unknown>, done?: string): Promise<boolean> {
+  private async run(action: () => Promise<unknown>, done?: string | ((result: unknown) => string)): Promise<boolean> {
     try {
-      await action();
-      this.message = done;
+      const result = await action();
+      this.message = typeof done === "function" ? done(result) : done;
       return true;
     } catch (error) {
       this.message = (error as Error).message;
@@ -466,7 +465,10 @@ export async function runLive(controller: Live): Promise<number> {
         if (outcome === "quit" || outcome === "close") return done.resolve();
         await reload();
       }),
-    draw,
+    () => {
+      draw();
+      void reload();
+    },
   );
   await reload();
   await connect();

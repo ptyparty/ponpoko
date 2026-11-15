@@ -6,7 +6,7 @@ import { openableLink, readyDrafts } from "./actions.ts";
 import { Ponpoko } from "./core.ts";
 import { Dealer } from "./deal.ts";
 import { fetchInbox, isUnreviewed, markReady, ownState, runGh, unreviewedThresholds, type Gh, type Inbox, type OwnPr, type PullRequest } from "./github.ts";
-import { inboxFacts, ownPrs, reviewsId, unwatchedPrs } from "./inbox.ts";
+import { hasOpenPr, inboxFacts, ownPrs, reviewsId, unwatchedPrs } from "./inbox.ts";
 import { Bridge } from "./komux/bridge.ts";
 import { Store } from "./store.ts";
 import { TabController } from "./tab.ts";
@@ -65,6 +65,15 @@ describe("your own pull request's state", () => {
     expect(ownState(own({ reviews: [sam("CHANGES_REQUESTED"), sam("APPROVED", { commit: "c2", at: "2026-11-13T12:00:00Z" })], head: "c2" }))).toEqual({ kind: "yours", what: "approved by sam · merge it" });
   });
 
+  test("names the latest reviewer asking for changes, and every reviewer with open comments", () => {
+    const early = sam("CHANGES_REQUESTED", { author: "bob", at: "2026-11-13T09:00:00Z" });
+    const late = sam("CHANGES_REQUESTED", { at: "2026-11-13T12:00:00Z" });
+    expect(ownState(own({ head: "c2", reviews: [early, sam("COMMENTED", { at: "2026-11-13T08:00:00Z" }), late] }))).toMatchObject({ who: "sam", what: "re-review" });
+    const threads = [{ author: "sam", resolved: false }, { author: "bob", resolved: false }];
+    expect(ownState(own({ reviews: [sam("COMMENTED", { author: "bob", at: "2026-11-13T09:00:00Z" }), sam("COMMENTED")], threads: [threads[1]!] }))).toEqual({ kind: "yours", what: "bob left comments · 1 thread" });
+    expect(ownState(own({ reviews: [sam("COMMENTED", { author: "bob", at: "2026-11-13T09:00:00Z" }), sam("COMMENTED")], threads }))).toEqual({ kind: "yours", what: "sam, bob left comments · 2 threads" });
+  });
+
   test("is yours when a reviewer leaves comments, and ignores your own replies", () => {
     expect(ownState(own({ reviews: [sam("COMMENTED")], threads: [{ author: "sam", resolved: false }] }))).toEqual({ kind: "yours", what: "sam left comments · 1 thread" });
     expect(ownState(own({ reviews: [{ ...sam("COMMENTED"), author: me }], threads: [{ author: me, resolved: false }] })).kind).toBe("waiting");
@@ -93,7 +102,9 @@ describe("your own pull requests as moves", () => {
     sync([own({ head: "c2", reviews: [copilot(), sam("APPROVED", { commit: "c2" })] })]);
     expect(line("sc-52751")).toBe("you approved by sam · merge it");
     expect(ownPrs(strand("sc-52751"))).toEqual([{ url, repo: "acme/widgets", number: 212, title: "Partner Services section", branch: "sc-52751/partner-services", draft: false, state: "yours", what: "approved by sam · merge it" }]);
+    expect(hasOpenPr(core.knowledge(), story)).toBe(true);
     sync([]);
+    expect(hasOpenPr(core.knowledge(), story)).toBe(false);
     expect(strand("sc-52751").open).toEqual([]);
     expect(strand("sc-52751").done).toBeUndefined();
     expect(ownPrs(strand("sc-52751"))[0]).toMatchObject({ state: "closed", what: "merged or closed" });
@@ -115,17 +126,18 @@ describe("your own pull requests as moves", () => {
   test("a wait closes finished turns and an agent's Copilot wait, but not a Claude asking you", () => {
     const { core, sync, strand } = setup();
     const story = core.add(undefined, "sc-52751");
+    core.record("komux", [{ type: "move.opened", move: "turn", strand: story, player: "you", what: "turn ended" }]);
     core.record("agent", [
+      { type: "move.opened", move: "live-test", strand: story, player: "you", what: "test the login flow in a browser" },
       { type: "player.joined", player: "machine:copilot", kind: "machine", who: "Copilot" },
       { type: "move.opened", move: "agent-wait", strand: story, player: "machine:copilot", what: "reviewing PR #212" },
       { type: "player.joined", player: "person:merlin-reviewer", kind: "person", who: "merlin reviewer" },
       { type: "move.opened", move: "named-wait", strand: story, player: "person:merlin-reviewer", what: "human review of widgets PR 212" },
       { type: "move.opened", move: "other-wait", strand: story, player: "person:merlin-reviewer", what: "an answer about PR 2120" },
-      { type: "move.opened", move: "turn", strand: story, player: "you", what: "turn ended" },
       { type: "move.opened", move: "ask", strand: story, player: "you", what: "asking you" },
     ]);
     sync([own()]);
-    expect(strand("sc-52751").open.map((move) => move.what).sort()).toEqual(["0 of 1 reviews", "an answer about PR 2120", "asking you"]);
+    expect(strand("sc-52751").open.map((move) => move.what).sort()).toEqual(["0 of 1 reviews", "an answer about PR 2120", "asking you", "test the login flow in a browser"]);
   });
 
   test("a PR an agent linked is watched even when its branch names no strand, and the bridge polls for it soon", async () => {
@@ -136,6 +148,21 @@ describe("your own pull requests as moves", () => {
     sync([own({ branch: "fix-things" })]);
     expect(line("ponpoko")).toBe("person the team · 0 of 1 reviews");
     expect(unwatchedPrs(core.knowledge())).toEqual([]);
+  });
+
+  test("moves a PR's moves with its link when an agent links it to another strand", () => {
+    const { core, sync, strand } = setup();
+    const story = core.add(undefined, "sc-52751");
+    const tests = core.add(story, "tests");
+    sync([own()]);
+    expect(strand("sc-52751").own.whose).toBe("person");
+    core.record("agent", [{ type: "link.added", link: "moved", strand: tests, adapter: "github", ref: url, label: "widgets#212" }]);
+    sync([own()]);
+    expect(strand("tests").own.whose).toBe("person");
+    expect(strand("sc-52751").open).toEqual([]);
+    expect(ownPrs(strand("sc-52751"))).toEqual([]);
+    expect(ownPrs(strand("tests"))).toHaveLength(1);
+    expect(sync([own()])).toEqual([]);
   });
 
   test("leaves PRs alone whose branch matches no story, or more than one", () => {
@@ -150,6 +177,33 @@ describe("your own pull requests as moves", () => {
     sync([own()]);
     sync([], { complete: { reviews: true, mentioned: true, mine: false } });
     expect(strand("sc-52751").own.whose).toBe("person");
+  });
+});
+
+describe("the bridge and newly linked PRs", () => {
+  test("polls soon after a PR is linked, once", async () => {
+    const core = new Ponpoko(new Store(":memory:"));
+    let now = 1_000_000;
+    let polls = 0;
+    const bridge = new Bridge(
+      { knowledge: async () => core.knowledge(), record: async (facts, source = "komux") => core.record(source, facts), present: async () => undefined, absent: async () => undefined },
+      async () => ({ ok: true }),
+      () => now,
+      async () => undefined,
+      async () => (polls++, { me, reviews: [], mentioned: [], mine: [] }),
+    );
+    core.onChange(() => bridge.changed());
+    await bridge.pollInbox();
+    const strand = core.add(undefined, "ponpoko");
+    core.record("agent", [{ type: "link.added", link: "agent-link", strand, adapter: "github", ref: url, label: "widgets#212" }]);
+    await bridge.publish();
+    now += 16_000;
+    await bridge.pollInbox();
+    expect(polls).toBe(2);
+    await bridge.publish();
+    now += 16_000;
+    await bridge.pollInbox();
+    expect(polls).toBe(2);
   });
 });
 
@@ -207,6 +261,7 @@ describe("marking a draft ready", () => {
     await pick("sc-52751");
     expect(tab.view(120, 30).join("\n")).toContain("mark ready");
     await tab.key({ name: "R" });
+    expect(tab.message).toStartWith("Marked ");
     expect(calls).toContainEqual(["ready", core.snapshot().strands.find((strand) => strand.name === "sc-52751")!.id]);
     await tab.key({ name: "o" });
     expect(calls).toContainEqual(["open", url]);
@@ -269,7 +324,7 @@ describe("the unreviewed pool", () => {
       async () => ({ ok: true }),
       () => 5,
       async () => undefined,
-      async () => ({ me, reviews: [], mentioned: [], unreviewed: [{ repo: "acme/widgets", number: 1, title: "t", url: "u" }] }),
+      async () => ({ me, reviews: [], mentioned: [], unreviewed: [{ repo: "acme/widgets", number: 1, title: "t", url: "u" }], complete: { reviews: false, mentioned: true, pool: true } }),
       undefined,
       (pool) => void saved.push(pool),
     );

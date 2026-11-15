@@ -107,6 +107,7 @@ export function openScreen(onKey: (key: Key) => void, onResize: () => void): Scr
   };
   process.stdin.on("data", listener);
   out.on("resize", onResize);
+  process.on("SIGWINCH", onResize);
   const screen: Screen = {
     get width() {
       return out.columns ?? 100;
@@ -120,6 +121,7 @@ export function openScreen(onKey: (key: Key) => void, onResize: () => void): Scr
     close: () => {
       process.stdin.off("data", listener);
       out.off("resize", onResize);
+      process.off("SIGWINCH", onResize);
       process.stdin.setRawMode?.(false);
       process.stdin.pause();
       out.write("\x1b[?25h\x1b[?1049l");

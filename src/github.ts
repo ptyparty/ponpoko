@@ -28,7 +28,7 @@ export type Inbox = {
   mentioned: Mentioned[];
   mine?: OwnPr[];
   unreviewed?: Pooled[];
-  complete?: { reviews: boolean; mentioned: boolean; mine?: boolean };
+  complete?: { reviews: boolean; mentioned: boolean; mine?: boolean; pool?: boolean };
 };
 
 export type OwnState = { kind: "waiting"; who: string; whoKind: "person" | "machine"; what: string } | { kind: "yours"; what: string } | { kind: "draft"; what: string };
@@ -71,7 +71,7 @@ export function ownState(pr: OwnPr, required = 1): OwnState {
   const pushedSince = (review: OwnReview) => review.commit !== undefined && pr.head !== undefined && review.commit !== pr.head;
   const open = (by?: (login: string) => boolean) => pr.threads.filter((thread) => !thread.resolved && !sameLogin(thread.author, pr.author) && (by ? by(thread.author) : true)).length;
   const threads = (count: number) => (count > 0 ? ` · ${plural(count, "thread")}` : "");
-  const changers = [...verdicts.values()].filter((review) => review.state === "CHANGES_REQUESTED");
+  const changers = [...verdicts.values()].filter((review) => review.state === "CHANGES_REQUESTED").sort((a, b) => a.at.localeCompare(b.at));
   const outstanding = changers.filter((review) => !asked(review.author) && !pushedSince(review));
   if (outstanding.length > 0) return { kind: "yours", what: `${names(outstanding)} requested changes${threads(open())}` };
   const again = changers.at(-1);
@@ -82,9 +82,9 @@ export function ownState(pr: OwnPr, required = 1): OwnState {
   const copilot = pr.reviews.filter((review) => isCopilot(review.author)).sort((a, b) => a.at.localeCompare(b.at)).at(-1);
   const copilotOpen = open(isCopilot);
   if (copilot && !pushedSince(copilot) && copilotOpen > 0) return { kind: "yours", what: `Copilot left ${plural(copilotOpen, "comment")}` };
-  const commenter = humans.filter((review) => review.state === "COMMENTED" && !verdicts.has(review.author.toLowerCase()) && !pushedSince(review)).at(-1);
-  const commented = commenter ? open((login) => sameLogin(login, commenter.author)) : 0;
-  if (commenter && commented > 0) return { kind: "yours", what: `${commenter.author} left comments${threads(commented)}` };
+  const commenters = humans.filter((review) => review.state === "COMMENTED" && !verdicts.has(review.author.toLowerCase()) && !pushedSince(review) && open((login) => sameLogin(login, review.author)) > 0);
+  const commented = open((login) => commenters.some((review) => sameLogin(review.author, login)));
+  if (commenters.length > 0) return { kind: "yours", what: `${names(commenters.reverse())} left comments${threads(commented)}` };
   const user = users[0];
   if (user) return { kind: "waiting", who: user.login, whoKind: "person", what: humans.some((review) => sameLogin(review.author, user.login)) ? "re-review" : "reviewing" };
   if (pr.draft) return { kind: "draft", what: "draft" };
@@ -182,6 +182,7 @@ export async function fetchInbox(gh: Gh = runGh, poolQuery = reviewQuery()): Pro
   if (!me) throw new Error("gh doesn't say who you are");
   const searches = [...(poolQuery ? [`${poolQuery} -author:${me}`] : []), `${openPrs} assignee:${me}`, `${openPrs} review-requested:${me}`, `${openPrs} reviewed-by:${me}`];
   const [found, mentioned, mine] = await Promise.all([Promise.all(searches.map((q) => graphql(gh, reviewsQuery, q))), graphql(gh, mentionsQuery, `is:pr is:open mentions:${me}`), graphql(gh, mineQuery, `is:pr is:open author:${me}`)]);
+  const poolComplete = poolQuery ? found[0]!.length < reviewsMax : true;
   const pool = poolQuery ? found[0]!.flatMap((node) => readPullRequest(node) ?? []).filter((pr) => !sameLogin(pr.author, me)) : undefined;
   const reviewed = found.pop()!;
   const requested = new Set(found.at(-1)!.flatMap((node) => readPullRequest(node)?.url ?? []));
@@ -201,7 +202,7 @@ export async function fetchInbox(gh: Gh = runGh, poolQuery = reviewQuery()): Pro
     mentioned: mentioned.flatMap((node) => readMentioned(node) ?? []),
     mine: mine.flatMap((node) => readOwnPr(node) ?? []),
     ...(pool ? { unreviewed: pool.filter(isUnreviewed).map(({ repo, number, title, url }) => ({ repo, number, title, url })) } : {}),
-    complete: { reviews: [...found, reviewed].every((nodes) => nodes.length < reviewsMax), mentioned: mentioned.length < mentionsMax, mine: mine.length < mineMax },
+    complete: { reviews: [...found, reviewed].every((nodes) => nodes.length < reviewsMax), mentioned: mentioned.length < mentionsMax, mine: mine.length < mineMax, pool: poolComplete },
   };
 }
 

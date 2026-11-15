@@ -25,7 +25,7 @@ export type Actions = {
   title: (strand: string, title: string) => Promise<unknown>;
   done: (strand: string) => Promise<unknown>;
   open: (link: Link) => Promise<unknown>;
-  ready: (strand: StrandView) => Promise<unknown>;
+  ready: (strand: StrandView) => Promise<string>;
 };
 
 export function draftsOf(strand: StrandView): OwnPrView[] {

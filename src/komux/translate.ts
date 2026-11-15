@@ -19,13 +19,13 @@ export type KomuxPlace = {
 export type Known = { strands: Map<string, Strand>; closed: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string> };
 type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob> };
 
-const yourMoves: Record<string, string> = {
+export const yourMoves: Record<string, string> = {
   waiting: "waiting on you",
   done: "turn ended",
   failed: "turn failed",
 };
-const asking = "asking you";
-const ready = "ready for a prompt";
+export const asking = "asking you";
+export const ready = "ready for a prompt";
 
 export function komuxTabHandle(server: string, tabId: number): string {
   return `komux:${server}:tab:${tabId}`;

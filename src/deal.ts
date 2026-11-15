@@ -1,10 +1,9 @@
 import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
-import { prName } from "./github.ts";
 import { isPooled, mentionLink, mentionsId, reviewsId } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, tabStrands } from "./komux/go.ts";
-import { komuxTabHandle } from "./komux/translate.ts";
+import { asking, komuxTabHandle, ready, yourMoves } from "./komux/translate.ts";
 import { blockersOf, fit, snoozedLabel, standingOf } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { parseWhen } from "./when.ts";
@@ -184,7 +183,7 @@ export class Dealer {
       }
       case "R":
         if (!card || draftsOf(card).length === 0) this.message = "This strand has no draft pull request to mark ready";
-        else await this.act(() => this.actions.ready(card), `Marked ${draftsOf(card).map((pr) => prName(pr.repo, pr.number)).join(", ")} ready for review`);
+        else await this.act(() => this.actions.ready(card), (said) => String(said));
         return undefined;
     }
     if (/^[1-9]$/.test(key.name) && Number(key.name) <= this.rows().length) this.selected = Number(key.name) - 1;
@@ -336,10 +335,10 @@ export class Dealer {
     return "close";
   }
 
-  private async act(action: () => Promise<unknown>, done?: string): Promise<boolean> {
+  private async act(action: () => Promise<unknown>, done?: string | ((result: unknown) => string)): Promise<boolean> {
     try {
-      await action();
-      this.message = done;
+      const result = await action();
+      this.message = typeof done === "function" ? done(result) : done;
       return true;
     } catch (error) {
       this.message = (error as Error).message;
@@ -372,7 +371,10 @@ export async function runDeal(args: string[]): Promise<number> {
         if (outcome === "close") return done.resolve();
         await reload();
       }),
-    draw,
+    () => {
+      draw();
+      void reload();
+    },
   );
   await reload();
   const ticker = setInterval(() => void reload(), 10_000);
@@ -399,8 +401,8 @@ function sideBySide(left: string[], right: string[], column: number): string[] {
 
 function urgency(strand: StrandView): number {
   const asks = strand.open.filter((move) => move.player === "you").map((move) => move.what);
-  if (asks.some((what) => what === "asking you" || what === "waiting on you")) return 0;
-  return asks.length > 0 && asks.every((what) => what === "ready for a prompt") ? 2 : 1;
+  if (asks.some((what) => what === asking || what === yourMoves.waiting)) return 0;
+  return asks.length > 0 && asks.every((what) => what === ready) ? 2 : 1;
 }
 
 function wrap(text: string, width: number): string[] {

@@ -6,7 +6,7 @@ import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
 import { pickWhose, whoseOf } from "../model.ts";
 import { fetchInbox, type Inbox } from "../github.ts";
-import { hasOwnPr, inboxFacts, isReviewId, source as githubSource, unwatchedPrs } from "../inbox.ts";
+import { hasOpenPr, inboxFacts, isReviewId, prLinkIds, source as githubSource, unwatchedPrs } from "../inbox.ts";
 import { savePool, type Pool } from "../unreviewed.ts";
 import { shortcutTitle, storyNumber, type TitleLookup } from "../shortcut.ts";
 import { reviewLayout } from "./go.ts";
@@ -41,6 +41,7 @@ export class Bridge {
   private inboxing = false;
   private inboxError: string | undefined;
   private readonly nudged = new Set<string>();
+  private readonly prLinksSeen = new Set<string>();
 
   constructor(
     private readonly service: Service,
@@ -59,7 +60,7 @@ export class Bridge {
     this.inboxDue = Number.POSITIVE_INFINITY;
     try {
       const inbox = await this.lookupInbox();
-      if (inbox.unreviewed) this.keepPool({ at: this.now(), complete: inbox.complete?.reviews ?? true, prs: inbox.unreviewed });
+      if (inbox.unreviewed) this.keepPool({ at: this.now(), complete: inbox.complete?.pool ?? true, prs: inbox.unreviewed });
       const recorded = await inTurn(async () => {
         this.cached = undefined;
         const facts = inboxFacts(await this.knowledge(), inbox, this.newId);
@@ -123,6 +124,9 @@ export class Bridge {
   }
 
   private nudgeForNewPrs(knowledge: Knowledge): void {
+    const fresh = prLinkIds(knowledge).filter((id) => !this.prLinksSeen.has(id));
+    if (fresh.length === 0) return;
+    for (const id of fresh) this.prLinksSeen.add(id);
     for (const url of unwatchedPrs(knowledge)) {
       if (this.nudged.has(url)) continue;
       this.nudged.add(url);
@@ -322,7 +326,7 @@ function whoseNow(model: Known, strand: Knowledge["strands"][number]): "you" | "
 function touchesReview(facts: Fact[], knowledge: Knowledge): boolean {
   const parents = new Map(knowledge.strands.map((strand) => [strand.id, strand.parent]));
   const underReview = (strand: string | undefined) => {
-    for (let at = strand, steps = 0; at !== undefined && steps < 50; at = parents.get(at), steps++) if (isReviewId(at) || hasOwnPr(knowledge, at)) return true;
+    for (let at = strand, steps = 0; at !== undefined && steps < 50; at = parents.get(at), steps++) if (isReviewId(at) || hasOpenPr(knowledge, at)) return true;
     return false;
   };
   return facts.some((fact) => {

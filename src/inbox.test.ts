@@ -282,7 +282,7 @@ describe("fetching the inbox", () => {
     };
     const inbox = await fetchInbox(gh, "is:open is:pr org:acme");
     expect(pendingMentions(inbox.mentioned[0]!, me).map((mention) => mention.url).sort()).toEqual(["review", "thread"]);
-    expect(inbox.complete).toEqual({ reviews: false, mentioned: true, mine: true });
+    expect(inbox.complete).toEqual({ reviews: false, mentioned: true, mine: true, pool: false });
   });
 });
 

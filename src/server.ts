@@ -76,24 +76,7 @@ export async function serve(): Promise<void> {
     unix: path,
     socket: {
       open: (socket) => void (socket.data = { buffer: "", pending: [], ending: false }),
-      data(socket, data) {
-        const lines = (socket.data.buffer + data.toString()).split("\n");
-        socket.data.buffer = lines.pop()!;
-        for (const line of lines) {
-          if (line.trim() === "") continue;
-          const parsed = parse(line);
-          if (parsed.ok && parsed.request.method === "watch") {
-            watchers.add(socket);
-            send(socket, `${JSON.stringify({ ok: true })}\n`);
-            continue;
-          }
-          const response = parsed.ok ? handle(core, parsed.request) : parsed.response;
-          if (!watchers.has(socket)) socket.data.ending = true;
-          send(socket, `${JSON.stringify(response)}\n`);
-        }
-      },
-      drain: (socket) => flush(socket),
-      end: (socket) => void (watchers.delete(socket), socket.end()),
+      ...answering(core, watchers),
       close: (socket) => void watchers.delete(socket),
       error: (socket) => void watchers.delete(socket),
     },
@@ -110,6 +93,39 @@ export async function serve(): Promise<void> {
 }
 
 type Connection = { buffer: string; pending: Uint8Array[]; ending: boolean };
+
+export function answering(core: Ponpoko, watchers: Set<Socket<Connection>>) {
+  return {
+    data(socket: Socket<Connection>, data: Buffer | string) {
+      if (socket.data.ending) return;
+      const lines = (socket.data.buffer + data.toString()).split("\n");
+      socket.data.buffer = lines.pop()!;
+      let answered = false;
+      for (const line of lines) {
+        if (line.trim() === "") continue;
+        const parsed = parse(line);
+        if (parsed.ok && parsed.request.method === "watch") {
+          watchers.add(socket);
+          send(socket, `${JSON.stringify({ ok: true })}\n`);
+          continue;
+        }
+        const response = parsed.ok ? handle(core, parsed.request) : parsed.response;
+        answered = true;
+        send(socket, `${JSON.stringify(response)}\n`);
+      }
+      if (answered && !watchers.has(socket)) {
+        socket.data.ending = true;
+        flush(socket);
+      }
+    },
+    drain: (socket: Socket<Connection>) => flush(socket),
+    end: (socket: Socket<Connection>) => {
+      watchers.delete(socket);
+      socket.data.ending = true;
+      flush(socket);
+    },
+  };
+}
 
 const encoder = new TextEncoder();
 

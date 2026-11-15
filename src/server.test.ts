@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Socket } from "bun";
-import { flush, send } from "./server.ts";
+import { Ponpoko } from "./core.ts";
+import { answering, flush, send } from "./server.ts";
+import { Store } from "./store.ts";
 
 function fakeSocket(room: number[]) {
   const written: number[] = [];
@@ -40,5 +42,26 @@ describe("answering over the socket", () => {
     send(socket, '{"changed":true}\n');
     expect(text()).toBe('{"changed":true}\n');
     expect(ended()).toBe(false);
+  });
+
+  test("answers every request in a chunk before closing, and ignores lines after that", () => {
+    const { socket, text, ended } = fakeSocket([]);
+    const handlers = answering(new Ponpoko(new Store(":memory:")), new Set());
+    handlers.data(socket, '{"method":"add","params":{"name":"one"}}\n{"method":"add","params":{"name":"two"}}\n');
+    expect(text().split("\n").filter(Boolean)).toHaveLength(2);
+    expect(ended()).toBe(true);
+    handlers.data(socket, '{"method":"state"}\n');
+    expect(text().split("\n").filter(Boolean)).toHaveLength(2);
+  });
+
+  test("a client that half-closes still gets the whole answer before it's closed", () => {
+    const { socket, text, ended } = fakeSocket([3, 0, 0]);
+    const handlers = answering(new Ponpoko(new Store(":memory:")), new Set());
+    handlers.data(socket, '{"method":"changes","params":{"since":0}}\n');
+    handlers.end(socket);
+    expect(ended()).toBe(false);
+    handlers.drain(socket);
+    expect(ended()).toBe(true);
+    expect(JSON.parse(text())).toMatchObject({ ok: true });
   });
 });
