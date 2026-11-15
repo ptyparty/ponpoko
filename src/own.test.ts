@@ -316,7 +316,9 @@ describe("the unreviewed pool", () => {
     expect(isUnreviewed(pr())).toBe(true);
     expect(isUnreviewed(pr({ reviews: [{ author: "copilot-pull-request-reviewer", state: "COMMENTED", bot: true }, { author: "github-actions", state: "COMMENTED", bot: true }, { author: "alice", state: "COMMENTED" }] }))).toBe(true);
     expect(isUnreviewed(pr({ assignees: ["bob"] }))).toBe(false);
-    expect(isUnreviewed(pr({ reviews: [{ author: "bob", state: "COMMENTED" }] }))).toBe(false);
+    expect(isUnreviewed(pr({ reviews: [{ author: "bob", state: "COMMENTED" }, { author: "carol", state: "DISMISSED" }] }))).toBe(true);
+    expect(isUnreviewed(pr({ reviews: [{ author: "bob", state: "APPROVED" }] }))).toBe(false);
+    expect(isUnreviewed(pr({ reviews: [{ author: "bob", state: "CHANGES_REQUESTED" }] }))).toBe(false);
   });
 
   test("comes from the pool search only", async () => {

@@ -198,8 +198,8 @@ export function reviewStanding(strand: StrandView): ReviewStanding {
   const why = rest.join(":");
   const author = strand.open.find((move) => move.player !== "you" && move.by.kind === "person");
   if (kind === "author" || (!kind && author)) return { kind: "reviewed", why: { text: `you asked for changes · ${author?.by.who ?? "the author"} on it`, paint: style.muted }, yours: false };
-  const approved = /approved by (.+)$/.exec(why);
-  if (approved && isPooled(strand)) return { kind: "reviewed", why: { text: `approved by ${approved[1]} · nobody assigned`, paint: style.muted }, yours: false };
+  const decided = /(approved|changes requested) by (.+)$/.exec(why);
+  if (decided && isPooled(strand)) return { kind: "reviewed", why: { text: `${decided[1]} by ${decided[2]} · nobody assigned`, paint: style.muted }, yours: false };
   if (isPooled(strand)) return { kind: "waiting", why: { text: "nobody yet", paint: style.muted }, yours: false };
   return { kind: "waiting", why: { text: strand.own.why || "yours", paint: style.you }, yours: true };
 }

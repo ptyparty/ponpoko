@@ -55,7 +55,12 @@ export function reviewState(pr: PullRequest, me: string): ReviewState {
   if (pr.assignees.some(mine)) return { kind: "yours", why: "assigned to you" };
   const others = pr.assignees.filter((login) => !mine(login));
   if (others.length > 0) return { kind: "gone", why: `${others.join(", ")} took it` };
-  const approvers = [...new Set(decisive.filter((review) => review.state === "APPROVED" && !sameLogin(review.author, pr.author)).map((review) => review.author))];
+  const latest = new Map<string, Review>();
+  for (const review of decisive) if (!sameLogin(review.author, pr.author) && !review.bot && !isCopilot(review.author)) latest.set(review.author.toLowerCase(), review);
+  const by = (state: string) => [...latest.values()].filter((review) => review.state === state).map((review) => review.author);
+  const changers = by("CHANGES_REQUESTED");
+  if (changers.length > 0) return { kind: "pool", why: `nobody assigned; changes requested by ${changers.join(", ")}` };
+  const approvers = by("APPROVED");
   return { kind: "pool", why: approvers.length > 0 ? `nobody assigned; approved by ${approvers.join(", ")}` : "waiting for a reviewer" };
 }
 
@@ -101,7 +106,7 @@ function plural(count: number, noun: string): string {
 }
 
 export function isUnreviewed(pr: PullRequest): boolean {
-  return pr.assignees.length === 0 && !pr.reviews.some((review) => !review.bot && !isCopilot(review.author) && !sameLogin(review.author, pr.author));
+  return pr.assignees.length === 0 && !pr.reviews.some((review) => isDecisive(review) && !review.bot && !isCopilot(review.author) && !sameLogin(review.author, pr.author));
 }
 
 function isDecisive(review: Review): boolean {

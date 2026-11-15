@@ -44,6 +44,8 @@ describe("a pull request's review state", () => {
     expect(reviewState(pr(), me)).toEqual({ kind: "pool", why: "waiting for a reviewer" });
     expect(reviewState(pr({ reviews: [{ author: "carol", state: "APPROVED", commit: "c1" }] }), me)).toEqual({ kind: "pool", why: "nobody assigned; approved by carol" });
     expect(reviewState(pr({ assignees: ["bob"] }), me)).toEqual({ kind: "gone", why: "bob took it" });
+    expect(reviewState(pr({ reviews: [{ author: "bob", state: "CHANGES_REQUESTED", commit: "c1" }] }), me)).toEqual({ kind: "pool", why: "nobody assigned; changes requested by bob" });
+    expect(reviewState(pr({ reviews: [{ author: "bob", state: "COMMENTED", commit: "c1" }] }), me)).toEqual({ kind: "pool", why: "waiting for a reviewer" });
   });
 
   test("is yours when you're assigned or asked, and the author's after you request changes until they push", () => {
