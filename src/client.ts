@@ -6,29 +6,38 @@ export class Down extends Error {}
 
 export async function ask(request: Request, timeoutMs = 3000): Promise<unknown> {
   const response = await new Promise<Response>((resolve, reject) => {
-    let received = "";
-    const timer = setTimeout(() => reject(new Down("ponpoko did not answer")), timeoutMs);
+    const chunks: Uint8Array[] = [];
+    let settled = false;
+    let connection: { end: () => void } | undefined;
+    const settle = (outcome: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      connection?.end();
+      outcome();
+    };
+    const timer = setTimeout(() => settle(() => reject(new Down("ponpoko did not answer"))), timeoutMs);
     Bun.connect({
       unix: socketPath(),
       socket: {
         open: (socket) => void socket.write(`${JSON.stringify(request)}\n`),
-        data(socket, data) {
-          received += data.toString();
+        data(_socket, data) {
+          chunks.push(new Uint8Array(data));
+          if (!data.includes(10)) return;
+          const received = Buffer.concat(chunks).toString();
           const newline = received.indexOf("\n");
-          if (newline < 0) return;
-          clearTimeout(timer);
-          socket.end();
-          resolve(JSON.parse(received.slice(0, newline)) as Response);
+          settle(() => resolve(JSON.parse(received.slice(0, newline)) as Response));
         },
-        error(_socket, error) {
-          clearTimeout(timer);
-          reject(new Down(error.message));
-        },
+        close: () => settle(() => reject(new Down("ponpoko closed the connection before answering"))),
+        error: (_socket, error) => settle(() => reject(new Down(error.message))),
       },
-    }).catch((error: Error) => {
-      clearTimeout(timer);
-      reject(new Down(`ponpoko isn't running (${error.message})`));
-    });
+    }).then(
+      (socket) => {
+        connection = socket;
+        if (settled) socket.end();
+      },
+      (error: Error) => settle(() => reject(new Down(`ponpoko isn't running (${error.message})`))),
+    );
   });
   if (!response.ok) throw new Error(response.error);
   return response.result;

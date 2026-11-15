@@ -63,16 +63,16 @@ export async function serve(): Promise<void> {
     rmSync(path, { force: true });
   }
   const core = new Ponpoko(new Store());
-  const watchers = new Set<Socket<{ buffer: string }>>();
+  const watchers = new Set<Socket<Connection>>();
   core.onChange(() => {
-    for (const socket of watchers) socket.write('{"changed":true}\n');
+    for (const socket of watchers) send(socket, '{"changed":true}\n');
   });
   const expiry = setInterval(() => core.expire(), 15_000);
 
-  const server = Bun.listen<{ buffer: string }>({
+  const server = Bun.listen<Connection>({
     unix: path,
     socket: {
-      open: (socket) => void (socket.data = { buffer: "" }),
+      open: (socket) => void (socket.data = { buffer: "", pending: [], ending: false }),
       data(socket, data) {
         const lines = (socket.data.buffer + data.toString()).split("\n");
         socket.data.buffer = lines.pop()!;
@@ -81,13 +81,16 @@ export async function serve(): Promise<void> {
           const parsed = parse(line);
           if (parsed.ok && parsed.request.method === "watch") {
             watchers.add(socket);
-            socket.write(`${JSON.stringify({ ok: true })}\n`);
+            send(socket, `${JSON.stringify({ ok: true })}\n`);
             continue;
           }
           const response = parsed.ok ? handle(core, parsed.request) : parsed.response;
-          socket.write(`${JSON.stringify(response)}\n`);
+          if (!watchers.has(socket)) socket.data.ending = true;
+          send(socket, `${JSON.stringify(response)}\n`);
         }
       },
+      drain: (socket) => flush(socket),
+      end: (socket) => void (watchers.delete(socket), socket.end()),
       close: (socket) => void watchers.delete(socket),
       error: (socket) => void watchers.delete(socket),
     },
@@ -103,7 +106,30 @@ export async function serve(): Promise<void> {
   console.log(`ponpoko listening on ${path}`);
 }
 
-function parse(line: string): { ok: true; request: Request } | { ok: false; response: Response } {
+type Connection = { buffer: string; pending: Uint8Array[]; ending: boolean };
+
+const encoder = new TextEncoder();
+
+export function send(socket: Socket<Connection>, text: string): void {
+  socket.data.pending.push(encoder.encode(text));
+  flush(socket);
+}
+
+export function flush(socket: Socket<Connection>): void {
+  const pending = socket.data.pending;
+  while (pending.length > 0) {
+    const chunk = pending[0]!;
+    const written = socket.write(chunk);
+    if (written >= chunk.length) pending.shift();
+    else {
+      if (written > 0) pending[0] = chunk.subarray(written);
+      return;
+    }
+  }
+  if (socket.data.ending) socket.end();
+}
+
+function parse(line: string):{ ok: true; request: Request } | { ok: false; response: Response } {
   let json: unknown;
   try {
     json = JSON.parse(line);
