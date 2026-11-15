@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { refreshEpic } from "./actions.ts";
+import { handle } from "./server.ts";
 import { readEpicStories, type EpicStory } from "./shortcut.ts";
 import { harness, strandNamed } from "./test-harness.ts";
 
@@ -14,7 +16,7 @@ describe("importing an epic from Shortcut", () => {
     expect(readEpicStories({ message: "nope" })).toEqual([]);
   });
 
-  test("brings an epic's stories in under it once, with their blocks as waits, planned unless started, and keeps stories it already knows", async () => {
+  test("brings an epic's stories in under it once, with their blocks as waits, planned unless done, and keeps stories it already knows", async () => {
     const asked: number[] = [];
     const stories = [story(10, { blocks: [11, 12] }), story(11, { started: true }), story(12), story(13, { completed: true }), story(14)];
     const { core, bridge } = harness(1_000_000, undefined, undefined, async () => undefined, true, async (epic) => (asked.push(epic), stories));
@@ -51,5 +53,34 @@ describe("importing an epic from Shortcut", () => {
     core.record("shortcut", [{ type: "strand.planned", strand: id, planned: true }]);
     core.wait({ strand: "sc-1", who: "Sam", kind: "person", what: "a question" }, "you");
     expect(strandNamed(core, "sc-1").planned).toBeUndefined();
+  });
+  test("a refresh adds stories and dependencies ponpoko lacks, keeps its own, and leaves done strands but for links", async () => {
+    const { core } = harness();
+    const epic = core.add(undefined, "sc-9");
+    core.record("you", [{ type: "strand.titled", strand: epic, kind: "epic", title: "Gadgets" }]);
+    const ten = core.add(epic, "sc-10");
+    const eleven = core.add(epic, "sc-11");
+    const twelve = core.add(undefined, "sc-12");
+    const thirteen = core.add(epic, "sc-13");
+    core.block(eleven, thirteen);
+    core.done(thirteen);
+    const send = async (request: Parameters<typeof handle>[1]) => {
+      const response = handle(core, request);
+      if (!response.ok) throw new Error(response.error);
+      return response.result;
+    };
+    const stories = [story(10, { blocks: [11, 13] }), story(11), story(12, { started: true }), story(13, { completed: true }), story(14, { started: true, blocks: [12] })];
+    expect(await refreshEpic(epic, 9, async () => stories, send)).toBe("From Shortcut: 1 new story, 3 new dependencies, 1 story moved under the epic");
+    const fourteen = strandNamed(core, "sc-9 › sc-14");
+    expect(fourteen.planned).toBe(true);
+    expect(strandNamed(core, "sc-9 › sc-12").blockedOn).toHaveProperty(fourteen.id);
+    expect(Object.keys(strandNamed(core, "sc-9 › sc-11").blockedOn).sort()).toEqual([ten, thirteen].sort());
+    const done = core.model.strands.get(thirteen)!;
+    expect([done.title, Object.keys(done.blockedOn)]).toEqual([undefined, [ten]]);
+    expect(strandNamed(core, "sc-9 › sc-10").title).toBe("Story 10");
+    expect(await refreshEpic(epic, 9, async () => stories, send)).toBe("From Shortcut: 0 new stories, 0 new dependencies");
+    expect(await refreshEpic(epic, 9, async () => [], send)).toBe("From Shortcut: 0 new stories, 0 new dependencies");
+    expect(Object.keys(strandNamed(core, "sc-9 › sc-11").blockedOn)).toHaveLength(2);
+    expect(twelve).toBe(strandNamed(core, "sc-9 › sc-12").id);
   });
 });

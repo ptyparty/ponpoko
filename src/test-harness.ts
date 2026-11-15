@@ -66,6 +66,7 @@ export function recordingActions() {
     point: record("point"),
     seen: record("seen"),
     start: record("start"),
+    refreshEpic: async (strand: string, epic: number) => (calls.push(["refreshEpic", strand, epic]), "From Shortcut: 0 new stories, 0 new dependencies"),
     add: record("add"),
     reparent: record("reparent"),
     block: record("block"),

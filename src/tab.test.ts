@@ -35,7 +35,7 @@ describe("the command tab", () => {
     expect(lines[5]).toMatch(/^ {2}Other work/);
     expect(lines[6]).toMatch(/^ {4}● Widget CSV import +sc-1 +claude replied +now +tab 1 +▸1/);
     expect(lines.join("\n")).not.toContain("tests");
-    expect(lines.at(-1)).toContain("⏎  nothing here; its work is in the strands under it");
+    expect(lines.at(-1)).toContain("⏎  show its stories and what blocks what");
     await tab.key({ name: "j" });
     await tab.key({ name: "j" });
     expect(tab.current()?.strand?.name).toBe("sc-1");

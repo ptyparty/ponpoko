@@ -8,10 +8,11 @@ import { areaCount, areaNames, areaOf, areaRows, areas, chainsOf, isPublic, isSt
 import { blockersOf, clock, fit, wrap, isWaitingOn, rows, snoozedLabel, standingOf, whyOf } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { LogView } from "./log.ts";
+import { EpicController } from "./epic.ts";
 import { parseWhen } from "./when.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "ready"; strand: StrandView; drafts: OwnPrView[] } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "ready"; strand: StrandView; drafts: OwnPrView[] } | { kind: "epic"; view: EpicController } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
 
 const help = [
   " Keys",
@@ -83,6 +84,7 @@ export class TabController {
 
   setSnapshot(snapshot: Snapshot | undefined): void {
     this.log.setSnapshot(snapshot);
+    if (this.mode.kind === "epic") this.mode.view.setSnapshot(snapshot);
     this.snapshot = snapshot;
     this.down = snapshot === undefined;
   }
@@ -193,6 +195,10 @@ export class TabController {
       return undefined;
     }
     if (mode.kind === "text") return this.textKey(mode, key);
+    if (mode.kind === "epic") {
+      if ((await mode.view.key(key)) === "close") this.mode = { kind: "list" };
+      return undefined;
+    }
     if (mode.kind === "search") return this.searchKey(mode, key);
     if (mode.kind === "log") {
       if (this.log.key(key, this.height) === "close") this.mode = { kind: "list" };
@@ -268,6 +274,12 @@ export class TabController {
       case "return": {
         if (row?.fold) {
           this.toggle(row.key!);
+          return undefined;
+        }
+        if (strand?.kind === "epic" && this.area === "work" && !row?.fold) {
+          const view = new EpicController(this.actions, strand.id);
+          view.setSnapshot(this.snapshot);
+          this.mode = { kind: "epic", view };
           return undefined;
         }
         if (row?.pr && toMerge(row.pr)) {
@@ -388,6 +400,7 @@ export class TabController {
     this.width = width;
     if (this.mode.kind === "help") return help;
     if (this.mode.kind === "log") return this.log.view(width, height);
+    if (this.mode.kind === "epic") return this.mode.view.view(width, height);
     if (this.down || !this.snapshot) return [" ◆ ponpoko", "", style.red(" ponpoko ✗  the service isn't running. Start it with `systemctl --user start ponpoko`."), "", " q quit"];
     const mode = this.mode;
     const current = this.current();
@@ -470,7 +483,7 @@ export class TabController {
     const row = this.current();
     const strand = row?.strand;
     if (!row) return [keyLine([["1 2 3", "areas"], ["a", "add"], ["/", "search"], ["?", "more"], ["q", "quit"]], width)];
-    const enter = row.fold ? (this.opened.has(row.key!) ? "fold it away" : "open it") : row.pr && toMerge(row.pr) ? `open ${prName(row.pr.repo, row.pr.number)} on GitHub to merge` : strand ? enterDoes(strand, this.strands()) : "nothing to go to";
+    const enter = row.fold ? (this.opened.has(row.key!) ? "fold it away" : "open it") : strand?.kind === "epic" && this.area === "work" ? "show its stories and what blocks what" : row.pr && toMerge(row.pr) ? `open ${prName(row.pr.repo, row.pr.number)} on GitHub to merge` : strand ? enterDoes(strand, this.strands()) : "nothing to go to";
     const keys: [string, string][] = [
       ...(!row.fold && strand && this.hasOwnStrands(strand) ? [["␣", this.opened.has(strand.id) ? "fold its strands" : "its strands"] as [string, string]] : []),
       ...(strand && isPooled(strand) ? [["y", "take it"] as [string, string]] : []),

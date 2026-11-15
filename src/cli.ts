@@ -15,6 +15,10 @@ const usage = `Usage:
   ponpoko setup [--yes]   Install the service, komux plugin, skill and MCP
   ponpoko mcp             The MCP server Claude Code talks to
   ponpoko komux           The komux bridge, run by the komux plugin in each session
+  ponpoko epic ID [--refresh] [--mermaid]
+                          An epic's stories as boxes and arrows by what blocks what;
+                          --refresh adds stories and dependencies Shortcut has and ponpoko lacks;
+                          --mermaid prints them as a mermaid flowchart for a notebook
   ponpoko for STRAND -- COMMAND...
                           Run COMMAND as a komux job that's for STRAND, so its wait counts there
                           rather than on the strand of the tab or agent that started it
@@ -39,6 +43,8 @@ async function main(args: string[]): Promise<number> {
       return (await import("./deal.ts")).runDeal(args.slice(1));
     case "komux":
       return (await import("./komux/bridge.ts")).runBridge();
+    case "epic":
+      return (await import("./epic.ts")).runEpic(args.slice(1));
     case "for":
       return (await import("./komux/for.ts")).runFor(args.slice(1));
     case "mcp":

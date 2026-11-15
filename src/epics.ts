@@ -13,6 +13,13 @@ export function epicsToImport(knowledge: Knowledge): { strand: string; epic: num
   });
 }
 
+export function epicChanges(facts: Fact[]): string {
+  const count = (type: Fact["type"]) => facts.filter((fact) => fact.type === type).length;
+  const plural = (number: number, one: string, many: string) => `${number} ${number === 1 ? one : many}`;
+  const parts = [plural(count("strand.made"), "new story", "new stories"), plural(count("strand.blocked"), "new dependency", "new dependencies"), ...(count("strand.parented") > 0 ? [plural(count("strand.parented"), "story moved under the epic", "stories moved under the epic")] : [])];
+  return parts.join(", ");
+}
+
 export function epicFacts(knowledge: Knowledge, epicStrand: string, epic: number, stories: EpicStory[], newId: (prefix: string) => string): Fact[] {
   const facts: Fact[] = [];
   const all = [...knowledge.strands, ...knowledge.closed];
@@ -27,14 +34,14 @@ export function epicFacts(knowledge: Knowledge, epicStrand: string, epic: number
     if (existing) {
       ids.set(story.id, existing.id);
       if (live.has(existing.id) && existing.parent === undefined && existing.id !== epicStrand) facts.push({ type: "strand.parented", strand: existing.id, parent: epicStrand });
-      if (!existing.title) facts.push({ type: "strand.titled", strand: existing.id, kind: "story", title: story.name });
+      if (!existing.title && live.has(existing.id)) facts.push({ type: "strand.titled", strand: existing.id, kind: "story", title: story.name });
     } else {
       const id = newId("s");
       ids.set(story.id, id);
       facts.push({ type: "strand.made", strand: id, name: `sc-${story.id}`, parent: epicStrand, kind: "story" });
       facts.push({ type: "strand.titled", strand: id, kind: "story", title: story.name });
       if (story.completed) facts.push({ type: "strand.done", strand: id, why: "done in Shortcut" });
-      else if (!story.started) facts.push({ type: "strand.planned", strand: id, planned: true });
+      else facts.push({ type: "strand.planned", strand: id, planned: true });
     }
     if (story.url && !linked.has(ids.get(story.id)!)) facts.push({ type: "link.added", link: newId("l"), strand: ids.get(story.id)!, adapter: shortcutAdapter, ref: story.url, label: `sc-${story.id}` });
   }
@@ -49,6 +56,6 @@ export function epicFacts(knowledge: Knowledge, epicStrand: string, epic: number
       blockedOn.set(strand, new Set([...(blockedOn.get(strand) ?? []), on]));
     }
   }
-  facts.push({ type: "link.added", link: newId("l"), strand: epicStrand, adapter: importAdapter, ref: `epic:${epic}` });
+  if (!knowledge.links.some((link) => link.strand === epicStrand && link.adapter === importAdapter)) facts.push({ type: "link.added", link: newId("l"), strand: epicStrand, adapter: importAdapter, ref: `epic:${epic}` });
   return facts;
 }

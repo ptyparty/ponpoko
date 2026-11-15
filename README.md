@@ -7,6 +7,7 @@ Work is a tree of **strands**. A project holds stories, a story holds smaller st
 ```
 ponpoko                  the command tab: a map of the work, the reviews and the mentions
 ponpoko tab --reviews    the command tab, starting on Reviews
+ponpoko epic ID          an epic's stories as boxes and arrows by what blocks what; --mermaid prints them for a notebook, --refresh brings in what Shortcut has that ponpoko lacks
 ponpoko list             your moves, then everything else, printed once
 ponpoko tray [--stream]  one line for komux's tray; --stream prints a new one as it changes
 ponpoko tray --unreviewed [--stream]
@@ -49,6 +50,7 @@ Pass `ponpoko({ deal, catchUp, leader })` to pick other keys.
 The command tab is the map: what's in flight and how it fits together. It has three areas, switched with `1`, `2`, `3` or Tab, and `/` searches names and titles across all three; Enter on a result goes to its row.
 
 - **Work** holds every top-level strand but the reviews and mentions. An epic (a strand Shortcut says is an epic) gets a section with its stories under it; everything else at the top goes under "Other work". Each story is one line: its title, its id, who has it anywhere under it, how long, and its tab. Your moves stand out by their ●, not by moving to the top, so things stay where you left them. A story's own strands stay folded, shown as `▸3` after its tab; space opens them. Stories inside a story show under it. A chain of stories queued behind one another, each waiting on the one before, folds into one "then: … → …" line under the first. Snoozed strands sit at the end of their section. Moving a strand under an epic with `m` moves it on the map too.
+- Enter on an epic's header opens its dependency view (also `ponpoko epic sc-52633`): the epic's stories as boxes coloured by state (done, in review or waiting on someone, yours, an agent's, ready to start, not started), laid out left to right by what blocks what, with a key along the top and stories with no dependencies in a row of their own at the end. Arrows show only direct dependencies; the picked story's line below lists all it waits on and unblocks. The arrow keys move between boxes and the view scrolls when it's wider or taller than the screen. Enter goes to the story, `w` makes it wait on another strand, `s` starts a planned one, `o` opens it in Shortcut, `r` refreshes the epic from Shortcut, `m` copies the graph as mermaid, and esc goes back.
 - **Reviews** has your own open pull requests and where each stands, then other people's that nobody has reviewed yet (those assigned to you marked ●, internal repos first and public ones folded, newest first), then those already reviewed and still open: waiting on the author after you asked for changes, or approved by someone else.
 - **Mentions** lists the mentions waiting on you.
 
@@ -61,6 +63,14 @@ Going to a strand prefers its own tab and place over its parent's. A strand ponp
 A build an agent runs from one strand's tab for another strand can say which it's for: `ponpoko for "sc-52734 › consolidation toggle" -- scripts/build`, or `PONPOKO_STRAND` in its environment with `ponpoko for -- scripts/build`. Run as a komux job, it tells ponpoko that job belongs to that strand, so the strand waits on the build ("claude · on its build" in the deck) instead of showing as your move, and the agent stays on its own strand.
 
 When the tab a strand lives in already has a Claude in it, such as a story's Claude when you pick one of the story's smaller strands, Enter goes to that Claude instead of offering a new one. `f` starts a fresh Claude on a strand whenever you want one anyway, in the deck or the command tab.
+
+## Epics from Shortcut
+
+When ponpoko sees a strand Shortcut says is an epic, the bridge brings the epic's stories in once, as strands under it titled from Shortcut, and their "blocks" links as waits between them. After that ponpoko's own strands and waits are what count. `r` in the epic view, or `ponpoko epic ID --refresh`, brings in again what Shortcut has and ponpoko lacks: missing stories, and blocking links as waits. It never removes a strand or a wait, never changes a done strand beyond adding links, reuses story strands ponpoko already has (moving one under the epic only when it sits at the top), and says what it changed, such as "2 new stories, 5 new dependencies".
+
+A story that comes in from Shortcut is planned until someone takes a turn on it, or you start it with `s`: it shows on the map, but it's nobody's move, so it stays out of the deck and the yours count. Stories done in Shortcut come in done. Each story links to its Shortcut page.
+
+`ponpoko epic ID --mermaid` prints the epic's stories and dependencies as a mermaid `flowchart LR` block, with a class per state, for a notebook.
 
 ## Reviews and mentions from GitHub
 

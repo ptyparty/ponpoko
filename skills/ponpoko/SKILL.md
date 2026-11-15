@@ -30,6 +30,11 @@ If a path you pass to `done` doesn't exist, ponpoko's error names the nearest st
 
 Keep lines short and free of code, customer data and secrets: ponpoko keeps them.
 
+## Epics
+
+- To show an epic's stories and what blocks what in a notebook page, run `ponpoko epic sc-1234 --mermaid` and paste its `flowchart LR` block. It reflects ponpoko's strands and waits, which start from Shortcut's "blocks" links and then follow what you and the user record. `ponpoko epic sc-1234 --refresh` first brings in stories and links Shortcut has that ponpoko lacks.
+- A story ponpoko brought in from Shortcut is planned, and isn't the user's move until someone works on it; calling `status` on it starts it.
+
 ## Answering the user
 
 - "What should I be doing?" or "what needs me?": call `moves` and summarise, oldest first.

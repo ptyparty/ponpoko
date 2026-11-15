@@ -1,4 +1,8 @@
 import { ask } from "./client.ts";
+import type { Knowledge } from "./core.ts";
+import { epicChanges, epicFacts } from "./epics.ts";
+import type { Request } from "./server.ts";
+import { epicStories, type EpicLookup } from "./shortcut.ts";
 import type { StrandView } from "./core.ts";
 import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
 import { age } from "./render.ts";
@@ -18,6 +22,7 @@ export type Actions = {
   point: (dir: string, to: string) => Promise<unknown>;
   seen: (strand: string) => Promise<unknown>;
   start: (strand: string) => Promise<unknown>;
+  refreshEpic: (strand: string, epic: number) => Promise<string>;
   add: (parent: string | undefined, name: string) => Promise<unknown>;
   reparent: (strand: string, to: string) => Promise<unknown>;
   block: (strand: string, on: string) => Promise<unknown>;
@@ -83,6 +88,7 @@ export const serviceActions: Actions = {
   point: (dir, to) => ask({ method: "point", params: { dir, to } }),
   seen: (strand) => ask({ method: "seen", params: { strand } }),
   start: (strand) => ask({ method: "start", params: { strand } }),
+  refreshEpic: (strand, epic) => refreshEpic(strand, epic),
   add: (parent, name) => ask({ method: "add", params: { ...(parent ? { parent } : {}), name } }),
   reparent: (strand, to) => ask({ method: "reparent", params: { strand, to } }),
   block: (strand, on) => ask({ method: "block", params: { strand, on } }),
@@ -99,6 +105,13 @@ export const serviceActions: Actions = {
     if (shown.exitCode !== 0) throw new Error(`quoll show: ${shown.stderr.toString().trim() || shown.stdout.toString().trim()}`);
   },
 };
+
+export async function refreshEpic(strand: string, epic: number, lookup: EpicLookup = epicStories, send: (request: Request) => Promise<unknown> = ask): Promise<string> {
+  const stories = await lookup(epic);
+  const facts = epicFacts((await send({ method: "knowledge" })) as Knowledge, strand, epic, stories, (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`);
+  await send({ method: "record", params: { source: "shortcut", facts } });
+  return `From Shortcut: ${epicChanges(facts)}`;
+}
 
 export function openUrl(url: string): void {
   if (!/^https:\/\//.test(url)) throw new Error(`ponpoko only opens https links, not ${url}`);
