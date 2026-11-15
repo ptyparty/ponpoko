@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Actions } from "./actions.ts";
 import { Dealer } from "./deal.ts";
+import { inboxFacts } from "./inbox.ts";
 import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
 async function setup(unseen = false) {
@@ -22,12 +23,12 @@ describe("the deck", () => {
   test("lists the hand with the picked card's details, and goes to the picked card", async () => {
     const { core, dealer, calls } = await setup();
     const hand = plain(dealer.view());
-    expect(hand).toContain("your move 2");
-    expect(hand).toContain("▎1 ● claude in side");
-    expect(hand).toContain(" 2 ● sc-1  Widget CSV import");
+    expect(hand).toContain("Claude replied: go read it");
+    expect(hand).toMatch(/▎ 1 ● claude in side +claude is waiting o… +1m/);
+    expect(hand).toMatch(/ 2 ● Widget CSV import +· sc-1 +claude replied +2m/);
     await dealer.key({ name: "j" });
     const card = plain(dealer.view());
-    expect(card).toContain("● sc-1");
+    expect(card).toContain("▎ sc-1  Widget CSV import");
     expect(card).toContain("● claude · turn ended  ·  2m");
     expect(card).toContain("⏎  go to claude in tab 1 widgets");
     expect(await dealer.key({ name: "return" })).toBe("close");
@@ -50,14 +51,24 @@ describe("the deck", () => {
     const { actions, calls } = recordingActions();
     const dealer = new Dealer(actions, false, now);
     dealer.setSnapshot(core.snapshot());
+    expect(plain(dealer.view(160, 80))).toContain("▸ 2 waiting on other strands     ▸ 1 snoozed");
+    await dealer.key({ name: "tab" });
+    for (let step = 0; step < 10 && dealer.card(); step++) await dealer.key({ name: "j" });
+    await dealer.key({ name: "return" });
+    await dealer.key({ name: "j" });
+    await dealer.key({ name: "j" });
+    await dealer.key({ name: "j" });
+    await dealer.key({ name: " ", text: " " });
     const view = plain(dealer.view(160, 80));
     for (const strand of core.snapshot().strands) expect(view).toContain(strand.name);
-    expect(view).toContain("waiting on other strands 2");
-    expect(view).toContain("sc-2");
-    expect(view).toContain("waiting on gadgets PR");
+    expect(view).toContain("▾ 2 waiting on other strands");
+    expect(view).toMatch(/◷ ask Sam +snoozed till/);
+    expect(view).toMatch(/○ sc-2 +waiting on gadgets …/);
+    expect(calls).toEqual([]);
     core.done(strandNamed(core, "sc-1 › sc-3").id);
     dealer.setSnapshot(core.snapshot());
     expect(plain(dealer.view(160, 80))).toContain("sc-3 is done");
+    await dealer.key({ name: "1" });
     expect(dealer.card()?.name).toBe("sc-1");
     await dealer.key({ name: "return" });
     expect(calls).toEqual([
@@ -66,7 +77,7 @@ describe("the deck", () => {
     ]);
   });
 
-  test("deals what's asking you first, then the newest, and an agent only ready for a prompt last", async () => {
+  test("groups your moves by what you'll do, newest first in each: read what Claude said, review, pick up", async () => {
     const { core, hear, tick, now } = harness();
     const tabs = ["a", "b", "c", "d"].map((name, index) => ({ id: index + 1, number: index + 1, name, dir: `/w/${name}`, labels: { strand: `claude in ${name}` } }));
     await hear({ type: "snapshot", tabs, agents: [], jobs: [] });
@@ -80,10 +91,28 @@ describe("the deck", () => {
     tick(60_000);
     const dealer = new Dealer(recordingActions().actions, false, now);
     dealer.setSnapshot(core.snapshot());
-    expect(plain(dealer.view()).match(/\d ● claude in \w/g)).toEqual(["1 ● claude in c", "2 ● claude in b", "3 ● claude in a", "4 ● claude in d"]);
+    core.add(undefined, "sc-10");
+    core.add(undefined, "sc-9");
+    core.split({ strand: "sc-9" }, [{ name: "review gadgets", title: "Review the gadget cache", tour: { repo: "/w/gadgets", name: "cache" } }]);
+    dealer.setSnapshot(core.snapshot());
+    const deck = plain(dealer.view(100));
+    expect(deck.match(/(^ [a-zC].*$)|\d ● [^·]+?(?= {2})/gm)?.map((text) => text.trimEnd())).toEqual([
+      " Claude replied: go read it",
+      "1 ● claude in c",
+      "2 ● claude in b",
+      "3 ● claude in a",
+      "4 ● claude in d",
+      " review",
+      "5 ● Review the gadget cache",
+      " pick up",
+      "6 ● sc-10",
+    ]);
+    expect(deck).toMatch(/1 ● claude in c +claude is waiting on you/);
+    expect(deck).toMatch(/5 ● Review the gadget cache +· review gadgets +tour ready/);
+    expect(deck).toMatch(/6 ● sc-10 +no one on it/);
   });
 
-  test("lists agents at work, strands waiting on others and snoozed strands under yours, and goes to any of them", async () => {
+  test("lists agents at work, what waits on people and machines, and snoozed strands folded, and goes to any of them", async () => {
     const { core, hear, tick, now } = harness();
     await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "claude in widgets" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }], agents: [], jobs: [] });
     await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
@@ -96,7 +125,7 @@ describe("the deck", () => {
     const dealer = new Dealer(actions, false, now);
     dealer.setSnapshot(core.snapshot());
     const deck = plain(dealer.view());
-    expect(deck).toMatch(/your move 1 *\n.*1 ● claude in widgets[^\n]*\n\n agents 1 *\n.*2 ◐ claude in side +claude · working[^\n]*\n\n waiting on others 1 *\n.*3 ⊘ sc-7 +Copilot · PR review[^\n]*\n\n snoozed 1 *\n.*4 ◷ sc-8 +snoozed till /);
+    expect(deck).toMatch(/Claude replied: go read it *\n.*1 ● claude in widgets[^\n]*\n\n agents 1 *\n.*2 ◐ claude in side +claude · working[^\n]*\n\n machines 1 *\n.*3 ⊘ sc-7 +Copilot · PR review[^\n]*\n\n ▸ 1 snoozed/);
     await dealer.key({ name: "3" });
     await dealer.key({ name: "s" });
     expect(dealer.card()?.name).toBe("sc-7");
@@ -115,11 +144,11 @@ describe("the deck", () => {
     const dealer = new Dealer(recordingActions().actions, false, now);
     dealer.setSnapshot(core.snapshot());
     const lines = plain(dealer.view(140, 40)).split("\n");
-    expect(lines[0]).toMatch(/^ your move 2 +│  agents 1 *$/);
-    expect(lines[1]).toMatch(/^▎1 ● claude in \w+ .*│  3 ◐ claude in side/);
-    expect(lines[2]).toMatch(/^ 2 ● claude in \w+ .*│ *$/);
-    expect(lines[3]).toMatch(/^ +│  waiting on others 1/);
-    expect(lines[4]).toMatch(/^ +│  4 ⊘ sc-7 /);
+    expect(lines[0]).toMatch(/^ Claude replied: go read it +│  agents 1 *$/);
+    expect(lines[1]).toMatch(/^▎ 1 ● claude in \w+ .*│   3 ◐ claude in side/);
+    expect(lines[2]).toMatch(/^  2 ● claude in \w+ .*│ *$/);
+    expect(lines[3]).toMatch(/^ +│  machines 1/);
+    expect(lines[4]).toMatch(/^ +│   4 ⊘ sc-7 /);
     await dealer.key({ name: "j" });
     await dealer.key({ name: "j" });
     expect(dealer.card()?.name).not.toBe("claude in side");
@@ -151,7 +180,7 @@ describe("the deck", () => {
     dealer.setSnapshot(core.snapshot());
     for (const _ of Array.from({ length: 25 })) await dealer.key({ name: "j" });
     const deck = plain(dealer.view(70, 30));
-    expect(deck).toContain(`▎  ● ${dealer.card()?.name}`);
+    expect(deck).toContain(`▎26 ● ${dealer.card()?.name}`);
     expect(deck.split("\n").length).toBeLessThanOrEqual(30);
   });
 
@@ -181,7 +210,11 @@ describe("the deck", () => {
     expect(calls).toEqual([["block", card.id, "side"], ["unblock", card.id]]);
     core.block(strandNamed(core, "sc-1").id, strandNamed(core, "claude in side").id);
     dealer.setSnapshot(core.snapshot());
-    for (let step = 0; step < 10 && dealer.card()?.name !== "sc-1"; step++) await dealer.key({ name: "j" });
+    expect(plain(dealer.view(100, 40))).toContain("▸ 1 waiting on other strands");
+    await dealer.key({ name: "j" });
+    await dealer.key({ name: "return" });
+    await dealer.key({ name: "j" });
+    expect(dealer.card()?.name).toBe("sc-1");
     expect(plain(dealer.view(100, 40))).toContain("waits on claude in side");
   });
 
@@ -279,6 +312,26 @@ describe("the deck", () => {
       ["reparent", pr, "ptyparty"],
       ["rename", pr, "pr-fix"],
     ]);
+  });
+
+  test("files an agent waiting on its own build under agents, and your PRs out for review apart from people, with approved ones to review", async () => {
+    const { core, hear, now } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "working" }], jobs: [] });
+    await hear({ type: "job.started", job: { id: 9, tabId: 1, name: "build", state: "running", agent: false, startedBy: 2 } });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done" } });
+    const pr = (number: number, branch: string, reviews: { author: string; bot: boolean; state: string; commit: string; at: string }[] = []) => ({ repo: "acme/widgets", number, title: `PR ${number}`, url: `https://github.com/acme/widgets/pull/${number}`, author: "octo", draft: false, branch, head: "c1", requested: [], reviews, threads: [] });
+    core.add(undefined, "sc-2");
+    core.add(undefined, "sc-3");
+    core.wait({ strand: "sc-4", who: "Sam", kind: "person", what: "the terms question" }, "you");
+    let ids = 0;
+    core.record("github", inboxFacts(core.knowledge(), { me: "octo", reviews: [], mentioned: [], mine: [pr(20, "sc-2/x"), pr(30, "sc-3/y", [{ author: "sam", bot: false, state: "APPROVED", commit: "c1", at: "2026-11-13T11:00:00Z" }])] }, (prefix) => `${prefix}gh${++ids}`));
+    const dealer = new Dealer(recordingActions().actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    const deck = plain(dealer.view(100, 60));
+    expect(deck).toMatch(/ review *\n.*● PR 30 +· widgets#30 +approved by sam · merge it/);
+    expect(deck).toMatch(/ agents 1 *\n.*◐ Widget CSV import +· sc-1 +claude · on its build/);
+    expect(deck).toMatch(/ your PRs out for review 1 *\n.*⊘ PR 20 +· widgets#20 +the team · 0 of 1 reviews/);
+    expect(deck).toMatch(/ people 1 *\n.*⊘ sc-4 +Sam · the terms question/);
   });
 
   test("an empty hand says so", () => {

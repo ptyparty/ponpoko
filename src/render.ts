@@ -1,5 +1,8 @@
 import type { MoveView, Snapshot, StrandView } from "./core.ts";
 import type { Recorded } from "./events.ts";
+import { prName } from "./github.ts";
+import { ownPrs } from "./inbox.ts";
+import { asking, ready, yourMoves } from "./komux/translate.ts";
 import { cells, style, type Part } from "./screen.ts";
 import { dormant } from "./model.ts";
 import { whenLabel } from "./when.ts";
@@ -51,10 +54,84 @@ export function standingOf(strand: StrandView, now: number): Standing {
       return { glyph: "◐", paint: style.agent, text: othersCause(strand), age: since };
     case "person":
     case "machine":
+      if (onOwnJob(strand)) return { glyph: "◐", paint: style.agent, text: whyOf(strand, now).text, age: since };
       return { glyph: "⊘", paint: style.wait, text: othersCause(strand), age: since };
     default:
       if (isWaitingOn(strand, own.waitsOn)) return { glyph: "⊘", paint: style.wait, text: own.why, age: since };
       return { glyph: "○", paint: style.muted, text: own.why, age: "" };
+  }
+}
+
+export type Why = { text: string; paint: (text: string) => string };
+
+export function headline(strand: StrandView): { title: string; what: string } {
+  const pr = ownPrs(strand).find((candidate) => candidate.state !== "closed");
+  const what = pr ? prName(pr.repo, pr.number) : strand.name;
+  if (strand.title) return { title: strand.title, what };
+  const titled = (strand.above ?? []).find((above) => above.title && above.kind !== "inbox");
+  if (titled) return { title: titled.title!, what };
+  return pr ? { title: pr.title, what } : { title: strand.name, what: "" };
+}
+
+export function onOwnJob(strand: StrandView): { agent: string; job: string } | undefined {
+  if (strand.own.whose !== "machine" && strand.own.whose !== "person") return undefined;
+  const waits = strand.open.filter((move) => move.player !== "you" && move.by.kind !== "agent");
+  const jobs = waits.filter((move) => move.by.kind === "job" && move.answers?.kind === "agent");
+  if (jobs.length === 0 || jobs.length !== waits.length) return undefined;
+  return { agent: jobs[0]!.answers!.who, job: jobs[0]!.by.who };
+}
+
+export function isTour(strand: StrandView): boolean {
+  return strand.links.some((link) => link.adapter === "remax") && strand.open.some((move) => move.player === "you" && !move.answers);
+}
+
+export type MoveKind = "replied" | "review" | "pickup";
+
+export function moveKind(strand: StrandView): MoveKind {
+  if (strand.kind === "review" || strand.kind === "mention" || isTour(strand) || ownPrs(strand).some((pr) => pr.state === "yours")) return "review";
+  return strand.open.some((move) => move.player === "you" && move.answers?.kind === "agent" && move.what !== ready) ? "replied" : "pickup";
+}
+
+function replied(who: string, what: string): string {
+  if (what === yourMoves.done) return `${who} replied`;
+  if (what === asking) return `${who} asks you`;
+  if (what === yourMoves.waiting) return `${who} is waiting on you`;
+  if (what === yourMoves.failed) return `${who}'s turn failed`;
+  if (what === ready) return `${who} is ready`;
+  return `${who}: ${what}`;
+}
+
+export function whyOf(strand: StrandView, now: number): Why {
+  const muted = (text: string): Why => ({ text, paint: style.muted });
+  if (snoozed(strand, now)) return { text: `snoozed ${snoozedLabel(strand, now)}`, paint: style.faint };
+  const own = strand.own;
+  const job = onOwnJob(strand);
+  if (job) return muted(`${job.agent} · on its ${job.job}`);
+  const prs = ownPrs(strand).filter((pr) => pr.state !== "closed" && pr.state !== "draft");
+  const at = <T extends { from: number }>(moves: T[]) => moves.find((move) => move.from === own.since) ?? moves[0];
+  switch (own.whose) {
+    case "you": {
+      const pr = prs.find((candidate) => candidate.state === "yours");
+      if (pr) return { text: pr.what, paint: /^approved/.test(pr.what) ? style.ok : style.muted };
+      if (isTour(strand)) return muted("tour ready");
+      const move = at(strand.open.filter((candidate) => candidate.player === "you"));
+      if (move?.answers?.kind === "agent") return muted(replied(move.answers.who, move.what));
+      if (move?.answers) return muted(`${move.answers.who} ${move.what}`);
+      return muted(own.why);
+    }
+    case "agent": {
+      const move = at(strand.open.filter((candidate) => candidate.player !== "you" && candidate.by.kind === "agent"));
+      return muted(move ? `${move.by.who} · ${own.why}` : own.why);
+    }
+    case "person":
+    case "machine": {
+      const pr = prs.find((candidate) => candidate.state === "waiting");
+      if (pr) return muted(`${pr.who} · ${pr.what}`);
+      const move = at(strand.open.filter((candidate) => candidate.player !== "you"));
+      return muted(move ? `${move.by.who} · ${own.why}` : own.why);
+    }
+    default:
+      return muted(own.why);
   }
 }
 

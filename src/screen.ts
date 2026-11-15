@@ -31,6 +31,7 @@ const palette = {
   agent: "#8fb0ff",
   wait: "#c89dff",
   warn: "#ffa863",
+  ok: "#a2e27a",
   error: "#ff6b6b",
   ground: "#0f1117",
   surface: "#181b24",
@@ -56,6 +57,7 @@ export const style = {
   magenta: fg(palette.wait),
   wait: fg(palette.wait),
   warn: fg(palette.warn),
+  ok: fg(palette.ok),
   red: fg(palette.error),
   reverse: (text: string) => `\x1b[7m${text}\x1b[27m`,
   surface: bg(palette.surface),
@@ -90,8 +92,11 @@ export function cells(parts: Part[], width: number): string {
   return out + " ".repeat(Math.max(0, left));
 }
 
-export function keyLine(keys: [string, string][]): string {
-  return ` ${keys.map(([key, label]) => `${style.key(key)} ${style.muted(label)}`).join("   ")}`;
+export function keyLine(keys: [string, string][], width = Number.POSITIVE_INFINITY): string {
+  const shown = [...keys];
+  const line = () => ` ${shown.map(([key, label]) => `${style.key(key)} ${style.muted(label)}`).join("   ")}`;
+  while (shown.length > 2 && visible(line()) > width) shown.splice(shown.length - 2, 1);
+  return line();
 }
 
 export type Screen = { width: number; height: number; draw: (lines: string[]) => void; close: () => void };
