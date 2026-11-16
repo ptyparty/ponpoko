@@ -86,9 +86,10 @@ async function list(): Promise<number> {
 }
 
 async function unreviewedTrayLine(): Promise<{ text: string; color: string }> {
-  const [{ readPool, unreviewedLine }, { unreviewedThresholds }] = await Promise.all([import("./unreviewed.ts"), import("./github.ts")]);
+  const [{ readPool, unreviewedLine }, { reviewQuery, unreviewedThresholds }] = await Promise.all([import("./unreviewed.ts"), import("./github.ts")]);
   let thresholds;
   try {
+    if (!reviewQuery()) return { text: "", color: "muted" };
     thresholds = unreviewedThresholds();
   } catch {
     return { text: "● to review: config ✗", color: "error" };

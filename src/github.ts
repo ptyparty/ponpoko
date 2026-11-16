@@ -216,9 +216,11 @@ export function configFile(env: Record<string, string | undefined> = process.env
   return env.PONPOKO_CONFIG || join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), "ponpoko", "config.json");
 }
 
-function readConfig(file: string): { github?: { reviewQuery?: unknown; unreviewed?: unknown } } {
+export type Config = { github?: { reviewQuery?: unknown; unreviewed?: unknown }; shortcut?: { readyStates?: unknown } };
+
+export function readConfig(file = configFile()): Config {
   if (!existsSync(file)) return {};
-  return JSON.parse(readFileSync(file, "utf8")) as { github?: { reviewQuery?: unknown; unreviewed?: unknown } };
+  return JSON.parse(readFileSync(file, "utf8")) as Config;
 }
 
 export type Thresholds = { yellow: number; orange: number; red: number };

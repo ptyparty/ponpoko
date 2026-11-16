@@ -12,6 +12,7 @@ export type Strand = {
   dismissedAt: number;
   snoozedUntil?: number;
   planned?: boolean;
+  heldBy?: Record<string, number>;
   madeBy?: string;
   blockedOn: Record<string, number>;
   released?: Record<string, number>;
@@ -126,6 +127,15 @@ function applyFact(model: Model, event: Recorded): void {
       withStrand(model, event.strand, (strand) => {
         if (!model.strands.has(event.on) || event.on in strand.blockedOn || blockers(model, event.on).includes(strand.id)) return;
         strand.blockedOn[event.on] = event.at;
+      });
+      return;
+    case "strand.held":
+      withStrand(model, event.strand, (strand) => {
+        const held = { ...strand.heldBy };
+        if (event.held) held[event.by] = event.at;
+        else delete held[event.by];
+        if (Object.keys(held).length > 0) strand.heldBy = held;
+        else delete strand.heldBy;
       });
       return;
     case "strand.planned":
@@ -352,6 +362,7 @@ export function own(model: Model, strand: Strand): Standing {
     if (strand.kind === "inbox" && live.length > 0) standing = { since: Math.max(...live.map((child) => child.made)), why: inboxSummary(model, live), moves: [] };
     else if (finished) standing = { whose: "you", since: finished.at, why: `${finished.strand.name} is done`, moves: [], finished: finished.strand.id };
     else if (holding) standing = { since: holding.since, why: `waiting on ${holding.blocker.name}`, moves: [], waitsOn: holding.blocker.id };
+    else if (strand.heldBy) standing = { since: Math.max(...Object.values(strand.heldBy)), why: `waiting on ${Object.keys(strand.heldBy).join(", ")} (not ready yet)`, moves: [] };
     else if (busiest) standing = { since: busiest.standing.since, why: `waiting on ${busiest.child.name}`, moves: [], waitsOn: busiest.child.id };
     else if (live.length > 0) standing = { since: strand.made, why: "", moves: [] };
     else if (strand.planned) standing = { since: strand.made, why: "ready to start", moves: [] };

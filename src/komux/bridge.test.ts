@@ -238,6 +238,17 @@ describe("the komux bridge", () => {
     expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
   });
 
+  test("a live test an agent asked for survives its turn ending with background agents running", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
+    core.wait({ self: "komux:s1:2", strand: "sc-1234", who: "you", kind: "you", what: "try it in the browser" });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 1, tasks: 0 } } });
+    expect(strandNamed(core, "sc-1234").open.map((move) => move.what).sort()).toEqual(["1 background agent", "try it in the browser"]);
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(strandNamed(core, "sc-1234").open.map((move) => move.what).sort()).toEqual(["try it in the browser", "turn ended"]);
+  });
+
   test("a Claude with background agents running that asks you something, or needs you, is your move", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });
@@ -300,9 +311,12 @@ describe("the komux bridge", () => {
     expect(readFor(["--", "scripts/build"], { PONPOKO_STRAND: "gadgets" })).toEqual({ strand: "gadgets", command: ["scripts/build"] });
     expect(readFor(["--", "scripts/build"], {})).toContain("name the strand");
     expect(readFor(["scripts/build", "-v"], { PONPOKO_STRAND: "gadgets" })).toEqual({ strand: "gadgets", command: ["scripts/build", "-v"] });
-    expect(await runFor(["nowhere", "--", "true"], { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9", PATH: process.env.PATH }, async () => {
+    expect(await runFor(["nowhere", "--", "false"], { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9", PATH: process.env.PATH }, async () => {
       throw new Error("ponpoko knows of no strand nowhere");
     })).toBe(1);
+    expect(await runFor(["nowhere", "--", "true"], { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9", PATH: process.env.PATH }, async () => {
+      throw new Error("ponpoko knows of no strand nowhere");
+    })).toBe(0);
     expect(forRequest("gadgets", { KOMUX_SERVER_ID: "s1", KOMUX_JOB: "9" }, "/w")).toEqual({ method: "for", params: { strand: "gadgets", player: "job:s1:9", dir: "/w" } });
     expect(forRequest("gadgets", {}, "/w")).toBeUndefined();
     const sent: unknown[] = [];

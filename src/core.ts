@@ -265,12 +265,13 @@ export class Ponpoko {
     const named = report.who ? slug(report.who) : undefined;
     const players = named === undefined ? undefined : report.kind ? [report.kind === "you" ? you : `${report.kind}:${named}`] : named === "you" ? [you] : [`person:${named}`, `machine:${named}`];
     const waits = openMoves(this.model, strand).filter((move) => {
-      if (move.source === "github") return false;
+      if (move.source === "github" || move.source === "komux") return false;
       const kind = move.player === you ? "you" : this.model.players.get(move.player)?.kind;
-      if (move.player === you && (move.source !== "agent" || move.with === undefined)) return false;
       if (kind !== "you" && kind !== "person" && kind !== "machine") return false;
+      const mine = move.with === agent?.id;
+      if (move.player === you && !mine) return false;
       if (players) return players.includes(move.player);
-      return report.kind === undefined || report.kind === kind;
+      return mine && (report.kind === undefined || report.kind === kind);
     });
     if (waits.length === 0) throw new Error(`no such wait: ${path(this.model, strand).join(" › ")} has no open wait${report.who ? ` on ${report.who}` : report.kind ? ` of kind ${report.kind}` : ""}`);
     for (const move of waits) facts.push({ type: "move.closed", move: move.id });

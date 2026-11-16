@@ -38,7 +38,7 @@ export function epicGraph(snapshot: Snapshot, epic: StrandView): EpicGraph {
   const ids = new Set([...live.map((strand) => strand.id), ...ended.map((strand) => strand.id)]);
   const finished = new Set(ended.map((strand) => strand.id));
   const stateOf = (strand: StrandView): StoryState => {
-    const blocked = Object.keys(strand.blockedOn).some((on) => ids.has(on) && !finished.has(on)) || isWaitingOn(strand, strand.own.waitsOn);
+    const blocked = Object.keys(strand.blockedOn).some((on) => ids.has(on) && !finished.has(on)) || isWaitingOn(strand, strand.own.waitsOn) || strand.heldBy !== undefined;
     if (strand.planned) return blocked ? "later" : "ready";
     if (blocked && strand.rolled.whose === undefined) return "later";
     if (onOwnJob(holderOf(snapshot.strands, strand))) return "agent";
@@ -560,7 +560,8 @@ export class EpicController {
     const names = (ids: string[]) => ids.map((id) => shortName(graph.nodes.find((other) => other.id === id)?.name ?? id)).join(", ");
     const strand = node.strand;
     const why = strand ? whyOf(holderOf(this.snapshot?.strands ?? [], strand), this.snapshot!.now).text : "done";
-    const facts = [...(strand?.planned ? ["planned"] : []), why, ...(strand?.spaces[0] ? [strand.spaces[0].short] : []), ...(node.on.length > 0 ? [`waits on ${names(node.on)}`] : []), ...(node.unblocks.length > 0 ? [`unblocks ${names(node.unblocks)}`] : [])];
+    const outside = Object.keys(strand?.heldBy ?? {});
+    const facts = [...(strand?.planned ? ["planned"] : []), why, ...(outside.length > 0 && !why.includes("not ready yet") ? [`waits on ${outside.join(", ")} (not ready yet)`] : []), ...(strand?.spaces[0] ? [strand.spaces[0].short] : []), ...(node.on.length > 0 ? [`waits on ${names(node.on)}`] : []), ...(node.unblocks.length > 0 ? [`unblocks ${names(node.unblocks)}`] : [])];
     return [cells([[" ▎ ", look.paint], [node.name, (text) => style.text(style.bold(text))], [`  ${node.title}`, style.text]], width), cells([[" ▎ ", look.paint], [facts.join(" · "), style.muted]], width)];
   }
 

@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { configFile } from "./github.ts";
+import { configFile, readConfig } from "./github.ts";
 export type Title = { kind: "story" | "epic"; title: string };
 export type TitleLookup = (name: string) => Promise<Title | undefined>;
 
@@ -29,25 +28,21 @@ export async function shortcutTitle(name: string, token = process.env.SHORTCUT_T
 }
 
 export type Stage = "ready" | "started" | "done" | "later";
-export type EpicStory = { id: number; name: string; url?: string; completed: boolean; started: boolean; blocks: number[]; stage?: Stage };
+export type EpicStory = { id: number; name: string; url?: string; completed: boolean; started: boolean; blocks: number[]; blockedBy?: { id: number; done: boolean }[]; stage?: Stage };
 export type EpicLookup = (epic: number) => Promise<EpicStory[]>;
 export type WorkflowState = { name: string; type: string };
 
-export const defaultReadyStates = ["ready"];
+export const defaultReadyStates = ["Ready", "Ready for Development"];
 
 export function readyStates(file = configFile()): string[] {
-  try {
-    const given = (JSON.parse(readFileSync(file, "utf8")) as { shortcut?: { readyStates?: unknown } }).shortcut?.readyStates;
-    return Array.isArray(given) && given.every((state) => typeof state === "string") && given.length > 0 ? given : defaultReadyStates;
-  } catch {
-    return defaultReadyStates;
-  }
+  const given = readConfig(file).shortcut?.readyStates;
+  return Array.isArray(given) && given.length > 0 && given.every((state) => typeof state === "string") ? given : defaultReadyStates;
 }
 
 export function stageOf(state: WorkflowState | undefined, story: { completed: boolean; started: boolean }, ready: string[] = defaultReadyStates): Stage {
   if (story.completed || state?.type === "done") return "done";
   if (state?.type === "started" || (!state && story.started)) return "started";
-  if (state && ready.some((pattern) => new RegExp(pattern, "i").test(state.name))) return "ready";
+  if (state && ready.some((name) => name.trim().toLowerCase() === state.name.trim().toLowerCase())) return "ready";
   return "later";
 }
 
@@ -79,8 +74,11 @@ export function readEpicStories(body: unknown, states = new Map<number, Workflow
     if (typeof story.id !== "number" || typeof story.name !== "string" || story.archived === true) return [];
     const links = Array.isArray(story.story_links) ? (story.story_links as Record<string, unknown>[]) : [];
     const blocks = links.filter((link) => link.verb === "blocks" && link.subject_id === story.id && typeof link.object_id === "number").map((link) => link.object_id as number);
+    const blockedBy = links
+      .filter((link) => link.verb === "blocks" && link.object_id === story.id && typeof link.subject_id === "number")
+      .map((link) => ({ id: link.subject_id as number, done: typeof link.subject_workflow_state_id === "number" && states.get(link.subject_workflow_state_id)?.type === "done" }));
     const flags = { completed: story.completed === true, started: story.started === true };
     const state = typeof story.workflow_state_id === "number" ? states.get(story.workflow_state_id) : undefined;
-    return [{ id: story.id, name: story.name, ...(typeof story.app_url === "string" ? { url: story.app_url } : {}), ...flags, blocks, stage: stageOf(state, flags, ready) }];
+    return [{ id: story.id, name: story.name, ...(typeof story.app_url === "string" ? { url: story.app_url } : {}), ...flags, blocks, blockedBy, stage: stageOf(state, flags, ready) }];
   });
 }

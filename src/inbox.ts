@@ -57,16 +57,25 @@ export function ownPrs(strand: { links: { adapter: string; ref: string; at: numb
 }
 
 function readOwnPrs(links: { adapter: string; ref: string; at: number }[]): OwnPrView[] {
-  const strand = { links };
-  const latest = new Map<string, { at: number; view: OwnPrView }>();
-  for (const link of strand.links) {
+  return latestPrStates(links).map((entry) => entry.view);
+}
+
+type StateLink = { strand?: string; adapter: string; ref: string; at: number };
+
+export function latestPrStates<T extends StateLink>(links: T[]): { link: T; view: OwnPrView; key: string }[] {
+  const latest = new Map<string, { link: T; view: OwnPrView; key: string }>();
+  for (const link of links) {
     if (link.adapter !== ownStateAdapter) continue;
     const view = readOwnPrView(link.ref);
     if (!view) continue;
-    const key = prKey(view.url);
-    if ((latest.get(key)?.at ?? -1) <= link.at) latest.set(key, { at: link.at, view });
+    const key = stateKey(link.strand, view.url);
+    if ((latest.get(key)?.link.at ?? -1) <= link.at) latest.set(key, { link, view, key });
   }
-  return [...latest.values()].map((entry) => entry.view);
+  return [...latest.values()];
+}
+
+function stateKey(strand: string | undefined, url: string): string {
+  return `${strand ?? ""} ${prKey(url)}`;
 }
 
 export function readOwnPrView(ref: string): OwnPrView | undefined {
@@ -94,15 +103,7 @@ const openPrStrandsOf = new WeakMap<Knowledge, Set<string>>();
 export function hasOpenPr(knowledge: Knowledge, strand: string): boolean {
   let strands = openPrStrandsOf.get(knowledge);
   if (!strands) {
-    const latest = new Map<string, { at: number; strand: string; open: boolean }>();
-    for (const link of knowledge.links) {
-      if (link.adapter !== ownStateAdapter || !link.strand) continue;
-      const view = readOwnPrView(link.ref);
-      if (!view) continue;
-      const key = `${link.strand} ${prKey(view.url)}`;
-      if ((latest.get(key)?.at ?? -1) <= link.at) latest.set(key, { at: link.at, strand: link.strand, open: view.state !== "closed" });
-    }
-    strands = new Set([...latest.values()].filter((entry) => entry.open).map((entry) => entry.strand));
+    strands = new Set(latestPrStates(knowledge.links.filter((link) => link.strand)).flatMap((entry) => (entry.view.state !== "closed" ? [entry.link.strand!] : [])));
     openPrStrandsOf.set(knowledge, strands);
   }
   return strands.has(strand);
@@ -139,11 +140,8 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
   const stateLinks = knowledge.links.filter((link) => link.adapter === ownStateAdapter && link.strand && live.has(link.strand));
   const ours = (strand: string, url: string) =>
     knowledge.open.filter((move) => move.strand === strand && move.source === source && knowledge.links.some((link) => link.move === move.id && link.adapter === prAdapter && samePr(link.ref, url)));
-  const stateOf = (strand: string, url: string) =>
-    stateLinks
-      .filter((link) => link.strand === strand && samePr(readOwnPrView(link.ref)?.url ?? "", url))
-      .sort((a, b) => a.at - b.at)
-      .at(-1);
+  const currentStates = new Map(latestPrStates(stateLinks).map((entry) => [entry.key, entry.link]));
+  const stateOf = (strand: string, url: string) => currentStates.get(stateKey(strand, url));
   const setState = (strand: string, current: Knowledge["links"][number] | undefined, view: OwnPrView) => {
     const ref = JSON.stringify(view);
     if (current?.ref === ref) return;

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Ponpoko, readTourRef } from "./core.ts";
 import { dormant } from "./model.ts";
 import { Store } from "./store.ts";
-import { strandNamed } from "./test-harness.ts";
+import { harness, strandNamed } from "./test-harness.ts";
 
 function setup() {
   let now = 1_000_000;
@@ -365,5 +365,24 @@ describe("strands", () => {
     core.done(strandNamed(core, "p").id);
     expect(core.snapshot().counts).toMatchObject({ yours: 0, agents: 0 });
     expect(() => core.status({ self: "tool:1", text: "next step" })).toThrow("name the strand");
+  });
+});
+
+describe("ending a wait", () => {
+  test("ends only the waits the caller opened, unless it names who, and works for an agent outside komux", async () => {
+    const { core, hear } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "working" }, { paneId: 3, tabId: 1, state: "working" }], jobs: [] });
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2", "pane:s1:3"], spaces: [] });
+    core.wait({ self: "komux:s1:2", strand: "sc-1", who: "you", kind: "you", what: "try it in the browser" });
+    core.wait({ self: "komux:s1:2", strand: "sc-1", who: "CI", kind: "machine", what: "the build" });
+    expect(() => core.wait({ self: "komux:s1:3", strand: "sc-1", over: true })).toThrow("no such wait");
+    core.wait({ self: "komux:s1:3", strand: "sc-1", who: "CI", over: true });
+    expect(() => core.wait({ self: "komux:s1:3", strand: "sc-1", who: "you", over: true })).toThrow("no such wait");
+    core.wait({ self: "komux:s1:2", strand: "sc-1", over: true });
+    expect(strandNamed(core, "sc-1").open.filter((move) => move.source === "agent")).toEqual([]);
+    core.add(undefined, "side");
+    core.wait({ strand: "side", who: "you", kind: "you", what: "look at it" });
+    core.wait({ strand: "side", kind: "you", over: true });
+    expect(strandNamed(core, "side").open).toEqual([]);
   });
 });

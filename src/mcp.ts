@@ -45,20 +45,17 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
     {
       title: "Say what you're doing now",
       description: "Make a move on a strand: one line on what you're doing now, shown on the strand in ponpoko and kept in its record of moves. Name the strand to start on it or switch to it; missing strands on the path are made.",
-      inputSchema: z.looseObject({
-        text: z.string().min(1).max(120).optional().describe("Required: what you're doing now, such as \"making a pointed directory beat a label\""),
+      inputSchema: {
+        text: z.string().min(1).max(120).describe("What you're doing now, such as \"making a pointed directory beat a label\""),
         page: z.string().max(200).optional().describe("Notebook page with the detail, as quoll show takes it, such as ponpoko/build-status.md"),
         title: titleParam,
         pr: z.string().max(300).optional().describe("The URL of the strand's pull request, such as https://github.com/acme/widgets/pull/821, so ponpoko watches its reviews"),
         strand: strandParam,
-      }),
+      },
       annotations: write,
     },
-    async (input) => {
-      const { pr, text, page, title, strand } = input;
-      const said = text ?? alias(input, ["line", "status", "what"]);
-      if (!said) return reply("ponpoko: say what you're doing now in text", true);
-      const report = { text: said.slice(0, 120), ...(page ? { page } : {}), ...(title ? { title } : {}), ...(strand ? { strand } : {}) };
+    async ({ pr, text, page, title, strand }) => {
+      const report = { text, ...(page ? { page } : {}), ...(title ? { title } : {}), ...(strand ? { strand } : {}) };
       const ref = pr ? prRef(pr.trim()) : undefined;
       if (pr && !ref) return reply(`ponpoko: ${pr} isn't a GitHub pull request URL`, true);
       const link = ref ? { link: { adapter: "github", ref: `https://github.com/${ref.repo}/pull/${ref.number}`, label: prName(ref.repo, ref.number) } } : {};
@@ -105,7 +102,7 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
     {
       title: "Split a strand",
       description: "Add strands under a strand, one per name, such as the items of a list in a notebook page. Give a name with a title to title its strand, and with a tour to make it the user's move to review a remax tour you prepared; going to the strand in ponpoko opens the tour.",
-      inputSchema: z.looseObject({
+      inputSchema: {
         names: z
           .array(
             z.union([
@@ -125,17 +122,12 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
           )
           .min(1)
           .max(50)
-          .optional()
-          .describe("Required: the strands to make, each a name or { name, title, tour }"),
+          .describe("The strands to make, each a name or { name, title, tour }"),
         strand: strandParam,
-      }),
+      },
       annotations: write,
     },
-    async (input) => {
-      const given = input.names ?? (Array.isArray(input.strands) ? input.strands : undefined);
-      if (!given || given.length === 0) return reply("ponpoko: give the strands to make in names", true);
-      return attempt(async () => (await send({ method: "split", params: { ...caller, names: given, ...(input.strand ? { strand: input.strand } : {}) } })) as { strands: string[] }, (result) => `Made ${result.strands.join("; ")}.`);
-    },
+    async (input) => attempt(async () => (await send({ method: "split", params: { ...caller, ...input } })) as { strands: string[] }, (result) => `Made ${result.strands.join("; ")}.`),
   );
 
   server.registerTool(
@@ -188,14 +180,6 @@ async function attempt<T>(work: () => Promise<T>, text: (result: T) => string): 
   } catch (error) {
     return reply(`ponpoko: ${(error as Error).message}`, true);
   }
-}
-
-function alias(input: Record<string, unknown>, keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = input[key];
-    if (typeof value === "string" && value.trim() !== "") return value.trim();
-  }
-  return undefined;
 }
 
 function reply(text: string, isError = false): CallToolResult {

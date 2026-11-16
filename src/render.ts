@@ -57,7 +57,7 @@ export function standingOf(strand: StrandView, now: number): Standing {
       if (onOwnJob(strand)) return { glyph: "◐", paint: style.agent, text: whyOf(strand, now).text, age: since };
       return { glyph: "⊘", paint: style.wait, text: othersCause(strand), age: since };
     default:
-      if (strand.planned) return isWaitingOn(strand, own.waitsOn) ? { glyph: "·", paint: style.faint, text: `planned · ${own.why}`, age: "" } : { glyph: "○", paint: style.accent, text: own.why, age: "" };
+      if (strand.planned) return isWaitingOn(strand, own.waitsOn) || strand.heldBy ? { glyph: "·", paint: style.faint, text: `planned · ${own.why}`, age: "" } : { glyph: "○", paint: style.accent, text: own.why, age: "" };
       if (isWaitingOn(strand, own.waitsOn)) return { glyph: "⊘", paint: style.wait, text: own.why, age: since };
       return { glyph: "○", paint: style.muted, text: own.why, age: "" };
   }
@@ -271,6 +271,8 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
       return `${name(event.strand)} note added`;
     case "strand.blocked":
       return `${name(event.strand)} waits on ${name(event.on)}`;
+    case "strand.held":
+      return `${name(event.strand)} ${event.held ? "waits on" : "no longer waits on"} ${event.by}`;
     case "strand.planned":
       return `${name(event.strand)} ${event.planned ? "planned" : "started"}`;
     case "strand.unblocked":

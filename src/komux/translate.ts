@@ -183,7 +183,7 @@ export class Translator {
     const id = agentPlayerId(live.server, entry.paneId);
     const player = out.model.players.get(id);
     const mine = out.openBy(id);
-    const yours = out.yoursFor(id);
+    const yours = out.yoursFor(id).filter((move) => move.source !== "agent");
     const running = [...live.jobs.values()].filter((job) => job.startedBy === entry.paneId && job.state === "running");
     const background = entry.asking || (entry.state !== "done" && entry.state !== "idle") ? undefined : backgroundLine(entry.background, running.length);
     const wanted = entry.asking ? asking : entry.state === "working" ? undefined : (yourMoves[entry.state] ?? (player ? ready : null));

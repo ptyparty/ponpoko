@@ -1,4 +1,4 @@
-import { ask, Down } from "../client.ts";
+import { ask } from "../client.ts";
 import type { Request } from "../server.ts";
 import { jobPlayerId } from "./translate.ts";
 
@@ -33,11 +33,7 @@ export async function runFor(args: string[], env = process.env, send: (request: 
       () => undefined,
       (error: Error) => error,
     );
-    if (failed instanceof Down) console.error(`ponpoko for: ${failed.message}; running the command anyway`);
-    else if (failed) {
-      console.error(`ponpoko for: ${failed.message}`);
-      return 1;
-    }
+    if (failed) console.error(`ponpoko for: ${failed.message}; running the command anyway`);
   }
   if (claim.command.length === 0) return 0;
   const child = Bun.spawn(claim.command, { stdin: "inherit", stdout: "inherit", stderr: "inherit", env });
