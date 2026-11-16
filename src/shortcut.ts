@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { configFile } from "./github.ts";
 export type Title = { kind: "story" | "epic"; title: string };
 export type TitleLookup = (name: string) => Promise<Title | undefined>;
 
@@ -26,23 +28,59 @@ export async function shortcutTitle(name: string, token = process.env.SHORTCUT_T
   return undefined;
 }
 
-export type EpicStory = { id: number; name: string; url?: string; completed: boolean; started: boolean; blocks: number[] };
+export type Stage = "ready" | "started" | "done" | "later";
+export type EpicStory = { id: number; name: string; url?: string; completed: boolean; started: boolean; blocks: number[]; stage?: Stage };
 export type EpicLookup = (epic: number) => Promise<EpicStory[]>;
+export type WorkflowState = { name: string; type: string };
 
-export async function epicStories(epic: number, token = process.env.SHORTCUT_TOKEN): Promise<EpicStory[]> {
-  if (!token) throw new Error("SHORTCUT_TOKEN isn't set");
-  const response = await fetch(`https://api.app.shortcut.com/api/v3/epics/${epic}/stories`, { headers: { "Shortcut-Token": token, "Content-Type": "application/json" }, signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error(`Shortcut answered ${response.status}`);
-  return readEpicStories(await response.json());
+export const defaultReadyStates = ["ready"];
+
+export function readyStates(file = configFile()): string[] {
+  try {
+    const given = (JSON.parse(readFileSync(file, "utf8")) as { shortcut?: { readyStates?: unknown } }).shortcut?.readyStates;
+    return Array.isArray(given) && given.every((state) => typeof state === "string") && given.length > 0 ? given : defaultReadyStates;
+  } catch {
+    return defaultReadyStates;
+  }
 }
 
-export function readEpicStories(body: unknown): EpicStory[] {
+export function stageOf(state: WorkflowState | undefined, story: { completed: boolean; started: boolean }, ready: string[] = defaultReadyStates): Stage {
+  if (story.completed || state?.type === "done") return "done";
+  if (state?.type === "started" || (!state && story.started)) return "started";
+  if (state && ready.some((pattern) => new RegExp(pattern, "i").test(state.name))) return "ready";
+  return "later";
+}
+
+async function shortcutGet(path: string, token: string): Promise<unknown> {
+  const response = await fetch(`https://api.app.shortcut.com/api/v3/${path}`, { headers: { "Shortcut-Token": token, "Content-Type": "application/json" }, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`Shortcut answered ${response.status}`);
+  return response.json();
+}
+
+export async function epicStories(epic: number, token = process.env.SHORTCUT_TOKEN, ready = readyStates()): Promise<EpicStory[]> {
+  if (!token) throw new Error("SHORTCUT_TOKEN isn't set");
+  const [stories, workflows] = await Promise.all([shortcutGet(`epics/${epic}/stories`, token), shortcutGet("workflows", token)]);
+  return readEpicStories(stories, readWorkflowStates(workflows), ready);
+}
+
+export function readWorkflowStates(body: unknown): Map<number, WorkflowState> {
+  const states = new Map<number, WorkflowState>();
+  if (!Array.isArray(body)) return states;
+  for (const workflow of body as { states?: { id?: unknown; name?: unknown; type?: unknown }[] }[]) {
+    for (const state of workflow.states ?? []) if (typeof state.id === "number" && typeof state.name === "string" && typeof state.type === "string") states.set(state.id, { name: state.name, type: state.type });
+  }
+  return states;
+}
+
+export function readEpicStories(body: unknown, states = new Map<number, WorkflowState>(), ready = defaultReadyStates): EpicStory[] {
   if (!Array.isArray(body)) return [];
   return body.flatMap((raw): EpicStory[] => {
     const story = raw as Record<string, unknown>;
     if (typeof story.id !== "number" || typeof story.name !== "string" || story.archived === true) return [];
     const links = Array.isArray(story.story_links) ? (story.story_links as Record<string, unknown>[]) : [];
     const blocks = links.filter((link) => link.verb === "blocks" && link.subject_id === story.id && typeof link.object_id === "number").map((link) => link.object_id as number);
-    return [{ id: story.id, name: story.name, ...(typeof story.app_url === "string" ? { url: story.app_url } : {}), completed: story.completed === true, started: story.started === true, blocks }];
+    const flags = { completed: story.completed === true, started: story.started === true };
+    const state = typeof story.workflow_state_id === "number" ? states.get(story.workflow_state_id) : undefined;
+    return [{ id: story.id, name: story.name, ...(typeof story.app_url === "string" ? { url: story.app_url } : {}), ...flags, blocks, stage: stageOf(state, flags, ready) }];
   });
 }

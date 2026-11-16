@@ -48,7 +48,7 @@ export const request = z.discriminatedUnion("method", [
   z.object({ method: z.literal("start"), params: z.object({ strand: z.string() }) }),
   z.object({
     method: z.literal("import-epic"),
-    params: z.object({ strand: z.string(), epic: z.number().int(), stories: z.array(z.object({ id: z.number().int(), name: z.string(), url: z.string().optional(), completed: z.boolean(), started: z.boolean(), blocks: z.array(z.number().int()) })).max(2000) }),
+    params: z.object({ strand: z.string(), epic: z.number().int(), stories: z.array(z.object({ id: z.number().int(), name: z.string(), url: z.string().optional(), completed: z.boolean(), started: z.boolean(), blocks: z.array(z.number().int()), stage: z.enum(["ready", "started", "done", "later"]).optional() })).max(2000) }),
   }),
   z.object({ method: z.literal("forget"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("snooze"), params: z.object({ strand: z.string(), until: z.number(), untilNeeded: z.literal(false, "snooze till needed is gone; reopen this ponpoko screen").optional() }) }),

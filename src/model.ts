@@ -12,6 +12,7 @@ export type Strand = {
   dismissedAt: number;
   snoozedUntil?: number;
   planned?: boolean;
+  madeBy?: string;
   blockedOn: Record<string, number>;
   released?: Record<string, number>;
   notes: { at: number; text: string }[];
@@ -25,7 +26,7 @@ export type Model = {
   moves: Map<string, Move>;
   links: Map<string, Link>;
   names: Map<string, string>;
-  forgotten: { name: string; parent?: string }[];
+  forgotten: { name: string; parent?: string; by: string }[];
   heard: Recorded[];
   lastAt: number;
   version: number;
@@ -68,7 +69,7 @@ function applyFact(model: Model, event: Recorded): void {
   switch (event.type) {
     case "strand.made":
       if (model.strands.has(event.strand)) return;
-      model.strands.set(event.strand, { id: event.strand, name: event.name, parent: event.parent, kind: event.kind, made: event.at, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
+      model.strands.set(event.strand, { id: event.strand, name: event.name, parent: event.parent, kind: event.kind, made: event.at, madeBy: event.source, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
       model.names.set(event.strand, path(model, event.strand).join(" › "));
       wake(model, ancestors(model, event.strand));
       return;
@@ -106,7 +107,7 @@ function applyFact(model: Model, event: Recorded): void {
       return;
     case "strand.forgotten": {
       const strand = model.strands.get(event.strand);
-      if (strand) model.forgotten.push({ name: strand.name, ...(strand.parent ? { parent: strand.parent } : {}) });
+      if (strand) model.forgotten.push({ name: strand.name, ...(strand.parent ? { parent: strand.parent } : {}), by: event.source });
       remove(model, event.strand, undefined);
       return;
     }

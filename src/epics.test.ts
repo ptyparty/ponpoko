@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { refreshEpic } from "./actions.ts";
 import { handle } from "./server.ts";
-import { readEpicStories, type EpicStory } from "./shortcut.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readEpicStories, readWorkflowStates, readyStates, type EpicStory } from "./shortcut.ts";
 import { harness, strandNamed } from "./test-harness.ts";
 
 const story = (id: number, over: Partial<EpicStory> = {}): EpicStory => ({ id, name: `Story ${id}`, url: `https://app.shortcut.com/acme/story/${id}/x`, completed: false, started: false, blocks: [], ...over });
@@ -12,7 +15,7 @@ describe("importing an epic from Shortcut", () => {
       { id: 2, name: "Two", app_url: "https://app.shortcut.com/acme/story/2/two", completed: false, started: true, archived: false, story_links: [{ verb: "blocks", subject_id: 2, object_id: 3 }, { verb: "blocks", subject_id: 1, object_id: 2 }, { verb: "relates to", subject_id: 2, object_id: 4 }] },
       { id: 5, name: "Gone", archived: true, story_links: [] },
     ];
-    expect(readEpicStories(body)).toEqual([{ id: 2, name: "Two", url: "https://app.shortcut.com/acme/story/2/two", completed: false, started: true, blocks: [3] }]);
+    expect(readEpicStories(body)).toEqual([{ id: 2, name: "Two", url: "https://app.shortcut.com/acme/story/2/two", completed: false, started: true, blocks: [3], stage: "started" }]);
     expect(readEpicStories({ message: "nope" })).toEqual([]);
   });
 
@@ -105,5 +108,31 @@ describe("importing an epic from Shortcut", () => {
     core.add(strandNamed(core, "sc-9 › sc-10").id, "implement");
     core.wait({ strand: "sc-9 › sc-10 › implement", who: "CI", kind: "machine", what: "build" }, "you");
     expect(strandNamed(core, "sc-9 › sc-10").planned).toBeUndefined();
+  });
+  test("reads each story's workflow state: ready states by name from the config, anything started or done by its type", () => {
+    const states = readWorkflowStates([{ states: [{ id: 1, name: "Backlog", type: "backlog" }, { id: 2, name: "In Review", type: "backlog" }, { id: 3, name: "Ready", type: "unstarted" }, { id: 4, name: "In Development", type: "started" }, { id: 5, name: "Done", type: "done" }, { id: 6, name: "On Deck", type: "unstarted" }] }]);
+    const body = [1, 2, 3, 4, 5, 6].map((state) => ({ id: state * 10, name: `S${state}`, workflow_state_id: state, story_links: [] }));
+    expect(readEpicStories(body, states).map((story) => story.stage)).toEqual(["later", "later", "ready", "started", "done", "later"]);
+    expect(readEpicStories(body, states, ["ready", "on deck"]).map((story) => story.stage)).toEqual(["later", "later", "ready", "started", "done", "ready"]);
+    const dir = mkdtempSync(join(tmpdir(), "ponpoko-config-"));
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ shortcut: { readyStates: ["^ready$", "on deck"] } }));
+    expect(readyStates(join(dir, "config.json"))).toEqual(["^ready$", "on deck"]);
+    expect(readyStates(join(dir, "missing.json"))).toEqual(["ready"]);
+  });
+
+  test("brings in only stories ready to work on, keeps strands that exist for other reasons, and drops untouched ones that aren't ready", () => {
+    const { core } = harness();
+    const epic = core.add(undefined, "sc-9");
+    const stage = (id: number, value: EpicStory["stage"], over: Partial<EpicStory> = {}) => story(id, { stage: value, ...over });
+    expect(core.importEpic(epic, 9, [stage(10, "ready", { blocks: [11, 12] }), stage(11, "started"), stage(12, "ready"), stage(13, "ready"), stage(14, "done")])).toBe("5 new stories, 2 new dependencies");
+    core.add(undefined, "sc-15");
+    core.note(strandNamed(core, "sc-9 › sc-13").id, "keep this one");
+    const stories = [stage(10, "later", { blocks: [11, 12, 16] }), stage(11, "later"), stage(12, "later"), stage(13, "later"), stage(14, "done"), stage(15, "later"), stage(16, "later")];
+    core.wait({ strand: "sc-9 › sc-11", who: "Sam", kind: "person", what: "a question" }, "you");
+    expect(core.importEpic(epic, 9, stories)).toBe("0 new stories, 0 new dependencies, 1 story moved under the epic, 2 stories not ready yet dropped");
+    expect(core.snapshot().strands.filter((strand) => strand.parent === epic).map((strand) => strand.name).sort()).toEqual(["sc-11", "sc-13", "sc-15"]);
+    expect(Object.keys(strandNamed(core, "sc-9 › sc-11").blockedOn)).toEqual([]);
+    expect(core.importEpic(epic, 9, [stage(10, "ready"), stage(12, "later")])).toBe("1 new story, 0 new dependencies");
+    expect(strandNamed(core, "sc-9 › sc-10").planned).toBe(true);
   });
 });

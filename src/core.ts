@@ -50,7 +50,7 @@ export type StrandView = Strand & {
 };
 export type Ended = Pick<Strand, "id" | "name" | "title" | "parent" | "kind" | "blockedOn" | "done">;
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string>; ended?: Ended[] };
-export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[]; answered: string[]; forgotten?: { name: string; parent?: string }[] };
+export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[]; answered: string[]; forgotten?: { name: string; parent?: string; by: string }[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
 export type LinkReport = { adapter: string; ref: string; label?: string };
