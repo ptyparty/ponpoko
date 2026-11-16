@@ -8,8 +8,8 @@ import { pickWhose, whoseOf } from "../model.ts";
 import { fetchInbox, type Inbox } from "../github.ts";
 import { hasOpenPr, inboxFacts, isReviewId, prLinkIds, source as githubSource, unwatchedPrs } from "../inbox.ts";
 import { savePool, type Pool } from "../unreviewed.ts";
-import { epicStories, shortcutTitle, storyNumber, type EpicLookup, type TitleLookup } from "../shortcut.ts";
-import { epicFacts, epicsToImport } from "../epics.ts";
+import { epicStories, shortcutTitle, storyNumber, type EpicLookup, type EpicStory, type TitleLookup } from "../shortcut.ts";
+import { epicsToImport } from "../epics.ts";
 import { reviewLayout } from "./go.ts";
 import { sendKomux, subscribe, type KomuxLine } from "./stream.ts";
 import { known, komuxPlace, tabStrand, Translator, type Known } from "./translate.ts";
@@ -19,6 +19,7 @@ export type Service = {
   record: (facts: Fact[], source?: string) => Promise<void>;
   present: (presence: Presence) => Promise<void>;
   absent: (scope: string) => Promise<void>;
+  importEpic: (strand: string, epic: number, stories: EpicStory[]) => Promise<void>;
 };
 
 export type Badge = { tabId: number; text: string | null; color?: string };
@@ -163,9 +164,7 @@ export class Bridge {
       this.importing.add(strand);
       void this.lookupEpic(epic)
         .then(async (stories) => {
-          this.cached = undefined;
-          const facts = epicFacts(await this.knowledge(), strand, epic, stories, this.newId);
-          await this.service.record(facts, "shortcut");
+          await this.service.importEpic(strand, epic, stories);
           this.cached = undefined;
           this.importFailed.delete(strand);
         })
@@ -280,6 +279,7 @@ export const serviceForBridge: Service = {
   record: async (facts, source = "komux") => void (await ask({ method: "record", params: { source, facts } })),
   present: async (presence) => void (await ask({ method: "present", params: presence })),
   absent: async (scope) => void (await ask({ method: "absent", params: { adapter: "komux", scope } })),
+  importEpic: async (strand, epic, stories) => void (await ask({ method: "import-epic", params: { strand, epic, stories } })),
 };
 
 export async function runBridge(env = process.env): Promise<number> {

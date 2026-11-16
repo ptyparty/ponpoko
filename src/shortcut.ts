@@ -6,6 +6,10 @@ export function storyNumber(name: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+export function isStory(strand: { name: string; kind?: string }): boolean {
+  return storyNumber(strand.name) !== undefined || strand.kind === "story" || strand.kind === "epic";
+}
+
 export async function shortcutTitle(name: string, token = process.env.SHORTCUT_TOKEN): Promise<Title | undefined> {
   const number = storyNumber(name);
   if (number === undefined) return undefined;

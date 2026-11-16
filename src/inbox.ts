@@ -3,7 +3,7 @@ import type { Fact } from "./events.ts";
 import { ownState, pendingMentions, prName, prRef, reviewState, samePr, theTeam, type Inbox, type OwnPr } from "./github.ts";
 import { isBookkeeping, you } from "./model.ts";
 import { storyNumber } from "./shortcut.ts";
-import { ready, yourMoves } from "./komux/translate.ts";
+import { isFinishedTurn } from "./komux/translate.ts";
 
 export const source = "github";
 export const githubPlayer = "github";
@@ -129,7 +129,6 @@ export function branchStrand(knowledge: Knowledge, branch: string): string | und
   return found.length === 1 ? found[0]!.id : undefined;
 }
 
-const finishedTurns = new Set([yourMoves.done, ready]);
 
 function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string): Fact[] {
   if (!inbox.mine) return [];
@@ -165,7 +164,7 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
       const kind = players.get(move.player)?.kind;
       const aboutPr = new RegExp(`(#|\\bPR\\s*#?)${pr.number}\\b`, "i").test(move.what);
       const reviewerWait = (kind === "person" || kind === "machine") && (aboutPr || move.player === player || move.player === "machine:copilot" || move.player === personId(theTeam));
-      const turnOver = view.state === "waiting" && move.player === you && move.source !== "agent" && finishedTurns.has(move.what);
+      const turnOver = view.state === "waiting" && move.player === you && move.source !== "agent" && isFinishedTurn(move);
       if (reviewerWait || turnOver) facts.push({ type: "move.closed", move: move.id });
     }
     if (view.state === "waiting") join(player, view.who === "Copilot" ? "machine" : "person", view.who!);

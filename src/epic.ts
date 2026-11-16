@@ -4,7 +4,7 @@ import type { Ended, Snapshot, StrandView } from "./core.ts";
 import { holderOf } from "./map.ts";
 import { isWaitingOn, onOwnJob, whyOf } from "./render.ts";
 import { cells, keyLine, style, visible, type Key, type Part } from "./screen.ts";
-import { storyNumber } from "./shortcut.ts";
+import { isStory, storyNumber } from "./shortcut.ts";
 
 export type StoryState = "done" | "review" | "mine" | "agent" | "ready" | "later";
 export type StoryNode = { id: string; name: string; title: string; state: StoryState; strand?: StrandView; ended?: Ended; on: string[]; unblocks: string[] };
@@ -33,8 +33,8 @@ function shortName(name: string): string {
 }
 
 export function epicGraph(snapshot: Snapshot, epic: StrandView): EpicGraph {
-  const live = snapshot.strands.filter((strand) => strand.parent === epic.id);
-  const ended = (snapshot.ended ?? []).filter((strand) => strand.parent === epic.id);
+  const live = snapshot.strands.filter((strand) => strand.parent === epic.id && isStory(strand));
+  const ended = (snapshot.ended ?? []).filter((strand) => strand.parent === epic.id && isStory(strand));
   const ids = new Set([...live.map((strand) => strand.id), ...ended.map((strand) => strand.id)]);
   const finished = new Set(ended.map((strand) => strand.id));
   const stateOf = (strand: StrandView): StoryState => {
@@ -74,7 +74,7 @@ export function epicGraph(snapshot: Snapshot, epic: StrandView): EpicGraph {
 export type Placed = { node: StoryNode; col: number; row: number };
 export type Layout = { placed: Placed[]; linkedRows: number; columns: number; loose: StoryNode[] };
 
-export function layoutGraph(graph: EpicGraph): Layout {
+export function layoutGraph(graph: EpicGraph, sweeps = 0): Layout {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
   const linked = graph.nodes.filter((node) => node.on.length > 0 || node.unblocks.length > 0);
   const depth = new Map<string, number>();
@@ -129,6 +129,21 @@ export function layoutGraph(graph: EpicGraph): Layout {
     } else place(source, tops.get(group)!, group);
   }
   for (const node of linked) if (!rowOf.has(node.id)) place(node, used + 1, groups++);
+  const columns = Math.max(0, ...linked.map((node) => depth.get(node.id)!));
+  const centre = (ids: string[]) => (ids.length === 0 ? undefined : ids.reduce((total, id) => total + rowOf.get(id)!, 0) / ids.length);
+  const sweep = (col: number, neighbours: (node: StoryNode) => string[]) => {
+    const inColumn = linked.filter((node) => depth.get(node.id) === col);
+    for (const group of new Set(inColumn.map((node) => component.get(node.id)))) {
+      const members = inColumn.filter((node) => component.get(node.id) === group);
+      const slots = members.map((node) => rowOf.get(node.id)!).sort((a, b) => a - b);
+      const sorted = [...members].sort((a, b) => (centre(neighbours(a)) ?? rowOf.get(a.id)!) - (centre(neighbours(b)) ?? rowOf.get(b.id)!) || rowOf.get(a.id)! - rowOf.get(b.id)!);
+      sorted.forEach((node, at) => rowOf.set(node.id, slots[at]!));
+    }
+  };
+  for (let pass = 0; pass < sweeps; pass++) {
+    for (let col = 1; col <= columns; col++) sweep(col, (node) => node.on);
+    for (let col = columns - 1; col >= 0; col--) sweep(col, (node) => node.unblocks);
+  }
   const placed = linked.map((node) => ({ node, col: depth.get(node.id)!, row: rowOf.get(node.id)! }));
   return { placed, linkedRows: used + 1, columns: Math.max(1, ...placed.map((at) => at.col + 1)), loose: graph.nodes.filter((node) => !linked.includes(node)) };
 }
@@ -139,7 +154,15 @@ const gap = 6;
 const boxHeight = 4;
 const rowPitch = 5;
 
-export type Drawing = { lines: Cell[][]; boxes: Box[]; width: number; boxWidth: number };
+export type Drawing = { lines: Cell[][]; boxes: Box[]; width: number; boxWidth: number; crossings: number };
+
+export function bestLayout(graph: EpicGraph, width: number): Layout {
+  const tried = [0, 1, 2, 4, 8].map((sweeps) => {
+    const layout = layoutGraph(graph, sweeps);
+    return { layout, crossings: drawGraph(layout, width, undefined).crossings };
+  });
+  return tried.reduce((best, next) => (next.crossings < best.crossings ? next : best)).layout;
+}
 
 export function drawGraph(layout: Layout, width: number, selected: string | undefined): Drawing {
   const columns = Math.max(layout.columns, 1);
@@ -178,8 +201,13 @@ export function drawGraph(layout: Layout, width: number, selected: string | unde
     ...layout.loose.map((node, at) => ({ node, x: 2 + (at % perRow) * pitch, y: looseTop + Math.floor(at / perRow) * rowPitch })),
   ];
   const where = new Map(boxes.map((box) => [box.node.id, box]));
-  const bits = new Map<string, number>();
-  const mark = (x: number, y: number, bit: number) => bits.set(`${x},${y}`, (bits.get(`${x},${y}`) ?? 0) | bit);
+  const bits = new Map<string, Map<number, number>>();
+  let edge = 0;
+  const mark = (x: number, y: number, bit: number) => {
+    const cell = bits.get(`${x},${y}`) ?? new Map<number, number>();
+    cell.set(edge, (cell.get(edge) ?? 0) | bit);
+    bits.set(`${x},${y}`, cell);
+  };
   const [up, down, left, right] = [1, 2, 4, 8];
   const across = (from: number, to: number, y: number) => {
     for (let x = from; x <= to; x++) {
@@ -225,6 +253,7 @@ export function drawGraph(layout: Layout, width: number, selected: string | unde
     ordered.forEach((source, at) => laneOf.set(`${x},${source.node.id}`, x - positions[at % positions.length]!));
   }
   for (const { box, target, long, gutter } of routes) {
+    edge++;
     const x0 = box.x + boxWidth;
     const y0 = box.y + 1;
     const xt = target.x - 1;
@@ -245,9 +274,17 @@ export function drawGraph(layout: Layout, width: number, selected: string | unde
     arrows.push([xt, yt]);
   }
   const joins: Record<number, string> = { [left | right]: "─", [left]: "─", [right]: "─", [up | down]: "│", [up]: "│", [down]: "│", [down | right]: "┌", [down | left]: "┐", [up | right]: "└", [up | left]: "┘", [left | right | down]: "┬", [left | right | up]: "┴", [up | down | right]: "├", [up | down | left]: "┤", [up | down | left | right]: "┼" };
-  for (const [key, value] of bits) {
+  let crossings = 0;
+  const sideways = left | right;
+  const upright = up | down;
+  for (const [key, edges] of bits) {
     const [x, y] = key.split(",").map(Number) as [number, number];
-    if (lines[y]?.[x]) lines[y]![x] = { ch: joins[value] ?? "┼", paint: style.faint };
+    const parts = [...edges.values()];
+    const value = parts.reduce((all, part) => all | part, 0);
+    const turns = parts.some((part) => (part & sideways) !== 0 && (part & upright) !== 0);
+    const crossing = !turns && parts.some((part) => (part & upright) === 0) && parts.some((part) => (part & sideways) === 0);
+    if (crossing) crossings++;
+    if (lines[y]?.[x]) lines[y]![x] = { ch: crossing ? "─" : (joins[value] ?? "┼"), paint: style.faint };
   }
   for (const [x, y] of arrows) if (lines[y]?.[x]) lines[y]![x] = { ch: "▶", paint: style.faint };
   for (const box of boxes) {
@@ -274,7 +311,7 @@ export function drawGraph(layout: Layout, width: number, selected: string | unde
       }
     });
   }
-  return { lines, boxes, width: gridWidth, boxWidth };
+  return { lines, boxes, width: gridWidth, boxWidth, crossings };
 }
 
 function clip(text: string, width: number): string {
@@ -364,7 +401,6 @@ export class EpicController {
   private typing: string | undefined;
   private top = 0;
   private left = 0;
-  private drawing: Drawing | undefined;
   private width = 120;
 
   constructor(
@@ -378,15 +414,29 @@ export class EpicController {
   }
 
   graph(): EpicGraph | undefined {
-    const epic = this.snapshot ? findEpic(this.snapshot, this.epicId) : undefined;
-    return epic && this.snapshot ? epicGraph(this.snapshot, epic) : undefined;
+    return this.drawn()?.graph;
+  }
+
+  private cache: { snapshot: Snapshot; width: number; selected: string | undefined; graph: EpicGraph; layout: Layout; drawing: Drawing } | undefined;
+
+  private drawn(selected: string | undefined = this.selected): { graph: EpicGraph; drawing: Drawing } | undefined {
+    const snapshot = this.snapshot;
+    if (!snapshot) return undefined;
+    const cached = this.cache;
+    if (cached?.snapshot === snapshot && cached.width === this.width) {
+      if (cached.selected !== selected) Object.assign(cached, { selected, drawing: drawGraph(cached.layout, this.width, selected) });
+      return cached;
+    }
+    const epic = findEpic(snapshot, this.epicId);
+    if (!epic) return undefined;
+    const graph = epicGraph(snapshot, epic);
+    const layout = bestLayout(graph, this.width);
+    this.cache = { snapshot, width: this.width, selected, graph, layout, drawing: drawGraph(layout, this.width, selected) };
+    return this.cache;
   }
 
   private boxes(): Box[] {
-    const graph = this.graph();
-    if (!graph) return [];
-    this.drawing = drawGraph(layoutGraph(graph), this.width, this.selected);
-    return this.drawing.boxes;
+    return this.drawn()?.drawing.boxes ?? [];
   }
 
   picked(): StoryNode | undefined {
@@ -481,8 +531,7 @@ export class EpicController {
     if (!graph) return ["", style.muted(` ponpoko knows of no epic ${this.epicId}`), "", keyLine([["esc", "back"]])];
     const node = this.picked();
     if (node) this.selected = node.id;
-    const drawing = drawGraph(layoutGraph(graph), width, node?.id);
-    this.drawing = drawing;
+    const drawing = this.drawn(node?.id)!.drawing;
     const head = [
       cells([[` ${graph.epic.title ?? graph.epic.name}`, (text) => style.text(style.bold(text))], [`  ${graph.epic.title ? `${graph.epic.name} · ` : ""}${summary(graph)}`, style.faint], [drawing.width > width ? `   ${this.left > 0 ? "◂" : " "} scrolls ${this.left + width < drawing.width ? "▸" : " "}` : "", style.muted]], width),
       "",

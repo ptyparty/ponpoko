@@ -23,6 +23,7 @@ export function harness(start = 1_000_000, store = new Store(":memory:"), shared
       record: async (facts, source = "komux") => (up(), core.record(source, facts)),
       present: async (presence) => (up(), void handle(core, request.parse({ method: "present", params: presence }))),
       absent: async (scope) => (up(), core.absent("komux", scope)),
+      importEpic: async (strand, epic, stories) => (up(), void core.importEpic(strand, epic, stories)),
     },
     async (request) => {
       sent.push(request);

@@ -2,7 +2,7 @@ import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } fro
 import { prRef } from "../github.ts";
 import { isBookkeeping, mentionLink, prAdapter } from "../inbox.ts";
 import { sendKomux } from "./stream.ts";
-import { storyNumber } from "../shortcut.ts";
+import { isStory } from "../shortcut.ts";
 import { knownProjects, loadProjects, projectNamed, type Project } from "./projects.ts";
 import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
@@ -117,11 +117,7 @@ export function projectOf(strand: { name: string }, env: Record<string, string |
 }
 
 function storyProject(strand: { name: string; kind?: string }, env: Record<string, string | undefined>): Project | undefined {
-  return isStoryName(strand) ? projectOf(strand, env) : undefined;
-}
-
-function isStoryName(strand: { name: string; kind?: string }): boolean {
-  return storyNumber(strand.name) !== undefined || strand.kind === "story" || strand.kind === "epic";
+  return isStory(strand) ? projectOf(strand, env) : undefined;
 }
 
 export function tabOf(strand: StrandView): KomuxTabRef | undefined {

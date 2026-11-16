@@ -1,6 +1,4 @@
 import { ask } from "./client.ts";
-import type { Knowledge } from "./core.ts";
-import { epicChanges, epicFacts } from "./epics.ts";
 import type { Request } from "./server.ts";
 import { epicStories, type EpicLookup } from "./shortcut.ts";
 import type { StrandView } from "./core.ts";
@@ -108,9 +106,8 @@ export const serviceActions: Actions = {
 
 export async function refreshEpic(strand: string, epic: number, lookup: EpicLookup = epicStories, send: (request: Request) => Promise<unknown> = ask): Promise<string> {
   const stories = await lookup(epic);
-  const facts = epicFacts((await send({ method: "knowledge" })) as Knowledge, strand, epic, stories, (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`);
-  await send({ method: "record", params: { source: "shortcut", facts } });
-  return `From Shortcut: ${epicChanges(facts)}`;
+  const { changes } = (await send({ method: "import-epic", params: { strand, epic, stories } })) as { changes: string };
+  return `From Shortcut: ${changes}`;
 }
 
 export function openUrl(url: string): void {

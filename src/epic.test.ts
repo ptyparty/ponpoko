@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { EpicController, epicGraph, findEpic, layoutGraph, mermaid } from "./epic.ts";
+import { bestLayout, drawGraph, EpicController, epicGraph, findEpic, layoutGraph, mermaid } from "./epic.ts";
 import { TabController } from "./tab.ts";
 import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
@@ -106,5 +106,22 @@ describe("an epic's dependencies", () => {
     await tab.key({ name: "escape" });
     expect(tab.mode.kind).toBe("list");
     expect(strandNamed(core, "sc-1").kind).toBe("epic");
+  });
+  test("arrows that cross keep going straight instead of looking like a join, and only stories are boxes", () => {
+    const { core } = harness();
+    const id = core.add(undefined, "sc-1");
+    core.record("you", [{ type: "strand.titled", strand: id, kind: "epic", title: "Crossing" }]);
+    const numbers = [32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44];
+    const made = Object.fromEntries(numbers.map((number) => [number, core.add(id, `sc-${number}`)]));
+    core.add(id, "notes for the epic");
+    const edges = [[32, 34], [32, 44], [33, 39], [34, 35], [34, 36], [34, 37], [34, 38], [35, 41], [36, 41], [37, 40], [38, 41], [39, 41], [40, 41], [41, 42], [42, 43], [44, 42]];
+    for (const [on, strand] of edges) core.block(made[strand!]!, made[on!]!);
+    const snapshot = core.snapshot();
+    const graph = epicGraph(snapshot, findEpic(snapshot, "sc-1")!);
+    expect(graph.nodes.map((node) => node.name)).not.toContain("notes for the epic");
+    const drawing = drawGraph(bestLayout(graph, 150), 150, undefined);
+    const text = drawing.lines.map((line) => line.map((cell) => cell.ch).join("")).join("\n");
+    expect(drawing.crossings).toBeGreaterThan(0);
+    expect(text).not.toContain("┼");
   });
 });

@@ -27,6 +27,8 @@ export function epicFacts(knowledge: Knowledge, epicStrand: string, epic: number
   const live = new Set(knowledge.strands.map((strand) => strand.id));
   const ids = new Map<number, string>();
   const blockedOn = new Map(all.map((strand) => [strand.id, new Set(Object.keys(strand.blockedOn))]));
+  const forgotten = new Set((knowledge.forgotten ?? []).map((strand) => strand.name.toLowerCase()));
+  const released = new Map(all.map((strand) => [strand.id, new Set(Object.keys(strand.released ?? {}))]));
   const linked = new Set(knowledge.links.filter((link) => link.adapter === shortcutAdapter && link.strand).map((link) => link.strand!));
   for (const story of stories) {
     const found = named(story.id);
@@ -35,7 +37,7 @@ export function epicFacts(knowledge: Knowledge, epicStrand: string, epic: number
       ids.set(story.id, existing.id);
       if (live.has(existing.id) && existing.parent === undefined && existing.id !== epicStrand) facts.push({ type: "strand.parented", strand: existing.id, parent: epicStrand });
       if (!existing.title && live.has(existing.id)) facts.push({ type: "strand.titled", strand: existing.id, kind: "story", title: story.name });
-    } else {
+    } else if (!forgotten.has(`sc-${story.id}`)) {
       const id = newId("s");
       ids.set(story.id, id);
       facts.push({ type: "strand.made", strand: id, name: `sc-${story.id}`, parent: epicStrand, kind: "story" });
@@ -43,7 +45,7 @@ export function epicFacts(knowledge: Knowledge, epicStrand: string, epic: number
       if (story.completed) facts.push({ type: "strand.done", strand: id, why: "done in Shortcut" });
       else facts.push({ type: "strand.planned", strand: id, planned: true });
     }
-    if (story.url && !linked.has(ids.get(story.id)!)) facts.push({ type: "link.added", link: newId("l"), strand: ids.get(story.id)!, adapter: shortcutAdapter, ref: story.url, label: `sc-${story.id}` });
+    if (story.url && ids.has(story.id) && !linked.has(ids.get(story.id)!)) facts.push({ type: "link.added", link: newId("l"), strand: ids.get(story.id)!, adapter: shortcutAdapter, ref: story.url, label: `sc-${story.id}` });
   }
   const workspace = stories.map((story) => /^(https:\/\/app\.shortcut\.com\/[^/]+)\//.exec(story.url ?? "")?.[1]).find(Boolean);
   if (workspace && !linked.has(epicStrand)) facts.push({ type: "link.added", link: newId("l"), strand: epicStrand, adapter: shortcutAdapter, ref: `${workspace}/epic/${epic}`, label: `sc-${epic}` });
@@ -51,7 +53,7 @@ export function epicFacts(knowledge: Knowledge, epicStrand: string, epic: number
     for (const blocked of story.blocks) {
       const on = ids.get(story.id);
       const strand = ids.get(blocked);
-      if (!on || !strand || on === strand || blockedOn.get(strand)?.has(on)) continue;
+      if (!on || !strand || on === strand || blockedOn.get(strand)?.has(on) || released.get(strand)?.has(on)) continue;
       facts.push({ type: "strand.blocked", strand, on });
       blockedOn.set(strand, new Set([...(blockedOn.get(strand) ?? []), on]));
     }

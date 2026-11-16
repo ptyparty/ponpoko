@@ -83,15 +83,12 @@ describe("the komux bridge", () => {
     ]);
   });
 
-  test("a docked Claude that wakes and settles before you've ever prompted it isn't your move, even on a strand that exists, such as an epic's", async () => {
+  test("a docked Claude that's ready before you've ever prompted it isn't your move, even on a strand that exists, such as an epic's; a turn you interrupt is", async () => {
     const { core, hear } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "epic", dir: "/w/stories/sc-900", labels: { strand: "sc-900" } }], agents: [{ paneId: 9, tabId: 3, state: "idle", sessionId: "e1" }], jobs: [] });
-    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
+    await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "epic", dir: "/w/stories/sc-900", labels: { strand: "sc-900" } }], agents: [], jobs: [] });
+    core.record("komux", [{ type: "player.joined", player: "pane:s1:9", kind: "agent", who: "claude", adapter: "komux", place: { handle: "komux:s1:9", dir: "/w/stories/sc-900", server: "s1", session: "main", tabId: 3, paneId: 9 } }]);
     await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "idle", sessionId: "e1" } });
-    expect(line(core, "sc-900")).toBe("sc-900 you");
     expect(strandNamed(core, "sc-900").open).toEqual([]);
-    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
-    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "done", sessionId: "e1" } });
     await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
     await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "idle", sessionId: "e1" } });
     expect(line(core, "sc-900")).toBe("sc-900 you you(pane:s1:9): ready for a prompt");
@@ -670,7 +667,7 @@ describe("GitHub polling", () => {
     let polls = 0;
     const pr = { repo: "acme/widgets", number: 1860, title: "Add a widget cache", url: "https://github.com/acme/widgets/pull/1860", author: "alice", assignees: ["octo"], requested: [], reviews: [], head: "c1" };
     const bridge = new Bridge(
-      { knowledge: async () => core.knowledge(), record: async (facts, source = "komux") => core.record(source, facts), present: async () => undefined, absent: async () => undefined },
+      { knowledge: async () => core.knowledge(), record: async (facts, source = "komux") => core.record(source, facts), present: async () => undefined, absent: async () => undefined, importEpic: async () => undefined },
       async () => ({ ok: true }),
       () => now,
       async () => undefined,

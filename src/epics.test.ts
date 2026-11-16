@@ -83,4 +83,27 @@ describe("importing an epic from Shortcut", () => {
     expect(Object.keys(strandNamed(core, "sc-9 › sc-11").blockedOn)).toHaveLength(2);
     expect(twelve).toBe(strandNamed(core, "sc-9 › sc-12").id);
   });
+  test("imports land in the service one at a time, and never bring back a wait or story you removed", () => {
+    const { core } = harness();
+    const epic = core.add(undefined, "sc-9");
+    const stories = [story(10, { blocks: [11] }), story(11), story(12)];
+    expect(core.importEpic(epic, 9, stories)).toBe("3 new stories, 1 new dependency");
+    expect(core.importEpic(epic, 9, stories)).toBe("0 new stories, 0 new dependencies");
+    expect(core.snapshot().strands.filter((strand) => strand.name === "sc-10")).toHaveLength(1);
+    const eleven = strandNamed(core, "sc-9 › sc-11").id;
+    core.unblock(eleven);
+    core.forget(strandNamed(core, "sc-9 › sc-12").id);
+    expect(core.importEpic(epic, 9, stories)).toBe("0 new stories, 0 new dependencies");
+    expect(strandNamed(core, "sc-9 › sc-11").blockedOn).toEqual({});
+    expect(core.snapshot().strands.some((strand) => strand.name === "sc-12")).toBe(false);
+  });
+
+  test("a move on a strand under a planned story starts the story", () => {
+    const { core } = harness();
+    const epic = core.add(undefined, "sc-9");
+    core.importEpic(epic, 9, [story(10)]);
+    core.add(strandNamed(core, "sc-9 › sc-10").id, "implement");
+    core.wait({ strand: "sc-9 › sc-10 › implement", who: "CI", kind: "machine", what: "build" }, "you");
+    expect(strandNamed(core, "sc-9 › sc-10").planned).toBeUndefined();
+  });
 });

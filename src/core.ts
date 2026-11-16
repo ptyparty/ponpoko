@@ -27,6 +27,8 @@ import {
   type Strand,
 } from "./model.ts";
 import type { Store } from "./store.ts";
+import { epicChanges, epicFacts } from "./epics.ts";
+import type { EpicStory } from "./shortcut.ts";
 
 export type Space = { dir: string; strand?: string; handle?: string; label: string; short: string; players: string[] };
 export type Presence = { adapter: string; scope: string; players: string[]; spaces: Space[] };
@@ -48,7 +50,7 @@ export type StrandView = Strand & {
 };
 export type Ended = Pick<Strand, "id" | "name" | "title" | "parent" | "kind" | "blockedOn" | "done">;
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string>; ended?: Ended[] };
-export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[]; answered: string[] };
+export type Knowledge = { strands: Strand[]; closed: Strand[]; players: Player[]; open: Move[]; links: Link[]; on: Record<string, string>; resumed: Record<string, string>; spoke: string[]; answered: string[]; forgotten?: { name: string; parent?: string }[] };
 
 export type Where = { self?: string; dir?: string; strand?: string };
 export type LinkReport = { adapter: string; ref: string; label?: string };
@@ -135,6 +137,7 @@ export class Ponpoko {
       resumed,
       spoke: [...new Set(moves.filter((move) => move.source === "agent" || (move.described !== undefined && move.player !== you)).map((move) => move.strand))],
       answered: [...answered],
+      forgotten: this.model.forgotten,
     };
   }
 
@@ -207,7 +210,7 @@ export class Ponpoko {
       heard,
       labels: this.labelsFor(heard),
       ended: [...this.model.strands.values()]
-        .filter((strand) => strand.done !== undefined && strand.parent !== undefined && byId.has(strand.parent))
+        .filter((strand) => strand.done !== undefined && strand.parent !== undefined && byId.get(strand.parent)?.kind === "epic")
         .map(({ id, name, title, parent, kind, blockedOn, done }) => ({ id, name, ...(title ? { title } : {}), ...(parent ? { parent } : {}), ...(kind ? { kind } : {}), blockedOn, ...(done !== undefined ? { done } : {}) })),
     };
   }
@@ -261,13 +264,15 @@ export class Ponpoko {
     const facts: Fact[] = [];
     const named = report.who ? slug(report.who) : undefined;
     const players = named === undefined ? undefined : report.kind ? [report.kind === "you" ? you : `${report.kind}:${named}`] : named === "you" ? [you] : [`person:${named}`, `machine:${named}`];
-    const reported = (move: Move) => move.source === source && (move.player === you ? move.with !== undefined && move.with === agent?.id : agent === undefined || move.with === undefined || move.with === agent.id);
     const waits = openMoves(this.model, strand).filter((move) => {
-      if (!reported(move)) return false;
+      if (move.source === "github") return false;
+      const kind = move.player === you ? "you" : this.model.players.get(move.player)?.kind;
+      if (move.player === you && (move.source !== "agent" || move.with === undefined)) return false;
+      if (kind !== "you" && kind !== "person" && kind !== "machine") return false;
       if (players) return players.includes(move.player);
-      const kind = this.model.players.get(move.player)?.kind;
-      return move.player === you || kind === "person" || kind === "machine";
+      return report.kind === undefined || report.kind === kind;
     });
+    if (waits.length === 0) throw new Error(`no such wait: ${path(this.model, strand).join(" › ")} has no open wait${report.who ? ` on ${report.who}` : report.kind ? ` of kind ${report.kind}` : ""}`);
     for (const move of waits) facts.push({ type: "move.closed", move: move.id });
     for (const player of new Set(waits.map((move) => move.player))) {
       if (player === you) continue;
@@ -328,7 +333,7 @@ export class Ponpoko {
 
   private closeTurnsOver(strand: string, reporter: string | undefined, facts: Fact[]): void {
     if (!reporter) return;
-    for (const move of openMoves(this.model, strand)) if (move.player === you && move.with === reporter) facts.push({ type: "move.closed", move: move.id });
+    for (const move of openMoves(this.model, strand)) if (move.player === you && move.with === reporter && move.source !== "agent") facts.push({ type: "move.closed", move: move.id });
   }
 
   private blockFacts(strand: string, on: string, facts: Fact[]): string {
@@ -427,6 +432,13 @@ export class Ponpoko {
     const strand = this.model.strands.get(found.strand);
     if (answers?.kind === "job" && strand?.kind === "loose") facts.push({ type: "strand.forgotten", strand: strand.id });
     this.record("you", facts);
+  }
+
+  importEpic(strand: string, epic: number, stories: EpicStory[]): string {
+    this.mustHave(strand);
+    const facts = epicFacts(this.knowledge(), strand, epic, stories, this.newId);
+    this.record("shortcut", facts);
+    return epicChanges(facts);
   }
 
   start(strand: string): void {

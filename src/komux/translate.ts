@@ -212,7 +212,7 @@ export class Translator {
       }
       if (mine.length === 1 && mine[0]!.what === background) return;
       for (const move of mine) out.close(move);
-      if (on) out.open(on, id, background);
+      if (on) out.open(on, id, background, undefined, "background");
       return;
     }
     if (wanted === null) return;
@@ -233,30 +233,30 @@ export class Translator {
       }
     }
     if (wanted === ready && yours.length > 0) return;
-    const prompted = out.model.answered.has(id) || (entry.sessionId !== undefined && out.model.answered.has(entry.sessionId)) || mine.some((move) => backgroundMove.test(move.what));
+    const prompted = out.model.answered.has(id) || (entry.sessionId !== undefined && out.model.answered.has(entry.sessionId)) || mine.length > 0;
     if (wanted === ready && !prompted) {
       for (const move of mine) out.close(move);
       return;
     }
     if (wanted === undefined) {
       for (const move of yours) out.push({ type: "move.closed", move: move.id });
-      const waited = mine.filter((move) => backgroundMove.test(move.what));
+      const waited = mine.filter(isBackground);
       for (const move of waited) out.close(move);
       const on = mine.length === waited.length ? strand(true) : undefined;
       if (on) {
         for (const move of out.githubYours(on)) out.close(move);
-        out.open(on, id, "working");
+        out.open(on, id, "working", undefined, "working");
       }
       return;
     }
     for (const move of mine) out.push({ type: "move.closed", move: move.id });
     const current = yours.at(-1);
     if (current) {
-      if (current.what !== wanted) out.push({ type: "move.described", move: current.id, what: wanted });
+      if (current.what !== wanted) out.push({ type: "move.described", move: current.id, what: wanted, kind: turnKind(wanted) });
       return;
     }
     const on = strand(false);
-    if (on) out.open(on, "you", wanted, id);
+    if (on) out.open(on, "you", wanted, id, turnKind(wanted));
   }
 
   private awaitJob(live: Live, entry: KomuxJob, strand: string, agent: string, out: Facts): void {
@@ -267,7 +267,7 @@ export class Translator {
       const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tab?.dir ?? "" };
       out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
     }
-    out.open(strand, id, "running", agent);
+    out.open(strand, id, "running", agent, "job");
   }
 
   private jobFailed(live: Live, entry: KomuxJob, out: Facts): void {
@@ -280,11 +280,27 @@ export class Translator {
     out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
     const why = entry.code === null || entry.code === undefined ? `${entry.name} failed` : `${entry.name} failed (exit ${entry.code})`;
     const on = out.claimed(id) ?? out.strandFor(id, tab, true) ?? out.make(`${entry.name} in ${tab.name}`, "loose");
-    out.open(on, "you", why, id);
+    out.open(on, "you", why, id, "job-failed");
   }
 }
 
 const backgroundMove = /^\d+ background (agents?|tasks?)\b/;
+
+function isBackground(move: Move): boolean {
+  return move.kind === "background" || (move.kind === undefined && backgroundMove.test(move.what));
+}
+
+export function turnKind(what: string): string {
+  if (what === asking) return "asking";
+  if (what === ready) return "ready";
+  if (what === yourMoves.waiting) return "waiting";
+  if (what === yourMoves.failed) return "failed";
+  return "ended";
+}
+
+export function isFinishedTurn(move: { kind?: string; what: string }): boolean {
+  return move.kind !== undefined ? move.kind === "ended" || move.kind === "ready" : move.what === yourMoves.done || move.what === ready;
+}
 
 export function backgroundLine(background: { agents: number; tasks: number } | undefined, jobs = 0): string | undefined {
   const agents = background?.agents ?? 0;
@@ -319,10 +335,10 @@ class Facts {
     return this.model.open.filter((move) => move.player === "you" && move.with === player);
   }
 
-  open(strand: string, player: string, what: string, answers?: string): void {
+  open(strand: string, player: string, what: string, answers: string | undefined, kind: string): void {
     const move = this.newId("m");
-    this.push({ type: "move.opened", move, strand, player, what, ...(answers ? { with: answers } : {}) });
-    this.model.open.push({ id: move, strand, player, what, from: 0, source: "komux", ...(answers ? { with: answers } : {}) });
+    this.push({ type: "move.opened", move, strand, player, what, ...(answers ? { with: answers } : {}), kind });
+    this.model.open.push({ id: move, strand, player, what, from: 0, source: "komux", ...(answers ? { with: answers } : {}), kind });
     if (!player.startsWith("job:")) this.model.on.set(answers ?? player, strand);
     if (answers && player === "you") this.model.answered.add(answers);
   }

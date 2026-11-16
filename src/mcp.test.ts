@@ -87,12 +87,17 @@ describe("the ponpoko MCP", () => {
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.by.who)).toEqual(["Sam"]);
     expect(await call("wait", { over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open).toEqual([]);
-    expect(await call("wait", { over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    expect(await call("wait", { over: true, strand: "docs" })).toBe("ponpoko: no such wait: sc-7 › docs has no open wait");
+    await call("wait", { who: "you", kind: "you", what: "try it in the browser", strand: "docs" });
+    await call("wait", { who: "CI", kind: "machine", what: "the build", strand: "docs" });
+    expect(await call("wait", { kind: "machine", over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.what)).toEqual(["try it in the browser"]);
+    await call("wait", { kind: "you", over: true, strand: "docs" });
     core.record("github", [
       { type: "player.joined", player: "person:the-team", kind: "person", who: "the team" },
       { type: "move.opened", move: "m-gh", strand: core.snapshot().strands.find((strand) => strand.name === "docs")!.id, player: "person:the-team", what: "0 of 1 reviews" },
     ]);
-    await call("wait", { who: "the team", over: true, strand: "docs" });
+    expect(await call("wait", { who: "the team", over: true, strand: "docs" })).toContain("no such wait");
     await call("wait", { over: true, strand: "docs" });
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.what)).toEqual(["0 of 1 reviews"]);
     core.block(core.snapshot().strands.find((strand) => strand.name === "docs")!.id, core.snapshot().strands.find((strand) => strand.name === "review merlin")!.id);

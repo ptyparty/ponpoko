@@ -3,7 +3,7 @@ import { prName } from "./github.ts";
 import { isPooled, mentionsId, ownPrs, repoAdapter, reviewsId, stateAdapter, type OwnPrView } from "./inbox.ts";
 import { headline, isWaitingOn, snoozedLabel, standingOf, whyOf, type Why } from "./render.ts";
 import { cells, style, type Part } from "./screen.ts";
-import { storyNumber } from "./shortcut.ts";
+import { isStory } from "./shortcut.ts";
 
 export type Area = "work" | "reviews" | "mentions";
 export const areas: Area[] = ["work", "reviews", "mentions"];
@@ -78,9 +78,7 @@ function foldRow(ctx: Ctx, key: string, indent: number, text: string, strand?: S
   return { ...drawn, key, fold: true, ...(strand ? { strand } : {}) };
 }
 
-export function isStory(strand: { name: string; kind?: string }): boolean {
-  return storyNumber(strand.name) !== undefined || strand.kind === "story" || strand.kind === "epic";
-}
+export { isStory };
 
 export function holderOf(strands: StrandView[], strand: StrandView): StrandView {
   if (strand.own.whose !== undefined || isWaitingOn(strand, strand.own.waitsOn) || strand.rolled.whose === undefined) return strand;

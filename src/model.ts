@@ -13,10 +13,11 @@ export type Strand = {
   snoozedUntil?: number;
   planned?: boolean;
   blockedOn: Record<string, number>;
+  released?: Record<string, number>;
   notes: { at: number; text: string }[];
 };
 export type Player = { id: string; kind: PlayerKind; who: string; adapter?: string; place?: Place; resume?: string; joined: number; gone?: number };
-export type Move = { id: string; strand: string; player: string; with?: string; what: string; from: number; until?: number; source: Recorded["source"]; described?: number };
+export type Move = { id: string; strand: string; player: string; with?: string; what: string; kind?: string; from: number; until?: number; source: Recorded["source"]; described?: number };
 export type Link = { id: string; strand?: string; move?: string; adapter: string; ref: string; label?: string; at: number };
 export type Model = {
   strands: Map<string, Strand>;
@@ -24,6 +25,7 @@ export type Model = {
   moves: Map<string, Move>;
   links: Map<string, Link>;
   names: Map<string, string>;
+  forgotten: { name: string; parent?: string }[];
   heard: Recorded[];
   lastAt: number;
   version: number;
@@ -40,6 +42,7 @@ export function emptyModel(): Model {
     moves: new Map(),
     links: new Map(),
     names: new Map(),
+    forgotten: [],
     heard: [],
     lastAt: 0,
     version: 0,
@@ -101,9 +104,12 @@ function applyFact(model: Model, event: Recorded): void {
       withStrand(model, event.strand, (strand) => void (strand.done = undefined));
       wake(model, [event.strand]);
       return;
-    case "strand.forgotten":
+    case "strand.forgotten": {
+      const strand = model.strands.get(event.strand);
+      if (strand) model.forgotten.push({ name: strand.name, ...(strand.parent ? { parent: strand.parent } : {}) });
       remove(model, event.strand, undefined);
       return;
+    }
     case "strand.merged": {
       const into = model.strands.get(event.into);
       if (!into || event.into === event.strand || !model.strands.has(event.strand)) return;
@@ -128,7 +134,11 @@ function applyFact(model: Model, event: Recorded): void {
       });
       return;
     case "strand.unblocked":
-      withStrand(model, event.strand, (strand) => void delete strand.blockedOn[event.on]);
+      withStrand(model, event.strand, (strand) => {
+        if (!(event.on in strand.blockedOn)) return;
+        delete strand.blockedOn[event.on];
+        strand.released = { ...strand.released, [event.on]: event.at };
+      });
       return;
     case "strand.seen":
       withStrand(model, event.strand, (strand) => void (strand.seenAt = event.at));
@@ -159,13 +169,13 @@ function applyFact(model: Model, event: Recorded): void {
     }
     case "move.opened":
       if (!model.strands.has(event.strand)) return;
-      model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, from: event.at, source: event.source });
-      delete model.strands.get(event.strand)!.planned;
+      model.moves.set(event.move, { id: event.move, strand: event.strand, player: event.player, with: event.with, what: event.what, ...(event.kind ? { kind: event.kind } : {}), from: event.at, source: event.source });
+      for (const id of [event.strand, ...ancestors(model, event.strand)]) delete model.strands.get(id)!.planned;
       wake(model, [event.strand]);
       return;
     case "move.described": {
       const move = model.moves.get(event.move);
-      if (move) Object.assign(move, { what: event.what, described: event.at });
+      if (move) Object.assign(move, { what: event.what, described: event.at, ...(event.kind ? { kind: event.kind } : {}) });
       if (move) wake(model, [move.strand]);
       return;
     }

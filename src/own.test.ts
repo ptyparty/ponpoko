@@ -188,7 +188,7 @@ describe("the bridge and newly linked PRs", () => {
     let now = 1_000_000;
     let polls = 0;
     const bridge = new Bridge(
-      { knowledge: async () => core.knowledge(), record: async (facts, source = "komux") => core.record(source, facts), present: async () => undefined, absent: async () => undefined },
+      { knowledge: async () => core.knowledge(), record: async (facts, source = "komux") => core.record(source, facts), present: async () => undefined, absent: async () => undefined, importEpic: async () => undefined },
       async () => ({ ok: true }),
       () => now,
       async () => undefined,
@@ -362,7 +362,7 @@ describe("the unreviewed pool", () => {
     const core = new Ponpoko(new Store(":memory:"));
     const saved: Pool[] = [];
     const bridge = new Bridge(
-      { knowledge: async () => core.knowledge(), record: async (facts, source = "komux") => core.record(source, facts), present: async () => undefined, absent: async () => undefined },
+      { knowledge: async () => core.knowledge(), record: async (facts, source = "komux") => core.record(source, facts), present: async () => undefined, absent: async () => undefined, importEpic: async () => undefined },
       async () => ({ ok: true }),
       () => 5,
       async () => undefined,
