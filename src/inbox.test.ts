@@ -93,7 +93,7 @@ describe("the GitHub inbox as strands", () => {
   test("pools reviews nobody has taken under reviews, waiting on GitHub", () => {
     const { sync, shown, strand } = setup();
     sync({ reviews: [pr(), pr({ number: 1861, title: "Drop old widgets", url: "https://github.com/acme/widgets/pull/1861", assignees: [me] })] });
-    expect(shown()).toBe(["reviews - 1 yours · 1 waiting", "  widgets#1861 you assigned to you", "  widgets#1860 machine waiting for a reviewer"].join("\n"));
+    expect(shown()).toBe(["reviews - 1 yours · 1 waiting", "  widgets#1861 you assigned to you", "  widgets#1860 person waiting for a reviewer"].join("\n"));
     expect(strand("widgets#1860").title).toBe("Add a widget cache");
     expect(isPooled(strand("widgets#1860"))).toBe(true);
     expect(isPooled(strand("widgets#1861"))).toBe(false);
@@ -109,9 +109,10 @@ describe("the GitHub inbox as strands", () => {
   test("taking a pooled review makes it yours, and the next poll agrees", () => {
     const { core, sync, shown, strand, newId } = setup();
     sync({ reviews: [pr()] });
-    core.record("github", assignFacts(strand("widgets#1860"), newId));
-    expect(shown()).toContain("widgets#1860 you assigned to you");
-    expect(sync({ reviews: [pr({ assignees: [me] })] }).filter((fact) => fact.type.startsWith("move"))).toEqual([]);
+    core.record("github", assignFacts(strand("widgets#1860")));
+    expect(shown()).toContain("widgets#1860 you waiting for a reviewer");
+    expect(strand("widgets#1860").requests[0]).toMatchObject({ to: "you", claimedBy: "you" });
+    expect(sync({ reviews: [pr({ assignees: [me] })] }).filter((fact) => fact.type.startsWith("move") || fact.type === "said")).toEqual([]);
   });
 
   test("follows a review through changes requested, a push, and approval", () => {
@@ -125,12 +126,12 @@ describe("the GitHub inbox as strands", () => {
     expect(shown()).toBe("");
   });
 
-  test("closes your turn-ended moves when the review goes back to the author", () => {
+  test("leaves what komux asked open when the review goes back to the author", () => {
     const { core, sync, strand } = setup();
     sync({ reviews: [pr({ assignees: [me] })] });
     core.record("komux", [{ type: "move.opened", move: "turn", strand: strand("widgets#1860").id, player: "you", what: "turn ended" }]);
     sync({ reviews: [pr({ assignees: [me], reviews: [{ author: me, state: "CHANGES_REQUESTED", commit: "c1" }] })] });
-    expect(strand("widgets#1860").own.whose).toBe("person");
+    expect(strand("widgets#1860").open.map((move) => `${move.by.who}: ${move.what}`).sort()).toEqual(["alice: addressing your review", "you: turn ended"]);
   });
 
   test("finishes reviews someone else took or that closed, and the reviews strand once nothing waits", () => {
@@ -141,7 +142,7 @@ describe("the GitHub inbox as strands", () => {
     const done = core.knowledge().closed.map((strand) => [strand.name, strand.done !== undefined]);
     expect(done).toContainEqual(["reviews", true]);
     sync({ reviews: [pr({ number: 9, url: "https://github.com/acme/widgets/pull/9" })] });
-    expect(shown()).toBe(["reviews - 1 waiting", "  widgets#9 machine waiting for a reviewer"].join("\n"));
+    expect(shown()).toBe(["reviews - 1 waiting", "  widgets#9 person waiting for a reviewer"].join("\n"));
   });
 
   test("a review you marked done stays done until your review is asked for or the author pushes", () => {
@@ -204,7 +205,7 @@ describe("the GitHub inbox as strands", () => {
     sync({ reviews: [pr()] });
     core.forget(reviewsId);
     sync({ reviews: [pr()] });
-    expect(shown()).toBe(["reviews - 1 waiting", "  widgets#1860 machine waiting for a reviewer"].join("\n"));
+    expect(shown()).toBe(["reviews - 1 waiting", "  widgets#1860 person waiting for a reviewer"].join("\n"));
   });
 
   test("keeps its bookkeeping out of the links a strand shows and the log", () => {

@@ -242,7 +242,7 @@ export function reviewRows(snapshot: Snapshot, width: number, opened: Set<string
   const reviews = snapshot.strands.filter((strand) => strand.kind === "review" && strand.parent === reviewsId);
   const newest = (a: StrandView, b: StrandView) => b.made - a.made || b.name.localeCompare(a.name);
   const reviewLine = (strand: StrandView, standing: ReviewStanding) => {
-    const glyph = standing.yours ? { glyph: "●", paint: style.you } : strand.own.whose === "person" ? { glyph: "⊘", paint: style.wait } : { glyph: "○", paint: style.muted };
+    const glyph = standing.yours ? { glyph: "●", paint: style.you } : strand.own.whose === "person" && !isPooled(strand) ? { glyph: "⊘", paint: style.wait } : { glyph: "○", paint: style.muted };
     return row(ctx, { key: strand.id, strand, indent: 0, glyph: glyph.glyph, paint: glyph.paint, title: strand.title ?? strand.name, id: strand.name, why: standing.why, age: standingOf(strand, now).age, where: strand.spaces[0]?.short ?? "", bold: true });
   };
   const standings = new Map(reviews.map((strand) => [strand.id, reviewStanding(strand)]));

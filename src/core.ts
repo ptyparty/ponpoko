@@ -58,6 +58,7 @@ export type StrandView = Strand & {
   dir?: string;
   agent?: PlayerView;
   requests: RequestView[];
+  childPrLinks: Link[];
 };
 export type Ended = Pick<Strand, "id" | "name" | "title" | "parent" | "kind" | "blockedOn" | "done">;
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string>; ended?: Ended[] };
@@ -74,6 +75,7 @@ export type Knowledge = {
   roles?: Record<string, Record<string, string>>;
   activities?: Activity[];
   whose?: Record<string, Whose>;
+  parties?: string[];
   forgotten?: { name: string; parent?: string; by: string }[];
 };
 
@@ -176,6 +178,7 @@ export class Ponpoko {
         const whose = isLive(this.model, strand) ? own(this.model, strand).whose : undefined;
         return whose ? [[strand.id, whose]] : [];
       })),
+      parties: [...this.model.parties.keys()],
       forgotten: this.model.forgotten,
     };
   }
@@ -228,6 +231,8 @@ export class Ponpoko {
     };
     const itemView = (item: Item): MoveView => (item.request ? requestView(item.request, item) : item.move ? moveView(item.move) : activityView(item.activity!));
     const allMoves = [...this.model.moves.values()];
+    const linksBy = new Map<string, Link[]>();
+    for (const link of links) if (link.strand) linksBy.set(link.strand, [...(linksBy.get(link.strand) ?? []), link]);
     const requestsBy = new Map<string, Request[]>();
     for (const request of this.model.requests.values()) requestsBy.set(request.strand, [...(requestsBy.get(request.strand) ?? []), request]);
     const view = (strand: Strand, depth: number): StrandView => {
@@ -252,6 +257,7 @@ export class Ponpoko {
         spaces: spaces.filter((space) => space.strand === strand.id).map(({ label, short, handle }) => ({ label, short, ...(handle ? { handle } : {}) })),
         ...(dirs[0] ? { dir: dirs[0] } : {}),
         ...(this.model.roles.get(strand.id)?.agent && this.model.players.has(this.model.roles.get(strand.id)!.agent!) ? { agent: playerView(this.model.roles.get(strand.id)!.agent!) } : {}),
+        childPrLinks: children(this.model, strand.id).filter((child) => child.done === undefined && child.kind === "pr").flatMap((child) => (linksBy.get(child.id) ?? []).filter((link) => link.adapter === "github-pr-state")),
         requests: openRequests(this.model, strand.id).map((request): RequestView => {
           const to = addresseeOf(this.model, request);
           const claimed = request.progress ? (request.progress.by ? playerView(request.progress.by).who : "someone") : undefined;

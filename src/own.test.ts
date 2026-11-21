@@ -82,103 +82,117 @@ describe("your own pull request's state", () => {
   });
 });
 
-describe("your own pull requests as moves", () => {
-  test("link to a story strand by branch and follow its journey from draft to approved", () => {
+describe("your own pull requests as requests", () => {
+  test("each gets a strand of its own under the story its branch names, following its journey from draft to merged", () => {
     const { core, sync, strand, line } = setup();
     const story = core.add(undefined, "sc-52751");
     core.add(undefined, "sc-5275");
     sync([own({ draft: true, requested: [{ kind: "bot", login: "copilot-pull-request-reviewer" }] })]);
-    expect(strand("sc-52751").links.find((link) => link.adapter === "github")?.ref).toBe(url);
+    expect(strand("widgets#212")).toMatchObject({ id: "pr:acme/widgets#212", parent: story, title: "Partner Services section", kind: "pr" });
+    expect(strand("widgets#212").links.find((link) => link.adapter === "github")?.ref).toBe(url);
     expect(strand("sc-5275").links).toEqual([]);
-    expect(line("sc-52751")).toBe("machine Copilot · reviewing");
+    expect(line("widgets#212")).toBe("machine Copilot · reviewing");
     const comments = [1, 2, 3, 4].map(() => ({ author: "copilot-pull-request-reviewer", resolved: false }));
     sync([own({ draft: true, reviews: [copilot()], threads: comments })]);
-    expect(line("sc-52751")).toBe("you Copilot left 4 comments");
+    expect(line("widgets#212")).toBe("you Copilot left 4 comments");
+    expect(openableLink(strand("widgets#212"))?.ref).toBe(url);
     expect(openableLink(strand("sc-52751"))?.ref).toBe(url);
     sync([own({ reviews: [copilot()], threads: comments.map((thread) => ({ ...thread, resolved: true })) })]);
-    expect(line("sc-52751")).toBe("person the team · 0 of 1 reviews");
+    expect(line("widgets#212")).toBe("person team · 0 of 1 reviews");
+    expect(strand("sc-52751").rolled.tally).toBe("1 for team");
     sync([own({ reviews: [copilot(), sam("CHANGES_REQUESTED")], threads: [1, 2, 3].map(() => ({ author: "sam", resolved: false })) })]);
-    expect(line("sc-52751")).toBe("you sam requested changes · 3 threads");
+    expect(line("widgets#212")).toBe("you sam requested changes · 3 threads");
     sync([own({ head: "c2", reviews: [copilot(), sam("CHANGES_REQUESTED")] })]);
-    expect(line("sc-52751")).toBe("person sam · re-review");
+    expect(line("widgets#212")).toBe("person sam · re-review");
     sync([own({ head: "c2", reviews: [copilot(), sam("APPROVED", { commit: "c2" })] })]);
-    expect(line("sc-52751")).toBe("you approved by sam · merge it");
-    expect(ownPrs(strand("sc-52751"))).toEqual([{ url, repo: "acme/widgets", number: 212, title: "Partner Services section", branch: "sc-52751/partner-services", draft: false, state: "yours", what: "approved by sam · merge it", approved: true }]);
-    expect(hasOpenPr(core.knowledge(), story)).toBe(true);
+    expect(line("widgets#212")).toBe("you approved by sam · merge it");
+    expect(ownPrs(strand("widgets#212"))).toEqual([{ url, repo: "acme/widgets", number: 212, title: "Partner Services section", branch: "sc-52751/partner-services", draft: false, state: "yours", what: "approved by sam · merge it", approved: true }]);
+    expect(hasOpenPr(core.knowledge(), "pr:acme/widgets#212")).toBe(true);
     sync([]);
-    expect(hasOpenPr(core.knowledge(), story)).toBe(false);
-    expect(strand("sc-52751").open).toEqual([]);
-    expect(strand("sc-52751").done).toBeUndefined();
-    expect(ownPrs(strand("sc-52751"))[0]).toMatchObject({ state: "closed", what: "merged or closed" });
-    expect(core.knowledge().strands.some((candidate) => candidate.id === story)).toBe(true);
+    expect(hasOpenPr(core.knowledge(), "pr:acme/widgets#212")).toBe(false);
+    expect(core.snapshot().strands.map((candidate) => candidate.name)).toEqual(["sc-52751", "sc-5275"]);
+    expect([...core.model.requests.values()].filter((request) => !request.closed).map((request) => [request.strand, request.what])).toEqual([[story, "parts done: close it?"]]);
   });
 
-  test("only react when the state changes, leaving your own and agents' moves alone between", () => {
+  test("a story under way finds its PR through the branch checked out in its directory", () => {
+    const { core, sync, strand } = setup();
+    const story = core.add(undefined, "sc-1");
+    const facts = inboxFacts(core.knowledge(), { me, reviews: [], mentioned: [], mine: [own({ branch: "partner-services" })] }, (prefix) => `${prefix}x`, new Map([["partner-services", story]]));
+    core.record("github", facts);
+    expect(strand("widgets#212").parent).toBe(story);
+  });
+
+  test("only reacts when the state changes, and leaves what others asked alone", () => {
     const { core, sync, strand } = setup();
     const story = core.add(undefined, "sc-52751");
     sync([own()]);
-    core.record("komux", [{ type: "move.opened", move: "turn", strand: story, player: "you", what: "turn ended" }]);
-    expect(sync([own()])).toEqual([]);
-    expect(strand("sc-52751").own.whose).toBe("you");
-    sync([own({ reviews: [sam("CHANGES_REQUESTED")] })]);
-    sync([own({ head: "c2", reviews: [sam("CHANGES_REQUESTED")] })]);
-    expect(strand("sc-52751").own.whose).toBe("person");
-  });
-
-  test("a wait closes finished turns and an agent's Copilot wait, but not a Claude asking you", () => {
-    const { core, sync, strand } = setup();
-    const story = core.add(undefined, "sc-52751");
     core.record("komux", [{ type: "move.opened", move: "turn", strand: story, player: "you", what: "turn ended" }]);
     core.record("agent", [
-      { type: "move.opened", move: "live-test", strand: story, player: "you", what: "test the login flow in a browser" },
       { type: "player.joined", player: "machine:copilot", kind: "machine", who: "Copilot" },
       { type: "move.opened", move: "agent-wait", strand: story, player: "machine:copilot", what: "reviewing PR #212" },
-      { type: "player.joined", player: "person:merlin-reviewer", kind: "person", who: "merlin reviewer" },
-      { type: "move.opened", move: "named-wait", strand: story, player: "person:merlin-reviewer", what: "human review of widgets PR 212" },
-      { type: "move.opened", move: "other-wait", strand: story, player: "person:merlin-reviewer", what: "an answer about PR 2120" },
-      { type: "move.opened", move: "ask", strand: story, player: "you", what: "asking you" },
     ]);
-    sync([own()]);
-    expect(strand("sc-52751").open.map((move) => move.what).sort()).toEqual(["0 of 1 reviews", "an answer about PR 2120", "asking you", "test the login flow in a browser"]);
+    expect(sync([own()])).toEqual([]);
+    sync([own({ reviews: [sam("CHANGES_REQUESTED")] })]);
+    sync([own({ head: "c2", reviews: [sam("CHANGES_REQUESTED")] })]);
+    expect(strand("widgets#212").own.whose).toBe("person");
+    expect(strand("sc-52751").open.map((move) => move.what).sort()).toEqual(["reviewing PR #212", "turn ended"]);
   });
 
-  test("a PR an agent linked is watched even when its branch names no strand, and the bridge polls for it soon", async () => {
-    const { core, sync, line } = setup();
-    const strand = core.add(undefined, "ponpoko");
-    core.record("agent", [{ type: "link.added", link: "agent-link", strand, adapter: "github", ref: url, label: "widgets#212" }]);
+  test("a PR an agent linked goes under that strand even when its branch names none, and the bridge polls for it soon", async () => {
+    const { core, sync, line, strand } = setup();
+    const ponpoko = core.add(undefined, "ponpoko");
+    core.record("agent", [{ type: "link.added", link: "agent-link", strand: ponpoko, adapter: "github", ref: url, label: "widgets#212" }]);
     expect(unwatchedPrs(core.knowledge())).toEqual([url]);
     sync([own({ branch: "fix-things" })]);
-    expect(line("ponpoko")).toBe("person the team · 0 of 1 reviews");
+    expect(strand("widgets#212").parent).toBe(ponpoko);
+    expect(line("widgets#212")).toBe("person team · 0 of 1 reviews");
     expect(unwatchedPrs(core.knowledge())).toEqual([]);
   });
 
-  test("moves a PR's moves with its link when an agent links it to another strand", () => {
+  test("moves the PR's strand when an agent links it to another strand", () => {
     const { core, sync, strand } = setup();
     const story = core.add(undefined, "sc-52751");
     const tests = core.add(story, "tests");
     sync([own()]);
-    expect(strand("sc-52751").own.whose).toBe("person");
+    expect(strand("widgets#212").parent).toBe(story);
     core.record("agent", [{ type: "link.added", link: "moved", strand: tests, adapter: "github", ref: url, label: "widgets#212" }]);
     sync([own()]);
-    expect(strand("tests").own.whose).toBe("person");
-    expect(strand("sc-52751").open).toEqual([]);
-    expect(ownPrs(strand("sc-52751"))).toEqual([]);
-    expect(ownPrs(strand("tests"))).toHaveLength(1);
+    expect(strand("widgets#212").parent).toBe(tests);
     expect(sync([own()])).toEqual([]);
   });
 
-  test("leaves PRs alone whose branch matches no story, or more than one", () => {
-    const { core, sync } = setup();
+  test("a PR whose branch names no story, or more than one, goes at the top", () => {
+    const { core, sync, strand } = setup();
     core.add(undefined, "ponpoko");
-    expect(sync([own({ branch: "ponpoko/fix" })])).toEqual([]);
+    sync([own({ branch: "ponpoko/fix", title: "Fix things" })]);
+    expect(strand("widgets#212").parent).toBeUndefined();
   });
 
-  test("doesn't end a PR's moves when the search may have been cut short", () => {
+  test("a PR strand you finish or forget stays that way while the PR is open, and comes back if GitHub reopens it", () => {
+    const { core, sync, strand } = setup();
+    core.add(undefined, "sc-52751");
+    sync([own()]);
+    core.done("pr:acme/widgets#212");
+    expect(sync([own()])).toEqual([]);
+    sync([own({ number: 9, url: "https://github.com/acme/widgets/pull/9", branch: "sc-52751/more" })]);
+    core.forget("pr:acme/widgets#9");
+    sync([own({ number: 9, url: "https://github.com/acme/widgets/pull/9", branch: "sc-52751/more" })]);
+    expect(core.snapshot().strands.map((candidate) => candidate.name)).toEqual(["sc-52751"]);
+    const reopened = setup();
+    reopened.core.add(undefined, "sc-52751");
+    reopened.sync([own()]);
+    reopened.sync([]);
+    reopened.sync([own()]);
+    expect(reopened.strand("widgets#212").own.whose).toBe("person");
+    expect(strand("sc-52751")).toBeDefined();
+  });
+
+  test("doesn't end a PR when the search may have been cut short", () => {
     const { core, sync, strand } = setup();
     core.add(undefined, "sc-52751");
     sync([own()]);
     sync([], { complete: { reviews: true, mentioned: true, mine: false } });
-    expect(strand("sc-52751").own.whose).toBe("person");
+    expect(strand("widgets#212").own.whose).toBe("person");
   });
 });
 
@@ -299,8 +313,7 @@ describe("marking a draft ready", () => {
     await reviews.key({ name: "j" });
     expect(reviews.current()?.pr?.url).toBe(other);
     await reviews.key({ name: "R" });
-    const id = strand("sc-52751").id;
-    expect(done.filter((call) => call[0] === "ready")).toEqual([["ready", id, other], ["ready", id, other]]);
+    expect(done.filter((call) => call[0] === "ready")).toEqual([["ready", strand("sc-52751").id, other], ["ready", "pr:acme/gadgets#9", other]]);
   });
 });
 

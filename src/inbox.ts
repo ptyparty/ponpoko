@@ -1,9 +1,8 @@
 import { slug, type Knowledge } from "./core.ts";
-import type { Fact } from "./events.ts";
+import type { Fact, To } from "./events.ts";
 import { ownState, pendingMentions, prName, prRef, reviewState, samePr, theTeam, type Inbox, type OwnPr } from "./github.ts";
 import { isBookkeeping, you } from "./model.ts";
 import { storyNumber } from "./shortcut.ts";
-import { isFinishedTurn } from "./komux/translate.ts";
 
 export const source = "github";
 export const githubPlayer = "github";
@@ -13,8 +12,10 @@ export const prAdapter = "github";
 export const stateAdapter = "github-state";
 export const ownStateAdapter = "github-pr-state";
 export const repoAdapter = "github-repo-state";
+export const team = "group:team";
+export const copilot = "service:copilot";
 
-type Desired = { player: string; who?: string; what: string; with?: { id: string; who: string }; link?: { ref: string; label: string } };
+type Desired = { to: To; who?: string; what: string; kind: string; from?: { id: string; who: string }; link?: { ref: string; label: string } };
 type Want = { id: string; parent: string; kind: "review" | "mention"; name: string; title: string; url: string; key: string; wanted: boolean; desired?: Desired; done?: string; public?: boolean };
 
 const tops = {
@@ -38,10 +39,30 @@ export function personId(login: string): string {
   return `person:${slug(login)}`;
 }
 
+export function prStrandId(pr: { repo: string; number: number }): string {
+  return `pr:${pr.repo}#${pr.number}`;
+}
+
+export type Checkouts = Map<string, string>;
+
 export { isBookkeeping };
 
-export function inboxFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string): Fact[] {
-  return [...new Reconciler(knowledge, newId, inbox.complete ?? { reviews: true, mentioned: true }).run([...reviewWants(inbox), ...mentionWants(inbox)]), ...ownFacts(knowledge, inbox, newId)];
+export function inboxFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string, checkouts: Checkouts = new Map()): Fact[] {
+  return [...new Reconciler(knowledge, newId, inbox.complete ?? { reviews: true, mentioned: true }).run([...reviewWants(inbox), ...mentionWants(inbox)]), ...ownFacts(knowledge, inbox, newId, checkouts)];
+}
+
+function githubRequests(knowledge: Knowledge, strand: string) {
+  return (knowledge.requests ?? []).filter((request) => request.strand === strand && request.source === source);
+}
+
+function answer(knowledge: Knowledge, strand: string, as: "done" | "withdrawn" = "done"): Fact[] {
+  const open = githubRequests(knowledge, strand);
+  return open.length > 0 ? [{ type: "said", requests: [], replies: open.map((request) => ({ request: request.id, as })) }] : [];
+}
+
+function party(knowledge: Knowledge, id: string, kind: "person" | "group" | "service", name: string, facts: Fact[]): void {
+  if (id === you || (knowledge.parties ?? []).includes(id) || facts.some((fact) => fact.type === "party.known" && fact.party === id)) return;
+  facts.push({ type: "party.known", party: id, kind, name });
 }
 
 export type OwnPrView = { url: string; repo: string; number: number; title: string; branch: string; draft: boolean; state: "waiting" | "yours" | "draft" | "closed"; who?: string; what: string; approved?: true };
@@ -54,6 +75,10 @@ export function ownPrs(strand: { links: { adapter: string; ref: string; at: numb
   const views = readOwnPrs(strand.links);
   parsedPrs.set(strand.links, views);
   return views;
+}
+
+export function prsOn(strand: { links: { adapter: string; ref: string; at: number }[]; childPrLinks?: { strand?: string; adapter: string; ref: string; at: number }[] }): OwnPrView[] {
+  return [...ownPrs(strand), ...readOwnPrs(strand.childPrLinks ?? [])];
 }
 
 function readOwnPrs(links: { adapter: string; ref: string; at: number }[]): OwnPrView[] {
@@ -131,15 +156,13 @@ export function branchStrand(knowledge: Knowledge, branch: string): string | und
 }
 
 
-function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string): Fact[] {
+function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) => string, checkouts: Checkouts): Fact[] {
   if (!inbox.mine) return [];
   const facts: Fact[] = [];
-  const live = new Set(knowledge.strands.map((strand) => strand.id));
-  const players = new Map(knowledge.players.map((player) => [player.id, player]));
-  const prLinks = knowledge.links.filter((link) => link.adapter === prAdapter && link.strand && live.has(link.strand) && !link.strand.startsWith("github:"));
+  const live = new Map(knowledge.strands.map((strand) => [strand.id, strand]));
+  const closed = new Map(knowledge.closed.map((strand) => [strand.id, strand]));
+  const prLinks = knowledge.links.filter((link) => link.adapter === prAdapter && link.strand && live.has(link.strand) && !link.strand.startsWith("github:") && !link.strand.startsWith("pr:"));
   const stateLinks = knowledge.links.filter((link) => link.adapter === ownStateAdapter && link.strand && live.has(link.strand));
-  const ours = (strand: string, url: string) =>
-    knowledge.open.filter((move) => move.strand === strand && move.source === source && knowledge.links.some((link) => link.move === move.id && link.adapter === prAdapter && samePr(link.ref, url)));
   const currentStates = new Map(latestPrStates(stateLinks).map((entry) => [entry.key, entry.link]));
   const stateOf = (strand: string, url: string) => currentStates.get(stateKey(strand, url));
   const setState = (strand: string, current: Knowledge["links"][number] | undefined, view: OwnPrView) => {
@@ -148,41 +171,33 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
     if (current) facts.push({ type: "link.removed", link: current.id });
     facts.push({ type: "link.added", link: newId("l"), strand, adapter: ownStateAdapter, ref });
   };
-  const join = (player: string, kind: "person" | "machine", who: string) => {
-    if (players.has(player)) return;
-    players.set(player, { id: player, kind, who, joined: 0 });
-    facts.push({ type: "player.joined", player, kind, who, adapter: source });
-  };
+  const explicit = (pr: OwnPr) => prLinks.filter((link) => samePr(link.ref, pr.url)).sort((a, b) => a.at - b.at).at(-1)?.strand;
+  const storyOf = (pr: OwnPr): string | undefined => explicit(pr) ?? checkouts.get(pr.branch) ?? branchStrand(knowledge, pr.branch) ?? branchStrand(knowledge, pr.title);
   const react = (strand: string, pr: OwnPr, view: OwnPrView) => {
-    for (const move of ours(strand, pr.url)) facts.push({ type: "move.closed", move: move.id });
+    facts.push(...answer(knowledge, strand));
     if (view.state === "draft" || view.state === "closed") return;
-    const player = view.state === "yours" ? you : view.who === "Copilot" ? "machine:copilot" : personId(view.who!);
-    for (const move of knowledge.open) {
-      if (move.strand !== strand || move.source === source) continue;
-      const kind = players.get(move.player)?.kind;
-      const aboutPr = new RegExp(`(#|\\bPR\\s*#?)${pr.number}\\b`, "i").test(move.what);
-      const reviewerWait = (kind === "person" || kind === "machine") && (aboutPr || move.player === player || move.player === "machine:copilot" || move.player === personId(theTeam));
-      const turnOver = view.state === "waiting" && move.player === you && move.source !== "agent" && isFinishedTurn(move);
-      if (reviewerWait || turnOver) facts.push({ type: "move.closed", move: move.id });
-    }
-    if (view.state === "waiting") join(player, view.who === "Copilot" ? "machine" : "person", view.who!);
-    const move = newId("m");
-    facts.push({ type: "move.opened", move, strand, player, what: view.what });
-    facts.push({ type: "link.added", link: newId("l"), move, adapter: prAdapter, ref: pr.url, label: prName(pr.repo, pr.number) });
+    const to = view.state === "yours" ? ({ role: "owner", strand } as To) : reviewer(knowledge, view.who!, facts);
+    const request = newId("r");
+    facts.push({ type: "said", requests: [{ request, strand, to, what: view.what, kind: view.state === "yours" ? "pr" : "review", ref: pr.url }], replies: [] });
   };
+  const lastState = (strand: string) => latestPrStates(knowledge.links.filter((link) => link.strand === strand))[0]?.view;
+  const forgotten = new Set((knowledge.forgotten ?? []).map((entry) => entry.name));
   const seen = new Set<string>();
   for (const pr of inbox.mine) {
     seen.add(prKey(pr.url));
-    let strand = prLinks.filter((link) => samePr(link.ref, pr.url)).sort((a, b) => a.at - b.at).at(-1)?.strand;
-    if (!strand) {
-      strand = branchStrand(knowledge, pr.branch);
-      if (!strand) continue;
+    const strand = prStrandId(pr);
+    const story = storyOf(pr);
+    if (closed.has(strand)) {
+      if (lastState(strand)?.state !== "closed") continue;
+      facts.push({ type: "strand.reopened", strand });
+      for (const link of knowledge.links.filter((candidate) => candidate.strand === strand && candidate.adapter === ownStateAdapter)) facts.push({ type: "link.removed", link: link.id });
+    } else if (!live.has(strand)) {
+      if (forgotten.has(prName(pr.repo, pr.number))) continue;
+      facts.push({ type: "strand.made", strand, name: prName(pr.repo, pr.number), ...(story ? { parent: story } : {}), kind: "pr" });
       facts.push({ type: "link.added", link: newId("l"), strand, adapter: prAdapter, ref: pr.url, label: prName(pr.repo, pr.number) });
-    }
-    for (const stale of stateLinks.filter((link) => link.strand !== strand && samePr(readOwnPrView(link.ref)?.url ?? "", pr.url))) {
-      facts.push({ type: "link.removed", link: stale.id });
-      for (const move of ours(stale.strand!, pr.url)) facts.push({ type: "move.closed", move: move.id });
-    }
+      facts.push({ type: "strand.role", strand, role: "owner", by: you });
+    } else if (story && live.get(strand)!.parent !== story && (live.get(strand)!.parent === undefined || explicit(pr) === story)) facts.push({ type: "strand.parented", strand, parent: story });
+    if (live.get(strand)?.title !== pr.title) facts.push({ type: "strand.titled", strand, kind: "pr", title: pr.title });
     const state = ownState(pr);
     const view: OwnPrView = { url: pr.url, repo: pr.repo, number: pr.number, title: pr.title, branch: pr.branch, draft: pr.draft, state: state.kind, ...(state.kind === "waiting" ? { who: state.who } : {}), what: state.what, ...(state.kind === "yours" && state.approved ? { approved: true as const } : {}) };
     const current = stateOf(strand, pr.url);
@@ -199,9 +214,23 @@ function ownFacts(knowledge: Knowledge, inbox: Inbox, newId: (prefix: string) =>
     delete view.approved;
     delete view.who;
     setState(link.strand!, link, view);
-    for (const move of ours(link.strand!, before.url)) facts.push({ type: "move.closed", move: move.id });
+    facts.push(...answer(knowledge, link.strand!));
+    if (link.strand!.startsWith("pr:")) facts.push({ type: "strand.done", strand: link.strand!, why: "merged or closed" });
   }
   return facts;
+}
+
+function reviewer(knowledge: Knowledge, who: string, facts: Fact[]): To {
+  if (who === "Copilot") {
+    party(knowledge, copilot, "service", "Copilot", facts);
+    return { service: copilot };
+  }
+  if (who === theTeam) {
+    party(knowledge, team, "group", "team", facts);
+    return { group: team };
+  }
+  party(knowledge, personId(who), "person", who, facts);
+  return { person: personId(who) };
 }
 
 function reviewWants(inbox: Inbox): Want[] {
@@ -212,11 +241,11 @@ function reviewWants(inbox: Inbox): Want[] {
       case "gone":
         return { ...base, done: state.why };
       case "pool":
-        return { ...base, desired: { player: githubPlayer, who: "GitHub", what: state.why } };
+        return { ...base, desired: { to: { group: team }, who: "team", what: state.why, kind: "review" } };
       case "yours":
-        return { ...base, desired: { player: you, what: state.why } };
+        return { ...base, desired: { to: { person: you }, what: state.why, kind: "review" } };
       case "author":
-        return { ...base, desired: { player: personId(state.author), who: state.author, what: state.why } };
+        return { ...base, desired: { to: { person: personId(state.author) }, who: state.author, what: state.why, kind: "review" } };
     }
   });
 }
@@ -229,18 +258,19 @@ function mentionWants(inbox: Inbox): Want[] {
     if (!latest) return { ...base, done: "you answered" };
     const others = new Set(pending.map((mention) => mention.author.toLowerCase())).size - 1;
     const what = others > 0 ? `mentioned you, as did ${others} more` : "mentioned you";
-    return { ...base, desired: { player: you, with: { id: personId(latest.author), who: latest.author }, what, link: { ref: latest.url, label: "the mention" } } };
+    return { ...base, desired: { to: { person: you }, from: { id: personId(latest.author), who: latest.author }, what, kind: "mention", link: { ref: latest.url, label: "the mention" } } };
   });
 }
 
 export function isPooled(strand: { kind?: string; open: { player: string; source: string }[] }): boolean {
-  return strand.kind === "review" && strand.open.some((move) => move.player === githubPlayer && move.source === source);
+  return strand.kind === "review" && strand.open.some((move) => (move.player === githubPlayer || move.player === team) && move.source === source);
 }
 
-export function assignFacts(strand: { id: string; open: { id: string; player: string; source: string }[] }, newId: (prefix: string) => string): Fact[] {
+export function assignFacts(strand: { id: string; open: { id: string; player: string; source: string; kind?: string }[]; requests?: { id: string; source: string }[] }): Fact[] {
+  const asked = (strand.requests ?? []).filter((request) => request.source === source);
   return [
-    ...strand.open.filter((move) => move.source === source).map((move): Fact => ({ type: "move.closed", move: move.id })),
-    { type: "move.opened", move: newId("m"), strand: strand.id, player: you, what: "assigned to you" },
+    ...strand.open.filter((move) => move.source === source && !asked.some((request) => request.id === move.id)).map((move): Fact => ({ type: "move.closed", move: move.id })),
+    ...(asked.length > 0 ? [{ type: "said" as const, requests: [], replies: asked.map((request) => ({ request: request.id, as: "progress" as const, by: you })) }] : []),
   ];
 }
 
@@ -253,7 +283,6 @@ class Reconciler {
   private readonly facts: Fact[] = [];
   private readonly live: Map<string, Knowledge["strands"][number]>;
   private readonly closed: Map<string, Knowledge["closed"][number]>;
-  private readonly players: Set<string>;
 
   constructor(
     private readonly knowledge: Knowledge,
@@ -262,7 +291,6 @@ class Reconciler {
   ) {
     this.live = new Map(knowledge.strands.map((strand) => [strand.id, strand]));
     this.closed = new Map(knowledge.closed.map((strand) => [strand.id, strand]));
-    this.players = new Set(knowledge.players.map((player) => player.id));
   }
 
   run(wants: Want[]): Fact[] {
@@ -321,27 +349,23 @@ class Reconciler {
   }
 
   private move(strand: string, desired: Desired): void {
-    const open = this.knowledge.open.filter((move) => move.strand === strand && move.until === undefined);
-    const ours = open.filter((move) => move.source === source);
-    const same = (move: (typeof open)[number]) => move.player === desired.player && move.what === desired.what && (move.with ?? undefined) === desired.with?.id;
-    if (ours.length === 1 && same(ours[0]!)) return;
-    for (const move of ours) this.facts.push({ type: "move.closed", move: move.id });
-    if (desired.player !== you) for (const move of open) if (move.player === you && move.source !== source) this.facts.push({ type: "move.closed", move: move.id });
-    this.join(desired.player, desired.player === githubPlayer ? "machine" : "person", desired.who);
-    if (desired.with) this.join(desired.with.id, "person", desired.with.who);
-    const id = this.newId("m");
-    this.facts.push({ type: "move.opened", move: id, strand, player: desired.player, ...(desired.with ? { with: desired.with.id } : {}), what: desired.what });
+    const open = githubRequests(this.knowledge, strand);
+    const key = JSON.stringify(desired.to);
+    const taken = (request: (typeof open)[number]) => request.progress?.by === you && "group" in request.to && "person" in desired.to && desired.to.person === you;
+    const same = (request: (typeof open)[number]) => taken(request) || (request.what === desired.what && JSON.stringify(request.to) === key && request.from === desired.from?.id);
+    if (open.length === 1 && same(open[0]!)) return;
+    this.closeOurs(strand);
+    if ("group" in desired.to) party(this.knowledge, desired.to.group, "group", desired.who ?? desired.to.group, this.facts);
+    if ("person" in desired.to && desired.to.person !== you) party(this.knowledge, desired.to.person, "person", desired.who ?? desired.to.person, this.facts);
+    if (desired.from) party(this.knowledge, desired.from.id, "person", desired.from.who, this.facts);
+    const id = this.newId("r");
+    this.facts.push({ type: "said", requests: [{ request: id, strand, to: desired.to, what: desired.what, kind: desired.kind, ...(desired.from ? { from: desired.from.id } : {}) }], replies: [] });
     if (desired.link) this.facts.push({ type: "link.added", link: this.newId("l"), move: id, adapter: prAdapter, ref: desired.link.ref, label: desired.link.label });
-  }
-
-  private join(player: string, kind: "machine" | "person", who: string | undefined): void {
-    if (player === you || this.players.has(player) || !who) return;
-    this.players.add(player);
-    this.facts.push({ type: "player.joined", player, kind, who, adapter: source });
   }
 
   private closeOurs(strand: string): void {
     for (const move of this.knowledge.open) if (move.strand === strand && move.until === undefined && move.source === source) this.facts.push({ type: "move.closed", move: move.id });
+    this.facts.push(...answer(this.knowledge, strand));
   }
 
   private stateLink(strand: string): Knowledge["links"][number] | undefined {

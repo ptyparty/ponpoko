@@ -5,7 +5,8 @@ import { ensurePrivateDir, runtimeDir } from "../paths.ts";
 import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
 import { fetchInbox, type Inbox } from "../github.ts";
-import { hasOpenPr, inboxFacts, isReviewId, prLinkIds, source as githubSource, unwatchedPrs } from "../inbox.ts";
+import { hasOpenPr, inboxFacts, isReviewId, prLinkIds, source as githubSource, unwatchedPrs, type Checkouts } from "../inbox.ts";
+import { checkouts } from "../worktrees.ts";
 import { savePool, type Pool } from "../unreviewed.ts";
 import { epicStories, shortcutTitle, storyNumber, type EpicLookup, type EpicStory, type TitleLookup } from "../shortcut.ts";
 import { epicsToImport } from "../epics.ts";
@@ -55,6 +56,7 @@ export class Bridge {
     private readonly newId: (prefix: string) => string = (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`,
     private readonly keepPool: (pool: Pool) => void = () => undefined,
     private readonly lookupEpic: EpicLookup = epicStories,
+    private readonly readCheckouts: (knowledge: Knowledge) => Promise<Checkouts> = checkouts,
   ) {}
 
   async pollInbox(inTurn: <T>(work: () => Promise<T>) => Promise<T> = (work) => work()): Promise<boolean> {
@@ -64,10 +66,12 @@ export class Bridge {
     this.inboxDue = Number.POSITIVE_INFINITY;
     try {
       const inbox = await this.lookupInbox();
+      this.cached = undefined;
+      const found = await this.readCheckouts(await this.knowledge());
       if (inbox.unreviewed) this.keepPool({ at: this.now(), complete: inbox.complete?.pool ?? true, prs: inbox.unreviewed });
       const recorded = await inTurn(async () => {
         this.cached = undefined;
-        const facts = inboxFacts(await this.knowledge(), inbox, this.newId);
+        const facts = inboxFacts(await this.knowledge(), inbox, this.newId, found);
         if (facts.length === 0) return false;
         await this.service.record(facts, githubSource);
         this.cached = undefined;
@@ -348,8 +352,10 @@ function whoseNow(model: Known, strand: Knowledge["strands"][number]): "you" | "
 
 function touchesReview(facts: Fact[], knowledge: Knowledge): boolean {
   const parents = new Map(knowledge.strands.map((strand) => [strand.id, strand.parent]));
+  const prChildren = new Map<string, string[]>();
+  for (const strand of knowledge.strands) if (strand.kind === "pr" && strand.parent) prChildren.set(strand.parent, [...(prChildren.get(strand.parent) ?? []), strand.id]);
   const underReview = (strand: string | undefined) => {
-    for (let at = strand, steps = 0; at !== undefined && steps < 50; at = parents.get(at), steps++) if (isReviewId(at) || hasOpenPr(knowledge, at)) return true;
+    for (let at = strand, steps = 0; at !== undefined && steps < 50; at = parents.get(at), steps++) if (isReviewId(at) || hasOpenPr(knowledge, at) || (prChildren.get(at) ?? []).some((child) => hasOpenPr(knowledge, child))) return true;
     return false;
   };
   return facts.some((fact) => {

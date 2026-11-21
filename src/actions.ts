@@ -6,7 +6,7 @@ import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux
 import { age } from "./render.ts";
 import { dormant, type Link } from "./model.ts";
 import { assignMe, markReady, prName, prRef, samePr, type Gh } from "./github.ts";
-import { assignFacts, isBookkeeping, mentionLink, ownPrs, prAdapter, source as githubSource, type OwnPrView } from "./inbox.ts";
+import { assignFacts, isBookkeeping, mentionLink, ownPrs, prAdapter, prsOn, source as githubSource, type OwnPrView } from "./inbox.ts";
 import { showTour, strandTour } from "./remax.ts";
 import { parseWhen, whenLabel } from "./when.ts";
 
@@ -33,7 +33,7 @@ export type Actions = {
 };
 
 export function draftsOf(strand: StrandView): OwnPrView[] {
-  return ownPrs(strand).filter((pr) => pr.draft && pr.state !== "closed");
+  return prsOn(strand).filter((pr) => pr.draft && pr.state !== "closed");
 }
 
 export async function readyDrafts(strand: StrandView, gh?: Gh, url?: string): Promise<string> {
@@ -48,6 +48,11 @@ const openable = new Set(["remax", prAdapter, "quoll", "shortcut"]);
 export function openableLink(strand: StrandView): Link | undefined {
   const moveLinks = strand.recent.flatMap((move) => move.links);
   const prs = ownPrs(strand).filter((pr) => pr.state !== "closed");
+  const childPrs = prsOn(strand).filter((pr) => pr.state !== "closed");
+  if (prs.length === 0 && childPrs.length > 0) {
+    const own = [...moveLinks, ...strand.links].filter((candidate) => openable.has(candidate.adapter) && candidate.adapter !== prAdapter && !isBookkeeping(candidate)).sort((a, b) => a.at - b.at).at(-1);
+    return own ?? { id: childPrs[0]!.url, adapter: prAdapter, ref: childPrs[0]!.url, at: 0 };
+  }
   if (prs.length > 0) {
     const pr = [...moveLinks].sort((a, b) => a.at - b.at).reverse().find((link) => link.adapter === prAdapter && prs.some((own) => samePr(own.url, link.ref)));
     return pr ?? strand.links.find((link) => link.adapter === prAdapter && prs.some((own) => samePr(own.url, link.ref)));
@@ -77,7 +82,7 @@ export const serviceActions: Actions = {
     const link = strand.links.find((candidate) => candidate.adapter === prAdapter && prRef(candidate.ref));
     if (!link) throw new Error("this strand doesn't link to a pull request");
     await assignMe(link.ref);
-    await ask({ method: "record", params: { source: githubSource, facts: assignFacts(strand, (prefix) => `${prefix}-${crypto.randomUUID().slice(0, 12)}`) } });
+    await ask({ method: "record", params: { source: githubSource, facts: assignFacts(strand) } });
   },
   pickUp: (strand, how) => pickUpInKomux(strand, how),
   forget: (strand) => ask({ method: "forget", params: { strand } }),
