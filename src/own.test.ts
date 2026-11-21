@@ -251,6 +251,7 @@ describe("marking a draft ready", () => {
     const { core, sync } = setup();
     core.add(undefined, "sc-52751");
     core.add(undefined, "sc-1");
+    core.wait({ strand: "sc-52751", who: "you", kind: "you", what: "finish the draft" }, "you");
     sync([own({ draft: true })]);
     const { actions, calls } = recordingActions();
     const tab = new TabController(actions, () => 0);

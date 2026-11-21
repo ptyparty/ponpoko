@@ -1,8 +1,8 @@
 import type { MoveView, Snapshot, StrandView } from "./core.ts";
-import type { Recorded } from "./events.ts";
+import type { Recorded, To } from "./events.ts";
 import { prName } from "./github.ts";
 import { ownPrs } from "./inbox.ts";
-import { asking, ready, yourMoves } from "./komux/translate.ts";
+import { asking, readReply, ready, yourMoves } from "./komux/translate.ts";
 import { cells, style, type Part } from "./screen.ts";
 import { dormant } from "./model.ts";
 import { whenLabel } from "./when.ts";
@@ -94,7 +94,7 @@ export function moveKind(strand: StrandView): MoveKind {
 }
 
 function replied(who: string, what: string): string {
-  if (what === yourMoves.done) return `${who} replied`;
+  if (what === yourMoves.done || what === readReply) return `${who} replied`;
   if (what === asking) return `${who} asks you`;
   if (what === yourMoves.waiting) return `${who} is waiting on you`;
   if (what === yourMoves.failed) return `${who}'s turn failed`;
@@ -297,7 +297,29 @@ export function describe(event: Recorded, labels: Record<string, string>): strin
       return `${name(event.strand ?? event.move)} linked to ${event.adapter} ${event.ref}`;
     case "link.removed":
       return "link removed";
+    case "party.known":
+      return `${event.name} known`;
+    case "party.merged":
+      return `${name(event.party)} is ${name(event.into)}`;
+    case "strand.role":
+      return event.by ? `${name(event.by)} is ${event.role} of ${name(event.strand)}` : `${name(event.strand)} has no ${event.role}`;
+    case "said":
+      return [
+        ...event.requests.map((asked) => `${name(asked.strand)} → ${toLabel(asked.to, name)}: ${asked.what}`),
+        ...event.replies.map((said) => `${name(said.request)} ${said.as === "passed" && said.to ? `passed to ${toLabel(said.to, name)}` : said.as}${said.what ? `: ${said.what}` : ""}`),
+      ].join("; ");
+    case "handed":
+      return `${event.requests.map(name).join(", ")} handed to ${name(event.player)}`;
+    case "player.activity":
+      return event.activity === "idle" ? `${name(event.player)} idle` : `${name(event.player)} ${event.what ?? event.activity} on ${name(event.strand)}`;
   }
+}
+
+function toLabel(to: To, name: (id: string | undefined) => string): string {
+  if ("person" in to) return name(to.person);
+  if ("group" in to) return name(to.group);
+  if ("service" in to) return name(to.service);
+  return `${to.role} of ${name(to.strand)}`;
 }
 
 export function wrap(text: string, width: number, most = 4): string[] {

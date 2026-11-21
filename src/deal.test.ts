@@ -5,9 +5,9 @@ import { inboxFacts } from "./inbox.ts";
 import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
 async function setup(unseen = false) {
-  const { core, hear, tick, now } = harness();
+  const { core, hear, replied, tick, now } = harness();
   await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }], agents: [], jobs: [] });
-  await hear({ type: "agent.state", agent: { paneId: 3, tabId: 1, state: "done" } });
+  await replied(3, 1);
   tick(60_000);
   await hear({ type: "agent.state", agent: { paneId: 4, tabId: 2, state: "waiting" } });
   tick(60_000);
@@ -29,7 +29,7 @@ describe("the deck", () => {
     await dealer.key({ name: "j" });
     const card = plain(dealer.view());
     expect(card).toContain("▎ sc-1  Widget CSV import");
-    expect(card).toContain("● claude · turn ended  ·  2m");
+    expect(card).toContain("● claude · read reply  ·  2m");
     expect(card).toContain("⏎  go to claude in tab 1 widgets");
     expect(await dealer.key({ name: "return" })).toBe("close");
     expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
@@ -51,47 +51,45 @@ describe("the deck", () => {
     const { actions, calls } = recordingActions();
     const dealer = new Dealer(actions, false, now);
     dealer.setSnapshot(core.snapshot());
-    expect(plain(dealer.view(160, 80))).toContain("▸ 2 waiting on other strands     ▸ 1 snoozed");
+    expect(plain(dealer.view(160, 80))).toContain("▸ 2 waiting on other strands     ▸ 1 nothing asked     ▸ 1 snoozed");
     await dealer.key({ name: "tab" });
     for (let step = 0; step < 10 && dealer.card(); step++) await dealer.key({ name: "j" });
     await dealer.key({ name: "return" });
-    await dealer.key({ name: "j" });
-    await dealer.key({ name: "j" });
-    await dealer.key({ name: "j" });
-    await dealer.key({ name: " ", text: " " });
+    for (const _ of [1, 2, 3]) await dealer.key({ name: "j" });
+    await dealer.key({ name: "return" });
+    for (const _ of [1, 2]) await dealer.key({ name: "j" });
+    await dealer.key({ name: "return" });
     const view = plain(dealer.view(160, 80));
     for (const strand of core.snapshot().strands) expect(view).toContain(strand.name);
     expect(view).toContain("▾ 2 waiting on other strands");
+    expect(view).toContain("▾ 1 nothing asked");
     expect(view).toMatch(/◷ ask Sam +snoozed till/);
-    expect(view).toMatch(/○ sc-2 +waiting on gadgets …/);
     expect(calls).toEqual([]);
     core.done(strandNamed(core, "sc-1 › sc-3").id);
+    core.done(strandNamed(core, "sc-1 › sc-2").id);
     dealer.setSnapshot(core.snapshot());
-    expect(plain(dealer.view(160, 80))).toContain("sc-3 is done");
+    expect(plain(dealer.view(160, 80))).toMatch(/1 ● sc-1 +parts done: close it?/);
     await dealer.key({ name: "1" });
     expect(dealer.card()?.name).toBe("sc-1");
     await dealer.key({ name: "return" });
-    expect(calls).toEqual([
-      ["go", strandNamed(core, "sc-1").id],
-      ["seen", strandNamed(core, "sc-1").id],
-    ]);
+    expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
   });
 
   test("groups your moves by what you'll do, newest first in each: read what Claude said, review, pick up", async () => {
-    const { core, hear, tick, now } = harness();
+    const { core, hear, replied, tick, now } = harness();
     const tabs = ["a", "b", "c", "d"].map((name, index) => ({ id: index + 1, number: index + 1, name, dir: `/w/${name}`, labels: { strand: `claude in ${name}` } }));
     await hear({ type: "snapshot", tabs, agents: [], jobs: [] });
-    await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
-    await hear({ type: "agent.state", agent: { paneId: 4, tabId: 4, state: "done" } });
+    await replied(1, 1);
+    await replied(4, 4);
     tick(60_000);
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "done" } });
+    await replied(2, 2);
     await hear({ type: "agent.state", agent: { paneId: 4, tabId: 4, state: "idle" } });
     tick(60_000);
     await hear({ type: "agent.state", agent: { paneId: 3, tabId: 3, state: "waiting" } });
     tick(60_000);
     const dealer = new Dealer(recordingActions().actions, false, now);
     dealer.setSnapshot(core.snapshot());
-    core.add(undefined, "sc-10");
+    core.wait({ strand: "› sc-10", who: "you", kind: "you", what: "pick it up" }, "you");
     core.add(undefined, "sc-9");
     core.split({ strand: "sc-9" }, [{ name: "review gadgets", title: "Review the gadget cache", tour: { repo: "/w/gadgets", name: "cache" } }]);
     dealer.setSnapshot(core.snapshot());
@@ -109,13 +107,13 @@ describe("the deck", () => {
     ]);
     expect(deck).toMatch(/1 ● claude in c +claude is waiting on you/);
     expect(deck).toMatch(/5 ● Review the gadget cache +· review gadgets +tour ready/);
-    expect(deck).toMatch(/6 ● sc-10 +no one on it/);
+    expect(deck).toMatch(/6 ● sc-10 +pick it up/);
   });
 
   test("lists agents at work, what waits on people and machines, and snoozed strands folded, and goes to any of them", async () => {
-    const { core, hear, tick, now } = harness();
+    const { core, hear, replied, tick, now } = harness();
     await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "claude in widgets" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }], agents: [], jobs: [] });
-    await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
+    await replied(1, 1);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "working" } });
     core.wait({ strand: "sc-7", who: "Copilot", kind: "machine", what: "PR review" }, "you");
     core.add(undefined, "sc-8");
@@ -134,10 +132,10 @@ describe("the deck", () => {
   });
 
   test("puts yours on the left and everyone else's on the right when the popup is wide, and moves between them", async () => {
-    const { core, hear, tick, now } = harness();
+    const { core, hear, replied, tick, now } = harness();
     await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "claude in widgets" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }, { id: 3, number: 3, name: "docs", dir: "/w/docs", labels: { strand: "claude in docs" } }], agents: [], jobs: [] });
-    await hear({ type: "agent.state", agent: { paneId: 1, tabId: 1, state: "done" } });
-    await hear({ type: "agent.state", agent: { paneId: 3, tabId: 3, state: "done" } });
+    await replied(1, 1);
+    await replied(3, 3);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 2, state: "working" } });
     core.wait({ strand: "sc-7", who: "Copilot", kind: "machine", what: "PR review" }, "you");
     tick(60_000);
@@ -173,9 +171,9 @@ describe("the deck", () => {
   });
 
   test("scrolls the list to keep the picked card in view", async () => {
-    const { core, hear, now } = harness();
+    const { core, hear, replied, now } = harness();
     await hear({ type: "snapshot", tabs: [], agents: [], jobs: [] });
-    for (const name of Array.from({ length: 30 }, (_, index) => `sc-${100 + index}`)) core.add(undefined, name);
+    for (const name of Array.from({ length: 30 }, (_, index) => `sc-${100 + index}`)) core.wait({ strand: `› ${name}`, who: "you", kind: "you", what: "look" }, "you");
     const dealer = new Dealer(recordingActions().actions, false, now);
     dealer.setSnapshot(core.snapshot());
     for (const _ of Array.from({ length: 25 })) await dealer.key({ name: "j" });
@@ -250,6 +248,7 @@ describe("the deck", () => {
       { type: "strand.titled", strand: id, kind: "story", title: "Gadgets: tools for import and export widgets" },
       { type: "strand.note", strand: id, text: "No PR yet; 15 uncommitted changes in gadgets." },
     ]);
+    core.wait({ strand: "sc-100 › sc-101", who: "you", kind: "you", what: "look" }, "you");
     const dealer = new Dealer(recordingActions().actions, false, () => 1_000_000);
     dealer.setSnapshot(core.snapshot());
     const card = plain(dealer.view(100));
@@ -260,7 +259,7 @@ describe("the deck", () => {
 
   test("a card shows the tree of strands under it with how each stands", async () => {
     const { core, now } = harness();
-    core.add(undefined, "sc-1 › a › b");
+    core.wait({ strand: "› sc-1 › a › b", who: "you", kind: "you", what: "try it" }, "you");
     core.add(undefined, "sc-1 › c");
     core.wait({ strand: "sc-1 › c", who: "Copilot", kind: "machine", what: "PR review" }, "you");
     core.wait({ strand: "sc-1", who: "you", kind: "you", what: "look" }, "you");
@@ -269,25 +268,25 @@ describe("the deck", () => {
     while (dealer.card()?.name !== "sc-1") await dealer.key({ name: "j" });
     const card = plain(dealer.view(100)).split("\n");
     const tree = card.slice(card.findIndex((line) => line.includes("under it · 3")));
-    expect(tree[1]).toMatch(/▎ ○ a +waiting on b/);
-    expect(tree[2]).toMatch(/▎   ● b +yours · no one on it/);
+    expect(tree[1]).toMatch(/▎ ○ a +1 for you \(try it\)/);
+    expect(tree[2]).toMatch(/▎   ● b +yours · you: try it/);
     expect(tree[3]).toMatch(/▎ ⊘ c +Copilot · PR review/);
   });
 
   test("opened on a tab, lists its strands with the trees under them, and edits the picked one", async () => {
-    const { core, hear, now } = harness();
+    const { core, hear, replied, now } = harness();
     await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "widgets", dir: "/w/s", labels: { strand: "sc-1" } }, { id: 4, number: 4, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }], agents: [], jobs: [] });
-    await hear({ type: "agent.state", agent: { paneId: 7, tabId: 3, state: "done" } });
-    core.add(strandNamed(core, "sc-1").id, "pr › ask");
-    await hear({ type: "agent.state", agent: { paneId: 8, tabId: 4, state: "done" } });
+    await replied(7, 3);
+    core.wait({ strand: "sc-1 › pr › ask", who: "you", kind: "you", what: "ask Sam" }, "you");
+    await replied(8, 4);
     const { actions, calls } = recordingActions();
     const dealer = new Dealer(actions, false, now, { server: "s1", tabId: 3 });
     dealer.setSnapshot(core.snapshot());
     const deck = plain(dealer.view(120, 40)).split("\n");
     expect(deck[0]).toMatch(/^ tab 3 widgets 3/);
-    expect(deck[1]).toMatch(/^▎1 ● sc-1  Widget CSV import +claude · turn ended/);
-    expect(deck[2]).toMatch(/^ 2   ○ pr +waiting on ask/);
-    expect(deck[3]).toMatch(/^ 3     ● ask +yours · no one on it/);
+    expect(deck[1]).toMatch(/^▎1 ● sc-1  Widget CSV import +claude · read reply/);
+    expect(deck[2]).toMatch(/^ 2   ○ pr +1 for you \(ask Sam\)/);
+    expect(deck[3]).toMatch(/^ 3     ● ask +yours · you: ask Sam/);
     expect(deck.join("\n")).not.toContain("side");
     expect(dealer.card()?.name).toBe("sc-1");
     await dealer.key({ name: "t" });
@@ -315,10 +314,10 @@ describe("the deck", () => {
   });
 
   test("files an agent waiting on its own build under agents, and your PRs out for review apart from people, with approved ones to review", async () => {
-    const { core, hear, now } = harness();
+    const { core, hear, replied, now } = harness();
     await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "working" }], jobs: [] });
     await hear({ type: "job.started", job: { id: 9, tabId: 1, name: "build", state: "running", agent: false, startedBy: 2 } });
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done" } });
+    await replied(2, 1, "none");
     const pr = (number: number, branch: string, reviews: { author: string; bot: boolean; state: string; commit: string; at: string }[] = []) => ({ repo: "acme/widgets", number, title: `PR ${number}`, url: `https://github.com/acme/widgets/pull/${number}`, author: "octo", draft: false, branch, head: "c1", requested: [], reviews, threads: [] });
     core.add(undefined, "sc-2");
     core.add(undefined, "sc-3");

@@ -22,12 +22,12 @@ function setup() {
 }
 
 describe("strands", () => {
-  test("nest as deep as the work, made from paths, and a strand with no one on it is yours", () => {
+  test("nest as deep as the work, made from paths, and are nobody's move until something is asked", () => {
     const { core, shown } = setup();
     core.add(undefined, "ptyparty › ponpoko");
     core.add(strandNamed(core, "ptyparty").id, "quoll");
-    expect(shown()).toBe(["ptyparty you", "  ponpoko you no one on it", "  quoll you no one on it"].join("\n"));
-    expect(core.snapshot().moves.map((strand) => strand.path.join(" › "))).toEqual(["ptyparty › ponpoko", "ptyparty › quoll"]);
+    expect(shown()).toBe(["ptyparty -", "  ponpoko -", "  quoll -"].join("\n"));
+    expect(core.snapshot().moves).toEqual([]);
   });
 
   test("an agent's moves make the strand its move, rolled up to the strands above", () => {
@@ -38,10 +38,8 @@ describe("strands", () => {
     tick(60_000);
     core.status({ self: "tool:1", text: "making a pointed directory beat a label", page: "ponpoko/review-findings.md" });
     const strand = strandNamed(core, "ptyparty › review findings › 4");
-    expect(strand.recent.map((move) => [move.what, move.until !== undefined, move.links.map((link) => link.ref)])).toEqual([
-      ["reading tabStrand", true, []],
-      ["making a pointed directory beat a label", false, ["ponpoko/review-findings.md"]],
-    ]);
+    expect(strand.open.map((move) => move.what)).toEqual(["making a pointed directory beat a label"]);
+    expect(strand.links.filter((link) => link.adapter === "quoll").map((link) => link.ref)).toEqual(["ponpoko/review-findings.md"]);
   });
 
   test("a new name is made under the strand an agent is on, or at the top when it starts with ›", () => {
@@ -49,7 +47,7 @@ describe("strands", () => {
     core.status({ self: "tool:1", strand: "ptyparty", text: "looking around" });
     core.status({ self: "tool:1", strand: "ponpoko", text: "building" });
     core.split({ self: "tool:1", strand: "› sc-9" }, ["a"]);
-    expect(shown()).toBe(["sc-9 you", "  a you no one on it", "ptyparty agent", "  ponpoko agent building"].join("\n"));
+    expect(shown()).toBe(["ptyparty agent", "  ponpoko agent building", "sc-9 -", "  a -"].join("\n"));
   });
 
   test("an agent can title the strands it makes and retitle them later, and you can clear a title", () => {
@@ -96,8 +94,8 @@ describe("strands", () => {
     expect(strandNamed(core, "sc-1").open.find((move) => move.player === "you")!.answers!.id).toBe("a1");
     core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "x", over: true });
     core.wait({ self: "tool:1", strand: "sc-1", who: "Copilot", kind: "machine", what: "x", over: true });
-    expect(shown()).toBe("sc-1 you no one on it");
-    expect(core.model.players.get("machine:copilot")!.gone).toBeDefined();
+    expect(shown()).toBe("sc-1 -");
+    expect([...core.model.requests.values()].map((request) => request.closed?.as)).toEqual(["done", "done"]);
   });
 
   test("done closes a strand and everything under it, and split shares work out", () => {
@@ -105,7 +103,7 @@ describe("strands", () => {
     expect(core.split({ strand: "review findings" }, ["1", "2"])).toEqual(["review findings › 1", "review findings › 2"]);
     core.status({ self: "tool:1", strand: "review findings › 1", text: "fixing" });
     core.done(strandNamed(core, "review findings › 1").id);
-    expect(shown()).toBe(["review findings you", "  2 you no one on it"].join("\n"));
+    expect(shown()).toBe(["review findings -", "  2 -"].join("\n"));
     core.done(strandNamed(core, "review findings").id);
     expect(shown()).toBe("");
     expect(core.snapshot().counts.agents).toBe(0);
@@ -132,7 +130,7 @@ describe("strands", () => {
     core.status({ self: "tool:1", strand: "ptyparty › ponpoko", text: "building strands" });
     expect(shown()).toBe(["ptyparty agent", "  ponpoko agent building strands"].join("\n"));
     expect(core.model.strands.has("loose1")).toBe(false);
-    expect(strandNamed(core, "ptyparty › ponpoko").recent.map((move) => move.id)).toEqual(["m-a"]);
+    expect(strandNamed(core, "ptyparty › ponpoko").recent.map((move) => move.what)).toEqual(["working", "building strands"]);
   });
 
   test("moving a strand under another, or merging a loose one with m", () => {
@@ -142,10 +140,10 @@ describe("strands", () => {
     core.record("tool", [{ type: "strand.made", strand: "loose1", name: "claude in side", kind: "loose" }]);
     core.reparent(strandNamed(core, "sc-2").id, "epic 9");
     core.reparent("loose1", "epic 9 › sc-2");
-    expect(shown()).toBe(["epic 9 you", "  sc-2 you no one on it"].join("\n"));
+    expect(shown()).toBe(["epic 9 -", "  sc-2 -"].join("\n"));
     expect(() => core.reparent(strandNamed(core, "epic 9").id, "epic 9 › sc-2")).toThrow("under itself");
     core.reparent(strandNamed(core, "epic 9 › sc-2").id, "");
-    expect(shown()).toBe(["epic 9 you no one on it", "sc-2 you no one on it"].join("\n"));
+    expect(shown()).toBe(["epic 9 -", "sc-2 -"].join("\n"));
   });
 
   test("pointing a directory links it and takes in the rogues working there", () => {
@@ -161,7 +159,7 @@ describe("strands", () => {
 
   test("snoozed strands leave your moves until they wake, and catching up a parent sees what's under it", () => {
     const { core, tick } = setup();
-    core.add(undefined, "sc-1 › a");
+    core.wait({ strand: "› sc-1 › a", who: "you", kind: "you", what: "look" }, "you");
     const a = strandNamed(core, "sc-1 › a");
     expect(a.unseen).toBe(true);
     core.snooze(a.id, 1_000_000 + 30 * 60_000);
@@ -172,7 +170,7 @@ describe("strands", () => {
     expect(strandNamed(core, "sc-1 › a").unseen).toBe(false);
   });
 
-  test("a strand with nothing of its own waits on the strand under it, and a strand under it finishing is your move", () => {
+  test("a parent sums up what's asked under it, and asks you to close it once every part is done", () => {
     const { core, tick } = setup();
     core.add(undefined, "sc-1 › a › pr");
     core.add(undefined, "sc-1 › b");
@@ -181,24 +179,41 @@ describe("strands", () => {
       const { whose, why } = strandNamed(core, path).own;
       return `${whose ?? "-"} ${why}`;
     };
-    expect(own("sc-1")).toBe("- waiting on b");
-    expect(own("sc-1 › a")).toBe("- waiting on pr");
+    expect(own("sc-1")).toBe("- 1 for the team");
+    expect(own("sc-1 › a")).toBe("- 1 for the team");
     tick(60_000);
     core.done(strandNamed(core, "sc-1 › b").id);
-    expect(own("sc-1")).toBe("you b is done");
-    expect(core.snapshot().moves.map((strand) => strand.name)).toEqual(["sc-1"]);
-    tick(60_000);
-    core.seen(strandNamed(core, "sc-1").id);
-    expect(own("sc-1")).toBe("- waiting on a");
+    expect(own("sc-1")).toBe("- 1 for the team");
+    expect(core.snapshot().moves).toEqual([]);
     tick(60_000);
     core.done(strandNamed(core, "sc-1 › a").id);
-    expect(own("sc-1")).toBe("you a is done");
+    expect(own("sc-1")).toBe("you parts done: close it?");
     tick(60_000);
     core.status({ self: "tool:1", strand: "sc-1", text: "planning what's next" });
-    expect(own("sc-1")).toBe("agent planning what's next");
+    expect(own("sc-1")).toBe("you parts done: close it?");
+    core.done(strandNamed(core, "sc-1").id);
+    expect(core.snapshot().counts).toMatchObject({ yours: 0, agents: 0 });
   });
 
-  test("a strand can wait on strands outside its own tree, and is your move when one of them is done", () => {
+  test("a strand another source finishes still asks after what waited on it", () => {
+    const { core } = setup();
+    const a = core.add(undefined, "sc-1");
+    const b = core.add(undefined, "sc-2");
+    core.block(b, a);
+    core.record("shortcut", [{ type: "strand.done", strand: a, why: "done in Shortcut" }]);
+    expect(strandNamed(core, "sc-2").own).toMatchObject({ whose: "you", why: "sc-1 is done" });
+  });
+
+  test("a child finishing doesn't make its parent your move", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1 › a");
+    core.add(undefined, "sc-1 › b");
+    core.done(strandNamed(core, "sc-1 › a").id);
+    expect(strandNamed(core, "sc-1").own.whose).toBeUndefined();
+    expect(core.snapshot().moves).toEqual([]);
+  });
+
+  test("a strand can wait on strands outside its own tree, and is your move when the last of them is done", () => {
     const { core, store, tick } = setup();
     core.add(undefined, "sc-1");
     core.add(undefined, "sc-2");
@@ -212,29 +227,31 @@ describe("strands", () => {
     tick(60_000);
     core.block(strandNamed(core, "sc-1").id, "sc-3");
     expect(own("sc-1")).toBe("- waiting on sc-2");
-    expect(core.snapshot().moves.map((strand) => strand.name)).toEqual(["sc-2", "sc-3"]);
     expect(() => core.block(strandNamed(core, "sc-3").id, "sc-1")).toThrow("those strands would wait on each other");
     expect(() => core.block(strandNamed(core, "sc-1").id, strandNamed(core, "sc-1").id)).toThrow("a strand can't wait on itself");
     expect(new Ponpoko(store).snapshot().strands.find((strand) => strand.name === "sc-1")?.own.why).toBe("waiting on sc-2");
     tick(60_000);
     core.done(strandNamed(core, "sc-2").id);
-    expect(own("sc-1")).toBe("you sc-2 is done");
-    tick(60_000);
-    core.seen(strandNamed(core, "sc-1").id);
     expect(own("sc-1")).toBe("- waiting on sc-3");
+    tick(60_000);
+    core.done(strandNamed(core, "sc-3").id);
+    expect(own("sc-1")).toBe("you sc-3 is done");
     core.unblock(strandNamed(core, "sc-1").id);
-    expect(own("sc-1")).toBe("you no one on it");
+    expect(own("sc-1")).toBe("you sc-3 is done");
   });
 
-  test("a strand's own moves outrank what it waits on, and marking the wait closes your moves on it", () => {
+  test("a strand's own requests outrank what it waits on, and marking the wait answers yours on it", () => {
     const { core, tick } = setup();
     core.add(undefined, "sc-2");
     core.status({ self: "tool:1", strand: "› sc-1", text: "building" });
     core.blockBy({ self: "tool:1", on: "sc-2" });
     expect(strandNamed(core, "sc-1").own.why).toBe("building");
-    core.record("komux", [{ type: "move.opened", move: "m-turn", strand: strandNamed(core, "sc-1").id, player: "you", with: "a1", what: "turn ended" }]);
-    core.record("komux", [...core.model.moves.values()].filter((move) => move.player === "a1").map((move) => ({ type: "move.closed" as const, move: move.id })));
-    expect(strandNamed(core, "sc-1").own.why).toBe("turn ended");
+    const sc1 = strandNamed(core, "sc-1").id;
+    core.record("komux", [
+      { type: "said", requests: [{ request: "r-turn", strand: sc1, to: { role: "owner", strand: sc1 }, what: "read reply", kind: "reply", from: "a1" }], replies: [] },
+      { type: "player.activity", player: "a1", activity: "idle" },
+    ]);
+    expect(strandNamed(core, "sc-1").own.why).toBe("read reply");
     tick(60_000);
     core.block(strandNamed(core, "sc-1").id, strandNamed(core, "sc-2").id);
     expect(strandNamed(core, "sc-1").own.why).toBe("waiting on sc-2");
@@ -365,6 +382,72 @@ describe("strands", () => {
     core.done(strandNamed(core, "p").id);
     expect(core.snapshot().counts).toMatchObject({ yours: 0, agents: 0 });
     expect(() => core.status({ self: "tool:1", text: "next step" })).toThrow("name the strand");
+  });
+});
+
+describe("requests and roles", () => {
+  test("rule 6: an agent's status stays on its own strand or under it", () => {
+    const { core } = setup();
+    core.add(undefined, "other");
+    core.status({ self: "tool:1", strand: "› sc-1", text: "starting" });
+    core.status({ self: "tool:1", strand: "pr", text: "opening the PR" });
+    expect(strandNamed(core, "sc-1 › pr").own.why).toBe("opening the PR");
+    expect(() => core.status({ self: "tool:1", strand: "other", text: "wandering off" })).toThrow("another Claude's work");
+    expect(() => core.status({ self: "tool:1", strand: "› elsewhere", text: "wandering off" })).toThrow("another Claude's work");
+    expect(core.snapshot().strands.map((strand) => strand.name)).not.toContain("elsewhere");
+    core.done(strandNamed(core, "sc-1").id);
+    expect(core.status({ self: "tool:1", strand: "other", text: "on to the next" })).toBe("other");
+    expect([...core.model.roles.values()].filter((roles) => roles.agent === "a1")).toHaveLength(1);
+  });
+
+  test("a role with nobody in it comes from the strand above, and one set lower down wins", () => {
+    const { core } = setup();
+    const story = core.add(undefined, "sc-1");
+    const pr = core.add(story, "widgets#9");
+    core.record("komux", [
+      { type: "strand.role", strand: story, role: "agent", by: "a1" },
+      { type: "said", requests: [{ request: "r1", strand: pr, to: { role: "agent", strand: pr }, what: "fix the comment" }], replies: [] },
+    ]);
+    const addressee = () => strandNamed(core, "sc-1 › widgets#9").open[0]!.by.id;
+    expect(addressee()).toBe("a1");
+    expect(strandNamed(core, "sc-1 › widgets#9").own.whose).toBe("agent");
+    core.record("komux", [{ type: "strand.role", strand: pr, role: "agent", by: "a2" }]);
+    expect(addressee()).toBe("a2");
+    core.record("komux", [{ type: "said", requests: [{ request: "r2", strand: pr, to: { role: "owner", strand: pr }, what: "merge it" }], replies: [] }]);
+    expect(strandNamed(core, "sc-1 › widgets#9").own).toMatchObject({ whose: "you", why: "merge it" });
+    core.record("you", [{ type: "party.known", party: "person:sam", kind: "person", name: "Sam" }, { type: "strand.role", strand: story, role: "owner", by: "person:sam" }]);
+    expect(strandNamed(core, "sc-1 › widgets#9").own.whose).toBe("agent");
+  });
+
+  test("a request to a group is yours while you're in it, until someone claims it", () => {
+    const { core } = setup();
+    const id = core.add(undefined, "widgets#9");
+    core.record("github", [
+      { type: "party.known", party: "group:team", kind: "group", name: "the team", members: ["you", "person:sam"] },
+      { type: "said", requests: [{ request: "r1", strand: id, to: { group: "group:team" }, what: "review" }], replies: [] },
+    ]);
+    expect(strandNamed(core, "widgets#9").own.whose).toBe("you");
+    core.record("github", [{ type: "said", requests: [], replies: [{ request: "r1", as: "progress", by: "person:sam" }] }]);
+    expect(strandNamed(core, "widgets#9").own).toMatchObject({ whose: "person" });
+    expect(strandNamed(core, "widgets#9").open[0]!.by.who).toBe("person:sam");
+    core.record("github", [{ type: "said", requests: [], replies: [{ request: "r1", as: "passed", to: { person: "you" } }] }]);
+    expect(strandNamed(core, "widgets#9").own.whose).toBe("you");
+    core.record("github", [{ type: "said", requests: [], replies: [{ request: "r1", as: "done" }] }]);
+    expect(strandNamed(core, "widgets#9").own.whose).toBeUndefined();
+  });
+
+  test("a strand rolls up what's asked under it, grouped by who it's for", () => {
+    const { core, tick } = setup();
+    const story = core.add(undefined, "sc-52737");
+    const pr = core.add(story, "widgets#9");
+    core.record("komux", [
+      { type: "party.known", party: "group:team", kind: "group", name: "the team" },
+      { type: "said", requests: [{ request: "r1", strand: pr, to: { group: "group:team" }, what: "review" }], replies: [] },
+    ]);
+    expect(strandNamed(core, "sc-52737").rolled.tally).toBe("1 for the team");
+    tick(60_000);
+    core.record("komux", [{ type: "said", requests: [{ request: "r2", strand: story, to: { role: "owner", strand: story }, what: "read reply", kind: "reply", from: "a1" }], replies: [] }]);
+    expect(strandNamed(core, "sc-52737").rolled.tally).toBe("1 for the team · 1 for you (read reply)");
   });
 });
 

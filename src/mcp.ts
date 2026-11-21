@@ -4,24 +4,24 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ask, state } from "./client.ts";
 import { komuxSelf } from "./komux/self.ts";
-import { splitPath, type Snapshot, type StrandView } from "./core.ts";
+import { splitPath, underOf, type Snapshot, type StrandView } from "./core.ts";
 import { prName, prRef } from "./github.ts";
 import type { Recorded } from "./events.ts";
 import { age, cause, clock, describe, holder, pathText } from "./render.ts";
 import type { Request } from "./server.ts";
 
-const instructions = `ponpoko tracks the user's work as strands, lines of work that nest (a project holds stories, a story holds smaller strands), and whose move each one is. It already hears komux: while you work the move is yours, and when your turn ends it's the user's. Tell it what it can't see:
+const instructions = `ponpoko tracks the user's work as strands, lines of work that nest (a project holds stories, a story holds smaller strands), and what's asked of whom on each. It already hears komux: the user's prompts are requests to you, and your turn ends answer them; a reply that toasts in full asks the user to read it. Tell it what it can't see:
 
-- You start on a piece of work, or move to another: call status with text, a line on what you're doing now, and the strand you're on as a path such as "ponpoko review findings › 4". Missing strands on the path are made; give every strand you make for the user a title that says what it's about, such as "review merlin: consolidation toggle". Leave the strand out to stay where you are. Call it again as you move between steps; each call is a move on the strand.
-- You open a pull request for the strand, or push to one: call status with pr set to its URL. ponpoko then watches its reviews (Copilot, requested reviewers, the team) and makes the strand wait on them or come back to the user, so don't report those review waits yourself.
-- You stop to wait on someone or something other than the user (CI, a deploy, a person's answer): call wait with who, kind "machine" or "person", and what you're waiting for. When the wait ends, call wait again with over true and the same who.
-- The user must do something komux can't see, such as a live test: call wait with kind "you".
-- A strand can't go on until another strand lands, such as a story blocked on another story: call wait with on, the other strand's path. When it no longer waits, call wait with on and over true.
-- A build you start as a komux job is for another strand than yours: run it as ponpoko for "<strand path>" -- <command>, so that strand waits on it.
+- You start on a piece of work, or move to another step: call status with text, a line on what you're doing now. Your strand is the one your tab is on; name a strand under it as a path, such as "review findings › 4", to work there. Missing strands on the path are made; give every strand you make for the user a title that says what it's about, such as "review merlin: consolidation toggle". Naming a strand outside yours is refused: that work needs a Claude of its own.
+- You open a pull request for the strand, or push to one: call status with pr set to its URL. ponpoko then watches its reviews (Copilot, requested reviewers, the team), so don't report those yourself.
+- You need something from someone ponpoko can't see (a person's answer in Slack, CI, a deploy): call ask with who, kind "machine", "person" or "group", and what you need. When it comes, call ask again with over true and the same who.
+- The user must do something komux can't see, such as a live test: call ask with kind "you".
+- A strand can't go on until another strand lands, such as a story blocked on another story: call ask with on, the other strand's path. When it no longer waits, call ask with on and over true.
+- A build you start as a komux job is for another strand than yours: run it as ponpoko for "<strand path>" -- <command>.
 - A strand is finished: call done. A list of work to share out: call split with names, each with a title.
-- You prepared a remax tour for the user to review: call split under the strand you're on with a name for the review and tour set to the repository and the tour's name. It becomes the user's move, and going to it opens the tour.
+- You prepared a remax tour for the user to review: call split under your strand with a name for the review and tour set to the repository and the tour's name. It asks the user to review it, and going to the strand opens the tour.
 
-When the user asks what needs them or what to do next, call moves. Keep lines short, with no code, customer data or secrets.`;
+When the user asks what needs them or what to do next, call moves. To see everything open on a strand, call requests. Keep lines short, with no code, customer data or secrets.`;
 
 export type Caller = { self?: string; dir: string };
 
@@ -44,7 +44,7 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
     "status",
     {
       title: "Say what you're doing now",
-      description: "Make a move on a strand: one line on what you're doing now, shown on the strand in ponpoko and kept in its record of moves. Name the strand to start on it or switch to it; missing strands on the path are made.",
+      description: "One line on what you're doing now, shown on your strand in ponpoko while you work. Name a strand under yours to work there; missing strands on the path are made. A strand outside yours is refused.",
       inputSchema: {
         text: z.string().min(1).max(120).describe("What you're doing now, such as \"making a pointed directory beat a label\""),
         page: z.string().max(200).optional().describe("Notebook page with the detail, as quoll show takes it, such as ponpoko/build-status.md"),
@@ -64,13 +64,13 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
   );
 
   server.registerTool(
-    "wait",
+    "ask",
     {
-      title: "Hand a strand to someone",
-      description: "Say a strand now waits on someone other than you: a machine such as Copilot or CI, a person, or the user for something komux can't see. Or, with on, say it waits on another strand. Call it with over true when the wait ends.",
+      title: "Ask someone for something",
+      description: "Ask someone ponpoko can't see for something the strand needs: a machine such as CI, a person, a group, or the user for something komux can't see. Or, with on, say the strand waits on another strand. Call it with over true when the answer comes.",
       inputSchema: {
-        who: z.string().min(1).max(80).optional().describe("Copilot, CI, Sam, or you for the user; leave out with on"),
-        kind: z.enum(["machine", "person", "you"]).optional().describe("Leave out with on"),
+        who: z.string().min(1).max(80).optional().describe("CI, Sam, the team, or you for the user; leave out with on"),
+        kind: z.enum(["machine", "person", "group", "you"]).optional().describe("Leave out with on"),
         what: z.string().min(1).max(200).optional().describe("Short, such as \"reviewing PR #821\"; leave out with on"),
         on: z.string().min(1).max(200).optional().describe("The strand this one waits on, as a path such as sc-1240; it shows as yours again when that strand is done"),
         over: z.boolean().optional().describe("true when the wait is over; who alone, or nothing but the strand, ends the matching waits"),
@@ -79,10 +79,10 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
       annotations: write,
     },
     async ({ who, kind, what, on, ...rest }) => {
-      if (on && !rest.over && (who || kind || what)) return reply("ponpoko: a wait is either on a strand (on) or on someone (who, kind and what), not both; make two calls", true);
+      if (on && !rest.over && (who || kind || what)) return reply("ponpoko: ask either waits on a strand (on) or asks someone (who, kind and what), not both; make two calls", true);
       if (on) return attempt(async () => (await send({ method: "block-by", params: { ...caller, ...rest, on } })) as { strand: string }, (result) => `${result.strand} ${rest.over ? "no longer waits" : "waits"} on ${on}.`);
       if (!rest.over && (!who || !kind || !what)) return reply("ponpoko: name who, kind and what, or the strand it waits on with on", true);
-      return attempt(async () => (await send({ method: "wait", params: { ...caller, ...rest, ...(who ? { who } : {}), ...(kind ? { kind } : {}), ...(what ? { what } : {}) } })) as { strand: string }, (result) => `${rest.over ? "Wait over" : "Waiting"} on ${result.strand}.`);
+      return attempt(async () => (await send({ method: "wait", params: { ...caller, ...rest, ...(who ? { who } : {}), ...(kind ? { kind } : {}), ...(what ? { what } : {}) } })) as { strand: string }, (result) => `${rest.over ? "Answered" : "Asked"} on ${result.strand}.`);
     },
   );
 
@@ -142,6 +142,17 @@ export function createServer(caller: Caller = callerFromEnv(), send: Send = ask,
   );
 
   server.registerTool(
+    "requests",
+    {
+      title: "What's asked on a strand",
+      description: "Every unanswered request on a strand and the strands under it: who it's for, who asked, what, and since when. Defaults to the strand you're on.",
+      inputSchema: { strand: z.string().optional().describe("A path such as sc-1234 or ptyparty › ponpoko") },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ strand }) => attempt(snapshot, (view) => requestsText(view, strand, caller)),
+  );
+
+  server.registerTool(
     "strand",
     {
       title: "One strand",
@@ -197,8 +208,24 @@ export function movesText(view: Snapshot): string {
   ].join("\n");
 }
 
+function strandFor(view: Snapshot, wanted: string | undefined, caller: Caller): StrandView | undefined {
+  if (wanted) return findStrand(view, wanted);
+  const mine = caller.self === undefined ? undefined : (view.strands.find((strand) => strand.open.some((move) => move.player !== "you" && move.by.place?.handle === caller.self)) ?? view.strands.find((strand) => strand.agent?.place?.handle === caller.self));
+  return mine ?? view.strands.filter((strand) => strand.dir && (caller.dir === strand.dir || caller.dir.startsWith(`${strand.dir}/`))).at(-1);
+}
+
+export function requestsText(view: Snapshot, wanted: string | undefined, caller: Caller): string {
+  const found = strandFor(view, wanted, caller);
+  if (!found) return wanted ? `ponpoko has no strand ${wanted}.` : "ponpoko can't tell which strand you're on; name it.";
+  const strands = [found, ...underOf(view.strands, found)];
+  const lines = strands.flatMap((strand) =>
+    strand.requests.map((request) => `- ${pathText(strand)}: for ${request.to}${request.claimedBy ? ` (claimed by ${request.claimedBy})` : ""}: ${request.what}${request.from ? `, asked by ${request.from}` : ""}${request.kind ? ` [${request.kind}]` : ""}, ${age(view.now - request.since)} (${request.id})`),
+  );
+  return lines.length === 0 ? `Nothing is asked on ${pathText(found)} or under it.` : [`${lines.length} unanswered on ${pathText(found)}:`, ...lines].join("\n");
+}
+
 export function strandText(view: Snapshot, wanted: string | undefined, caller: Caller): string {
-  const found = wanted ? findStrand(view, wanted) : ((caller.self === undefined ? undefined : view.strands.find((strand) => strand.open.some((move) => move.player !== "you" && move.by.place?.handle === caller.self))) ?? view.strands.filter((strand) => strand.dir && (caller.dir === strand.dir || caller.dir.startsWith(`${strand.dir}/`))).at(-1));
+  const found = strandFor(view, wanted, caller);
   if (!found) return wanted ? `ponpoko has no strand ${wanted}.` : "ponpoko can't tell which strand you're on; name it.";
   const at = view.strands.indexOf(found);
   const below = [];
@@ -209,6 +236,7 @@ export function strandText(view: Snapshot, wanted: string | undefined, caller: C
   const line = (strand: StrandView) => `${"  ".repeat(strand.depth - found.depth)}- ${strand.name}: ${holder(strand, view.now) || "nothing of its own"}${cause(strand) ? `, ${cause(strand)}` : ""}`;
   return [
     `${pathText(found)}${found.title ? `  ${found.title}` : ""}`,
+    ...(found.rolled.tally ? [`Asked here and under it: ${found.rolled.tally}`] : []),
     line(found),
     ...below.map(line),
     ...found.notes.map((note) => `- note ${clock(note.at)}: ${note.text}`),

@@ -51,7 +51,14 @@ export function harness(start = 1_000_000, store = new Store(":memory:"), shared
     return bridge.line(komuxLine.parse({ session: "main", server: "s1", ...line }));
   };
   core.onChange(() => bridge.changed());
-  return { core, bridge, sent, hear, store, service, tick: (ms: number) => (now += ms), now: () => now };
+  const replied = async (paneId: number, tabId: number, toast = "full", sessionId?: string) => {
+    const session = sessionId ? { sessionId } : {};
+    await hear({ type: "agent.prompt", paneId, tabId, by: "you", ...session });
+    await hear({ type: "agent.state", agent: { paneId, tabId, state: "working", ...session } });
+    await hear({ type: "agent.state", agent: { paneId, tabId, state: "done", ...session } });
+    await hear({ type: "agent.turn", paneId, tabId, toast, ...session });
+  };
+  return { core, bridge, sent, hear, replied, store, service, tick: (ms: number) => (now += ms), now: () => now };
 }
 
 export function recordingActions() {

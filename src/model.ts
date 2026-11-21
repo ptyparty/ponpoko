@@ -1,4 +1,4 @@
-import type { Place, PlayerKind, Recorded, Whose } from "./events.ts";
+import type { ActivityKind, Place, PlayerKind, Recorded, ReplyKind, To, Whose } from "./events.ts";
 
 export type Strand = {
   id: string;
@@ -21,11 +21,34 @@ export type Strand = {
 export type Player = { id: string; kind: PlayerKind; who: string; adapter?: string; place?: Place; resume?: string; joined: number; gone?: number };
 export type Move = { id: string; strand: string; player: string; with?: string; what: string; kind?: string; from: number; until?: number; source: Recorded["source"]; described?: number };
 export type Link = { id: string; strand?: string; move?: string; adapter: string; ref: string; label?: string; at: number };
+export type Request = {
+  id: string;
+  strand: string;
+  to: To;
+  what: string;
+  kind?: string;
+  ref?: string;
+  from?: string;
+  at: number;
+  source: Recorded["source"];
+  handedTo?: string;
+  progress?: { by?: string; at: number };
+  closed?: { as: ReplyKind; at: number; what?: string };
+};
+export type Party = { id: string; kind: "person" | "group" | "service"; name: string; handles: Record<string, string>; members: string[]; mergedInto?: string };
+export type Report = { player: string; what: string; at: number };
+export type Activity = { player: string; strand: string; activity: Exclude<ActivityKind, "idle">; what?: string; for?: string; at: number; source?: string };
 export type Model = {
   strands: Map<string, Strand>;
   players: Map<string, Player>;
   moves: Map<string, Move>;
   links: Map<string, Link>;
+  requests: Map<string, Request>;
+  roles: Map<string, Record<string, string>>;
+  parties: Map<string, Party>;
+  activities: Map<string, Activity>;
+  reports: Map<string, Report[]>;
+  spoken: Set<string>;
   names: Map<string, string>;
   forgotten: { name: string; parent?: string; by: string }[];
   heard: Recorded[];
@@ -36,6 +59,7 @@ export type Model = {
 export const you = "you";
 export const dormant = Number.MAX_SAFE_INTEGER;
 const heardKept = 200;
+const reportsKept = 12;
 
 export function emptyModel(): Model {
   return {
@@ -43,6 +67,12 @@ export function emptyModel(): Model {
     players: new Map([[you, { id: you, kind: "you", who: "you", joined: 0 }]]),
     moves: new Map(),
     links: new Map(),
+    requests: new Map(),
+    roles: new Map(),
+    parties: new Map(),
+    activities: new Map(),
+    reports: new Map(),
+    spoken: new Set(),
     names: new Map(),
     forgotten: [],
     heard: [],
@@ -176,6 +206,7 @@ function applyFact(model: Model, event: Recorded): void {
     case "player.gone": {
       const player = model.players.get(event.player);
       if (player && player.id !== you) player.gone = event.at;
+      model.activities.delete(event.player);
       return;
     }
     case "move.opened":
@@ -201,7 +232,62 @@ function applyFact(model: Model, event: Recorded): void {
     case "link.removed":
       model.links.delete(event.link);
       return;
+    case "party.known": {
+      const old = model.parties.get(event.party);
+      model.parties.set(event.party, { id: event.party, kind: event.kind, name: event.name, handles: { ...old?.handles, ...event.handles }, members: event.members ?? old?.members ?? [], ...(old?.mergedInto ? { mergedInto: old.mergedInto } : {}) });
+      return;
+    }
+    case "party.merged": {
+      const party = model.parties.get(event.party);
+      if (party && event.into !== event.party) party.mergedInto = event.into;
+      return;
+    }
+    case "strand.role":
+      withStrand(model, event.strand, (strand) => {
+        const roles = { ...model.roles.get(strand.id) };
+        if (event.by) roles[event.role] = event.by;
+        else delete roles[event.role];
+        model.roles.set(strand.id, roles);
+      });
+      return;
+    case "said":
+      for (const asked of event.requests) {
+        if (model.requests.has(asked.request) || !model.strands.has(asked.strand)) continue;
+        model.requests.set(asked.request, { id: asked.request, strand: asked.strand, to: asked.to, what: asked.what, ...(asked.kind ? { kind: asked.kind } : {}), ...(asked.ref ? { ref: asked.ref } : {}), ...(asked.from ? { from: asked.from } : {}), at: event.at, source: event.source });
+        start(model, asked.strand);
+        wake(model, [asked.strand]);
+        if (event.source === "agent") model.spoken.add(asked.strand);
+      }
+      for (const said of event.replies) {
+        const request = model.requests.get(said.request);
+        if (!request || request.closed) continue;
+        if (said.as === "progress") request.progress = { ...(said.by ? { by: said.by } : {}), at: event.at };
+        else if (said.as === "passed" && said.to) Object.assign(request, { to: said.to, at: event.at, progress: undefined, handedTo: undefined });
+        else request.closed = { as: said.as, at: event.at, ...(said.what ? { what: said.what } : {}) };
+        wake(model, [request.strand]);
+      }
+      return;
+    case "handed":
+      for (const id of event.requests) {
+        const request = model.requests.get(id);
+        if (request && !request.closed) request.handedTo = event.player;
+      }
+      return;
+    case "player.activity":
+      if (event.activity === "idle" || !event.strand || !model.strands.has(event.strand)) {
+        model.activities.delete(event.player);
+        return;
+      }
+      model.activities.set(event.player, { player: event.player, strand: event.strand, activity: event.activity, ...(event.what ? { what: event.what } : {}), ...(event.for ? { for: event.for } : {}), at: event.at, source: event.source });
+      start(model, event.strand);
+      if (event.source === "agent") model.spoken.add(event.strand);
+      if (event.source === "agent" && event.what) model.reports.set(event.strand, [...(model.reports.get(event.strand) ?? []), { player: event.player, what: event.what, at: event.at }].slice(-reportsKept));
+      return;
   }
+}
+
+function start(model: Model, strand: string): void {
+  for (const id of [strand, ...ancestors(model, strand)]) delete model.strands.get(id)?.planned;
 }
 
 function wake(model: Model, ids: string[]): void {
@@ -233,6 +319,22 @@ function remove(model: Model, id: string, into: string | undefined): void {
     if (into) link.strand = into;
     else model.links.delete(link.id);
   }
+  for (const request of model.requests.values()) {
+    if (request.strand !== id) continue;
+    if (into) request.strand = into;
+    else model.requests.delete(request.id);
+  }
+  for (const activity of model.activities.values()) {
+    if (activity.strand !== id) continue;
+    if (into) activity.strand = into;
+    else model.activities.delete(activity.player);
+  }
+  const roles = model.roles.get(id);
+  if (roles && into) model.roles.set(into, { ...roles, ...model.roles.get(into) });
+  model.roles.delete(id);
+  const reports = model.reports.get(id);
+  if (reports && into) model.reports.set(into, [...(model.reports.get(into) ?? []), ...reports].sort((a, b) => a.at - b.at).slice(-reportsKept));
+  model.reports.delete(id);
   for (const other of model.strands.values()) {
     const since = other.blockedOn[id];
     if (since === undefined) continue;
@@ -296,23 +398,31 @@ export function whoseOf(kind: PlayerKind): Whose {
 
 const rank: Record<Whose, number> = { you: 0, agent: 1, person: 2, machine: 2 };
 
-export type Standing = { whose?: Whose; since: number; why: string; moves: Move[]; waitsOn?: string; finished?: string };
+export type Addressee = { id: string; kind: PlayerKind | "group"; who: string };
+export type Item = { id: string; whose: Whose; since: number; why: string; addressee: Addressee; from?: string; request?: Request; move?: Move; activity?: Activity };
+export type Standing = { whose?: Whose; since: number; why: string; moves: Move[]; items: Item[]; waitsOn?: string; tally?: string; quiet?: true };
 
 export function pickWhose(whoses: Whose[]): Whose | undefined {
   return [...whoses].sort((a, b) => rank[a] - rank[b])[0];
 }
 
-type Index = { version: number; open: Map<string, Move[]>; last: Map<string, number>; kids: Map<string | undefined, Strand[]>; own: Map<string, Standing>; rolled: Map<string, Standing> };
+type Tally = Map<string, { label: string; count: number; since: number; what: string; you: boolean }>;
+type Index = { version: number; open: Map<string, Move[]>; asked: Map<string, Request[]>; busy: Map<string, Activity[]>; last: Map<string, number>; kids: Map<string | undefined, Strand[]>; own: Map<string, Standing>; rolled: Map<string, Standing>; tallies: Map<string, Tally> };
 const indexes = new WeakMap<Model, Index>();
 
 function indexOf(model: Model): Index {
   const cached = indexes.get(model);
   if (cached?.version === model.version) return cached;
-  const index: Index = { version: model.version, open: new Map(), last: new Map(), kids: new Map(), own: new Map(), rolled: new Map() };
+  const index: Index = { version: model.version, open: new Map(), asked: new Map(), busy: new Map(), last: new Map(), kids: new Map(), own: new Map(), rolled: new Map(), tallies: new Map() };
   for (const move of [...model.moves.values()].sort((a, b) => a.from - b.from)) {
     if (move.until === undefined) index.open.set(move.strand, [...(index.open.get(move.strand) ?? []), move]);
     index.last.set(move.strand, Math.max(index.last.get(move.strand) ?? 0, move.until ?? move.from));
   }
+  for (const request of [...model.requests.values()].sort((a, b) => a.at - b.at)) {
+    if (!request.closed) index.asked.set(request.strand, [...(index.asked.get(request.strand) ?? []), request]);
+    index.last.set(request.strand, Math.max(index.last.get(request.strand) ?? 0, request.closed?.at ?? request.at));
+  }
+  for (const activity of model.activities.values()) index.busy.set(activity.strand, [...(index.busy.get(activity.strand) ?? []), activity]);
   for (const strand of model.strands.values()) index.kids.set(strand.parent, [...(index.kids.get(strand.parent) ?? []), strand]);
   indexes.set(model, index);
   return index;
@@ -330,46 +440,155 @@ export function openMoves(model: Model, strand: string): Move[] {
   return indexOf(model).open.get(strand) ?? [];
 }
 
+export function openRequests(model: Model, strand: string): Request[] {
+  return indexOf(model).asked.get(strand) ?? [];
+}
+
+export function activitiesOn(model: Model, strand: string): Activity[] {
+  return indexOf(model).busy.get(strand) ?? [];
+}
+
 export function moveWhose(model: Model, move: Move): Whose {
   return whoseOf(model.players.get(move.player)?.kind ?? "machine");
+}
+
+export function roleOf(model: Model, strand: string, role: string): string | undefined {
+  for (const id of [strand, ...ancestors(model, strand)]) {
+    const by = model.roles.get(id)?.[role];
+    if (by) return by;
+  }
+  return undefined;
+}
+
+export function agentStrandOf(model: Model, player: string): string | undefined {
+  return [...model.roles].find(([id, roles]) => roles.agent === player && model.strands.has(id) && isLive(model, model.strands.get(id)!))?.[0];
+}
+
+function partyOf(model: Model, id: string): Party | undefined {
+  let party = model.parties.get(id);
+  for (let hops = 0; party?.mergedInto && hops < 10; hops++) party = model.parties.get(party.mergedInto) ?? party;
+  return party;
+}
+
+function filler(model: Model, id: string): Addressee {
+  if (id === you) return { id: you, kind: "you", who: "you" };
+  const player = model.players.get(id);
+  if (player) return { id, kind: player.kind, who: player.who };
+  const party = partyOf(model, id);
+  if (party?.id === you) return { id: you, kind: "you", who: "you" };
+  if (party) return { id: party.id, kind: party.kind === "service" ? "machine" : party.kind, who: party.name };
+  return { id, kind: "person", who: id };
+}
+
+export function addresseeOf(model: Model, request: Request): Addressee {
+  const to = request.to;
+  if ("person" in to) return filler(model, to.person);
+  if ("service" in to) {
+    const party = partyOf(model, to.service);
+    return { id: party?.id ?? to.service, kind: "machine", who: party?.name ?? to.service };
+  }
+  if ("group" in to) {
+    if (request.progress?.by) return filler(model, request.progress.by);
+    const party = partyOf(model, to.group);
+    if (party?.members.includes(you)) return { id: you, kind: "you", who: "you" };
+    return { id: party?.id ?? to.group, kind: "group", who: party?.name ?? to.group };
+  }
+  const by = roleOf(model, to.strand, to.role);
+  if (by) return filler(model, by);
+  if (to.role === "owner") return { id: you, kind: "you", who: "you" };
+  return { id: `role:${to.role}`, kind: to.role === "agent" ? "agent" : "person", who: to.role };
+}
+
+function whoseOfAddressee(addressee: Addressee): Whose {
+  if (addressee.kind === "group") return "person";
+  return whoseOf(addressee.kind);
+}
+
+export function itemsOn(model: Model, strand: string): Item[] {
+  const requests = openRequests(model, strand).map((request): Item => {
+    const addressee = addresseeOf(model, request);
+    return { id: request.id, whose: whoseOfAddressee(addressee), since: request.at, why: request.what, addressee, ...(request.from ? { from: request.from } : {}), request };
+  });
+  const moves = openMoves(model, strand).map((move): Item => {
+    const player = model.players.get(move.player);
+    return { id: move.id, whose: moveWhose(model, move), since: move.from, why: move.what, addressee: { id: move.player, kind: player?.kind ?? "machine", who: player?.who ?? move.player }, ...(move.with ? { from: move.with } : {}), move };
+  });
+  const busy = activitiesOn(model, strand).map((activity): Item => {
+    const player = model.players.get(activity.player);
+    return { id: `activity:${activity.player}`, whose: player?.kind === "agent" ? "agent" : "machine", since: activity.at, why: activity.what ?? activity.activity, addressee: { id: activity.player, kind: player?.kind ?? "machine", who: player?.who ?? activity.player }, ...(activity.for ? { from: activity.for } : {}), activity };
+  });
+  return [...requests, ...moves, ...busy].sort((a, b) => a.since - b.since);
+}
+
+function standingFrom(items: Item[]): Pick<Standing, "whose" | "since" | "why" | "moves" | "items"> | undefined {
+  const whose = pickWhose(items.map((item) => item.whose));
+  if (!whose) return undefined;
+  const mine = items.filter((item) => item.whose === whose);
+  return { whose, since: mine[0]!.since, why: mine[0]!.why, moves: mine.flatMap((item) => item.move ?? []), items: mine };
 }
 
 export function own(model: Model, strand: Strand): Standing {
   const index = indexOf(model);
   const cached = index.own.get(strand.id);
   if (cached) return cached;
-  const open = openMoves(model, strand.id);
-  const whose = pickWhose(open.map((move) => moveWhose(model, move)));
+  const items = itemsOn(model, strand.id);
+  const found = standingFrom(items);
   let standing: Standing;
-  if (whose) {
-    const moves = open.filter((move) => moveWhose(model, move) === whose);
-    standing = { whose, since: moves[0]!.from, why: moves[0]!.what, moves };
-  } else {
-    const kids = children(model, strand.id);
-    const live = kids.filter((child) => child.done === undefined);
-    const seen = Math.max(strand.seenAt, ...ancestors(model, strand.id).map((id) => model.strands.get(id)?.seenAt ?? 0));
-    const quiet = Math.max(strand.made, seen, index.last.get(strand.id) ?? 0, ...live.map((child) => child.made));
-    const blocking = Object.entries(strand.blockedOn).flatMap(([on, since]) => {
-      const blocker = model.strands.get(on);
-      return blocker ? [{ blocker, since, ended: endedAt(model, blocker) }] : [];
-    });
-    const finished = strand.kind === "inbox" || strand.planned ? undefined : [
-      ...kids.filter((child) => child.done !== undefined && child.done > quiet).map((child) => ({ strand: child, at: child.done! })),
-      ...blocking.filter(({ since, ended }) => ended !== undefined && ended > since && ended > quiet).map(({ blocker, ended }) => ({ strand: blocker, at: ended! })),
-    ].sort((a, b) => b.at - a.at)[0];
-    const holding = finished ? undefined : blocking.filter(({ ended }) => ended === undefined).sort((a, b) => a.since - b.since)[0];
-    const busiest = finished || holding ? undefined : live.map((child) => ({ child, standing: rolled(model, child) })).filter((entry) => entry.standing.whose !== undefined).sort((a, b) => rank[a.standing.whose!] - rank[b.standing.whose!] || a.standing.since - b.standing.since)[0];
-    if (strand.kind === "inbox" && live.length > 0) standing = { since: Math.max(...live.map((child) => child.made)), why: inboxSummary(model, live), moves: [] };
-    else if (finished) standing = { whose: "you", since: finished.at, why: `${finished.strand.name} is done`, moves: [], finished: finished.strand.id };
-    else if (holding) standing = { since: holding.since, why: `waiting on ${holding.blocker.name}`, moves: [], waitsOn: holding.blocker.id };
-    else if (strand.heldBy) standing = { since: Math.max(...Object.values(strand.heldBy)), why: `waiting on ${Object.keys(strand.heldBy).join(", ")} (not ready yet)`, moves: [] };
-    else if (busiest) standing = { since: busiest.standing.since, why: `waiting on ${busiest.child.name}`, moves: [], waitsOn: busiest.child.id };
-    else if (live.length > 0) standing = { since: strand.made, why: "", moves: [] };
-    else if (strand.planned) standing = { since: strand.made, why: "ready to start", moves: [] };
-    else standing = { whose: "you", since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "no one on it", moves: [] };
+  if (found) standing = found;
+  else {
+    const live = children(model, strand.id).filter((child) => child.done === undefined);
+    const holding = Object.entries(strand.blockedOn)
+      .flatMap(([on, since]) => {
+        const blocker = model.strands.get(on);
+        return blocker && endedAt(model, blocker) === undefined ? [{ blocker, since }] : [];
+      })
+      .sort((a, b) => a.since - b.since)[0];
+    const quiet = { moves: [], items: [] };
+    if (strand.kind === "inbox" && live.length > 0) standing = { ...quiet, since: Math.max(...live.map((child) => child.made)), why: inboxSummary(model, live) };
+    else if (holding) standing = { ...quiet, since: holding.since, why: `waiting on ${holding.blocker.name}`, waitsOn: holding.blocker.id };
+    else if (strand.heldBy) standing = { ...quiet, since: Math.max(...Object.values(strand.heldBy)), why: `waiting on ${Object.keys(strand.heldBy).join(", ")} (not ready yet)` };
+    else if (live.length > 0) standing = { ...quiet, since: strand.made, why: tallyOf(model, live) ?? "" };
+    else if (strand.planned) standing = { ...quiet, since: strand.made, why: "ready to start" };
+    else standing = { ...quiet, since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "quiet", quiet: true };
   }
   index.own.set(strand.id, standing);
   return standing;
+}
+
+export function tallyOf(model: Model, strands: Strand[]): string | undefined {
+  const groups: Tally = new Map();
+  for (const strand of strands) {
+    for (const group of subtreeTally(model, strand).values()) {
+      const into = groups.get(group.label);
+      if (into) groups.set(group.label, { ...into, count: into.count + group.count, since: Math.min(into.since, group.since), what: into.since <= group.since ? into.what : group.what });
+      else groups.set(group.label, { ...group });
+    }
+  }
+  if (groups.size === 0) return undefined;
+  return [...groups.values()]
+    .sort((a, b) => a.since - b.since)
+    .map((group) => `${group.count} for ${group.label}${group.you && group.count === 1 ? ` (${group.what})` : ""}`)
+    .join(" · ");
+}
+
+function subtreeTally(model: Model, strand: Strand, seen = new Set<string>()): Tally {
+  const index = indexOf(model);
+  const cached = index.tallies.get(strand.id);
+  if (cached) return cached;
+  const groups: Tally = new Map();
+  const add = (label: string, since: number, what: string, you: boolean, count = 1) => {
+    const into = groups.get(label);
+    if (into) groups.set(label, { ...into, count: into.count + count, since: Math.min(into.since, since), what: into.since <= since ? into.what : what });
+    else groups.set(label, { label, count, since, what, you });
+  };
+  for (const item of itemsOn(model, strand.id)) if (!item.activity) add(item.addressee.kind === "you" ? "you" : item.addressee.who, item.since, item.why, item.addressee.kind === "you");
+  seen.add(strand.id);
+  for (const child of children(model, strand.id)) {
+    if (child.done !== undefined || seen.has(child.id)) continue;
+    for (const group of subtreeTally(model, child, seen).values()) add(group.label, group.since, group.what, group.you, group.count);
+  }
+  index.tallies.set(strand.id, groups);
+  return groups;
 }
 
 function inboxSummary(model: Model, kids: Strand[]): string {
@@ -391,9 +610,11 @@ export function rolled(model: Model, strand: Strand): Standing {
   const index = indexOf(model);
   const cached = index.rolled.get(strand.id);
   if (cached) return cached;
-  index.rolled.set(strand.id, { since: strand.made, why: "", moves: [] });
+  index.rolled.set(strand.id, { since: strand.made, why: "", moves: [], items: [] });
   const all = [own(model, strand), ...children(model, strand.id).filter((child) => child.done === undefined).map((child) => rolled(model, child))].filter((standing) => standing.whose !== undefined);
-  const standing = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0] ?? { since: strand.made, why: "", moves: [] };
+  const picked = all.sort((a, b) => rank[a.whose!] - rank[b.whose!] || a.since - b.since)[0];
+  const tally = tallyOf(model, [strand]);
+  const standing: Standing = picked ? { ...picked, ...(tally ? { tally } : {}) } : { since: strand.made, why: "", moves: [], items: [] };
   index.rolled.set(strand.id, standing);
   return standing;
 }
@@ -422,12 +643,12 @@ export type Counts = { yours: number; agents: number; snoozed: number; waiting: 
 export function counts(model: Model, now: number): Counts {
   const live = [...model.strands.values()].filter((strand) => isLive(model, strand));
   const yours = yourStrands(model, now);
-  const open = [...model.moves.values()].filter((move) => move.until === undefined && model.strands.has(move.strand) && isLive(model, model.strands.get(move.strand)!));
+  const items = live.flatMap((strand) => itemsOn(model, strand.id));
   return {
     yours: yours.length,
-    agents: open.filter((move) => moveWhose(model, move) === "agent").length,
+    agents: items.filter((item) => item.whose === "agent").length,
     snoozed: live.filter((strand) => own(model, strand).whose === "you" && snoozed(strand, now)).length,
-    waiting: open.filter((move) => ["person", "machine"].includes(moveWhose(model, move))).length,
+    waiting: items.filter((item) => item.whose === "person" || item.whose === "machine").length,
     oldest: yours[0] ? own(model, yours[0]).since : undefined,
   };
 }

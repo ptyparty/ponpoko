@@ -29,6 +29,7 @@ const snapshot = {
   ],
   jobs: [{ id: 7, tabId: 1, name: "build", state: "failed", code: 1, agent: false }],
   toasts: [],
+  features: ["turns"],
 };
 
 const labelledSide = { ...snapshot, tabs: [snapshot.tabs[0], { ...sideTab, labels: { strand: "claude in ptyparty" } }] };
@@ -48,78 +49,121 @@ function line(core: ReturnType<typeof harness>["core"], name: string): string | 
 }
 
 describe("the komux bridge", () => {
-  test("agents' turns become moves on their tab's strand; a Claude in a tab with no strand, or never prompted, shows nowhere", async () => {
+  test("a working Claude fills the agent role on its tab's strand; a Claude in a tab with no strand, or that never had a turn, shows nowhere", async () => {
     const { core, hear } = harness();
     await hear(snapshot);
     await Bun.sleep(0);
     expect(shown(core)).toBe("sc-1234 you pane:s1:2: working; you(job:s1:7): build failed (exit 1)");
     expect(strandNamed(core, "sc-1234")).toMatchObject({ title: "Widget CSV import", kind: "story" });
+    expect(core.model.roles.get(strandNamed(core, "sc-1234").id)).toEqual({ agent: "pane:s1:2" });
     expect(core.model.players.has("pane:s1:5")).toBe(true);
     expect(core.model.players.has("pane:s1:6")).toBe(false);
     const agent = strandNamed(core, "sc-1234").open.find((move) => move.player === "pane:s1:2")!.by;
     expect([agent.live, agent.space, agent.place]).toEqual([true, "tab 1 widgets", { adapter: "komux", handle: "komux:s1:2", session: "main", server: "s1", tabId: 1, paneId: 2, dir: story, sessionId: "c1" }]);
   });
 
-  test("the move follows the agent's turns: yours when a turn ends, the agent's when you prompt it", async () => {
+  test("your prompt is a request to the agent, its turn end answers it, and a full toast asks you to read the reply until you prompt again", async () => {
     const { core, hear, tick } = harness();
-    await hear(snapshot);
+    await hear({ ...snapshot, jobs: [] });
     tick(60_000);
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "waiting", sessionId: "c1" } });
-    await hear({ type: "job.finished", job: { id: 7, tabId: 1, name: "build", state: "succeeded", code: 0 } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): waiting on you");
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, sessionId: "c1", by: "you" });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working; pane:s1:2: your prompt");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "full" });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): read reply");
     expect(strandNamed(core, "sc-1234").own.since).toBe(1_060_000);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "idle", sessionId: "c1" } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): waiting on you");
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): read reply");
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, sessionId: "c1", by: "you" });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working");
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "idle", sessionId: "c1" } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): ready for a prompt");
-    expect(strandNamed(core, "sc-1234").recent.map((move) => `${move.player === "you" ? "you" : "agent"} ${move.what}`)).toEqual([
-      "agent working",
-      "you build failed (exit 1)",
-      "you waiting on you",
-      "agent working",
-      "you ready for a prompt",
-    ]);
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working; pane:s1:2: your prompt");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "brief" });
+    expect(line(core, "sc-1234")).toBe("sc-1234 -");
   });
 
-  test("a docked Claude that's ready before you've ever prompted it isn't your move, even on a strand that exists, such as an epic's; a turn you interrupt is", async () => {
+  test("a task notification's turn asks nothing of the agent, and only a full toast asks you to read it", async () => {
     const { core, hear } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 3, number: 3, name: "epic", dir: "/w/stories/sc-900", labels: { strand: "sc-900" } }], agents: [], jobs: [] });
-    core.record("komux", [{ type: "player.joined", player: "pane:s1:9", kind: "agent", who: "claude", adapter: "komux", place: { handle: "komux:s1:9", dir: "/w/stories/sc-900", server: "s1", session: "main", tabId: 3, paneId: 9 } }]);
-    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "idle", sessionId: "e1" } });
-    expect(strandNamed(core, "sc-900").open).toEqual([]);
-    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "working", sessionId: "e1" } });
-    await hear({ type: "agent.state", agent: { paneId: 9, tabId: 3, state: "idle", sessionId: "e1" } });
-    expect(line(core, "sc-900")).toBe("sc-900 you you(pane:s1:9): ready for a prompt");
-    await hear({ type: "agent.state", agent: { paneId: 10, tabId: 3, state: "working", sessionId: "e2" } });
-    await hear({ type: "agent.state", agent: { paneId: 10, tabId: 3, state: "done", sessionId: "e2", background: { agents: 2, tasks: 0 } } });
-    expect(shown(core)).toContain("pane:s1:10: 2 background agents");
-    await hear({ type: "agent.state", agent: { paneId: 10, tabId: 3, state: "idle", sessionId: "e2" } });
-    expect(shown(core)).toContain("you(pane:s1:10): ready for a prompt");
+    await hear({ ...snapshot, jobs: [] });
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, sessionId: "c1", by: "task" });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working");
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "none" });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "idle", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 -");
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, sessionId: "c1", by: "task" });
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "full" });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): read reply");
   });
 
-  test("a question open in komux is your move, and answering it hands the move back", async () => {
+  test("a prompt ponpoko sent is told apart from yours", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, sessionId: "c1", by: "sent" });
+    expect(strandNamed(core, "sc-1234").open.map((move) => move.what)).toContain("a prompt from ponpoko");
+  });
+
+  test("an older komux with no prompt lines counts each working turn as your prompt and each turn end as a full toast", async () => {
+    const { core, hear } = harness();
+    const { features: _features, ...older } = snapshot;
+    await hear({ ...older, jobs: [], agents: [{ paneId: 2, tabId: 1, state: "idle", sessionId: "c1" }] });
+    expect(line(core, "sc-1234")).toBe("sc-1234 -");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working; pane:s1:2: your prompt");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): read reply");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working; pane:s1:2: your prompt");
+  });
+
+  test("rule 2: a turn end with a full toast asks you to read it beside the review it doesn't answer", async () => {
+    const { core, hear, replied } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    const story = strandNamed(core, "sc-1234").id;
+    core.record("github", [
+      { type: "party.known", party: "group:team", kind: "group", name: "the team" },
+      { type: "said", requests: [{ request: "r-review", strand: story, to: { group: "group:team" }, what: "review widgets#9" }], replies: [] },
+    ]);
+    await replied(2, 1, "full");
+    expect(strandNamed(core, "sc-1234").rolled.tally).toBe("1 for the team · 1 for you (read reply)");
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, by: "you" });
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, toast: "brief" });
+    expect(strandNamed(core, "sc-1234").rolled.tally).toBe("1 for the team");
+    expect(core.model.requests.get("r-review")!.closed).toBeUndefined();
+  });
+
+  test("a question open in komux asks the owner, and answering it hands the move back", async () => {
     const { core, hear } = harness();
     await hear(snapshot);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1", asking: true } });
     expect(line(core, "sc-1234")).toBe("sc-1234 you you(job:s1:7): build failed (exit 1); you(pane:s1:2): asking you");
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
     expect(line(core, "sc-1234")).toBe("sc-1234 you pane:s1:2: working; you(job:s1:7): build failed (exit 1)");
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "waiting", sessionId: "c1" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(job:s1:7): build failed (exit 1); you(pane:s1:2): waiting on you");
   });
 
-  test("closing a pane takes its agent off the strand; a rogue that never said what it was doing leaves nothing", async () => {
-    const { core, hear } = harness();
-    await hear(snapshot);
-    await hear({ type: "agent.gone", paneId: 5, tabId: 2 });
+  test("closing a pane takes its agent off the strand and answers what it asked", async () => {
+    const { core, hear, replied } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    await replied(2, 1);
     await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
-    await hear({ type: "job.closed", jobId: 7, tabId: 1 });
-    expect(shown(core)).toBe("sc-1234 you");
-    expect(strandNamed(core, "sc-1234").own.why).toBe("no one on it");
+    expect(shown(core)).toBe("sc-1234 -");
+    expect(strandNamed(core, "sc-1234").own.why).toBe("quiet");
     expect(core.model.players.get("pane:s1:2")!.gone).toBeDefined();
   });
 
-  test("a Claude in a tab with no strand gets one once it says what it's on, and leaves it behind", async () => {
+  test("closing a pane mid-turn withdraws your prompt to it, but what it asked of others stays open", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
+    core.wait({ self: "komux:s1:2", who: "Sam", kind: "person", what: "approve the schema" });
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, sessionId: "c1", by: "you" });
+    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
+    expect(strandNamed(core, "sc-1234").open.map((move) => move.what)).toEqual(["approve the schema"]);
+    expect([...core.model.requests.values()].find((request) => request.kind === "prompt")!.closed?.as).toBe("withdrawn");
+  });
+
+  test("a Claude in a tab with no strand takes the strand it first names, and its turns land there", async () => {
     const { core, hear } = harness();
     await hear(snapshot);
     await hear({ type: "agent.state", agent: { paneId: 5, tabId: 2, state: "working" } });
@@ -127,37 +171,50 @@ describe("the komux bridge", () => {
     core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:5"], spaces: [] });
     expect(() => core.status({ self: "komux:s1:5", text: "sketching an idea" })).toThrow("name the strand");
     core.status({ self: "komux:s1:5", strand: "sketch", text: "sketching an idea" });
+    await hear({ type: "agent.prompt", paneId: 5, tabId: 2, by: "you" });
     await hear({ type: "agent.state", agent: { paneId: 5, tabId: 2, state: "done" } });
-    expect(line(core, "sketch")).toBe("sketch you you(pane:s1:5): turn ended");
+    await hear({ type: "agent.turn", paneId: 5, tabId: 2, toast: "full" });
+    expect(line(core, "sketch")).toBe("sketch you you(pane:s1:5): read reply");
     await hear({ type: "agent.gone", paneId: 5, tabId: 2 });
-    expect(line(core, "sketch")).toBe("sketch you");
+    expect(line(core, "sketch")).toBe("sketch -");
   });
 
-  test("a tab labelled with a strand that doesn't exist makes nothing", async () => {
+  test("a second Claude in the same tab is the agent on a strand of its own under the tab's", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 3, tabId: 1, state: "working", sessionId: "c3" } });
+    expect(line(core, "  claude 3")).toBe("  claude 3 agent pane:s1:3: working");
+    expect(core.model.roles.get(strandNamed(core, "sc-1234").id)).toEqual({ agent: "pane:s1:2" });
+    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
+    await hear({ type: "agent.state", agent: { paneId: 4, tabId: 1, state: "working", sessionId: "c4" } });
+    expect(core.model.roles.get(strandNamed(core, "sc-1234").id)).toEqual({ agent: "pane:s1:4" });
+  });
+
+  test("a tab labelled with a strand that doesn't exist makes nothing, but a failed job there gets a loose strand", async () => {
     const { core, hear } = harness(1_000_000, undefined, undefined, undefined, false);
-    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "widgets" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [{ id: 7, tabId: 1, name: "build", state: "failed", code: 1, agent: false }] });
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "widgets" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [{ id: 7, tabId: 1, name: "build", state: "failed", code: 1, agent: false }], features: ["turns"] });
     expect(shown(core)).toBe("build in widgets you you(job:s1:7): build failed (exit 1)");
     core.add(undefined, "widgets");
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working" } });
     expect(line(core, "widgets")).toBe("widgets agent pane:s1:2: working");
   });
 
-  test("a new komux in the same session takes the old one's agents off their strands", async () => {
+  test("a new komux in the same session takes the old one's agents off, and its own Claude takes the strand", async () => {
     const { core, hear } = harness();
     await hear(snapshot);
     await hear({ server: "s2", type: "snapshot", tabs: snapshot.tabs, agents: [{ paneId: 3, tabId: 1, state: "working", sessionId: "c1" }], jobs: [] });
     expect(shown(core)).toBe("sc-1234 agent pane:s2:3: working");
-    expect(core.model.players.get("pane:s1:5")!.gone).toBeDefined();
+    expect(core.model.players.get("pane:s1:2")!.gone).toBeDefined();
   });
 
-  test("a conversation resumed in a new pane carries on with the strand it was on", async () => {
+  test("a conversation resumed in a new pane is the agent on the strand it was on", async () => {
     const { core, hear } = harness();
     await hear(snapshot);
     core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
     core.status({ self: "komux:s1:2", strand: "importer", text: "fixing the importer" });
     await hear({ server: "s2", type: "snapshot", tabs: snapshot.tabs, agents: [{ paneId: 8, tabId: 1, state: "working", sessionId: "c1" }], jobs: [] });
-    expect(line(core, "sc-1234")).toBe("sc-1234 -");
-    expect(line(core, "  importer")).toBe("  importer agent pane:s2:8: working");
+    expect(core.model.roles.get(strandNamed(core, "sc-1234").id)).toEqual({ agent: "pane:s2:8" });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s2:8: working");
   });
 
   test("a tab's label finds its strand even when the strand sits under another, such as a story under its epic", async () => {
@@ -168,17 +225,16 @@ describe("the komux bridge", () => {
     expect(core.snapshot().strands.filter((strand) => strand.name === "sc-1234")).toHaveLength(1);
   });
 
-  test("opening a tab labelled with a strand makes that strand at once, and it's yours", async () => {
+  test("opening a tab labelled with a strand makes that strand at once, with nothing asked yet", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, agents: [], jobs: [] });
     await hear({ type: "tab.opened", tab: { id: 3, number: 3, name: "acme-libraries #540", dir: "/w/acme-libraries", labels: { strand: "sc-1235", pr: "540" } } });
-    expect(line(core, "sc-1235")).toBe("sc-1235 you");
-    expect(strandNamed(core, "sc-1235").own.why).toBe("no one on it");
+    expect(line(core, "sc-1235")).toBe("sc-1235 -");
     await hear({ type: "tab.opened", tab: { id: 4, number: 4, name: "another", dir: "/w/x", labels: { strand: "SC-1235" } } });
     expect(core.snapshot().strands.filter((strand) => strand.name === "sc-1235")).toHaveLength(1);
   });
 
-  test("a finished strand isn't made again when its Claude goes idle, and comes back when you prompt it or open its tab", async () => {
+  test("a finished strand isn't made again when its Claude goes idle, and comes back when it works again or you open its tab", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });
     core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
@@ -192,7 +248,7 @@ describe("the komux bridge", () => {
     expect(core.snapshot().strands.filter((strand) => strand.name === "sc-1234")).toHaveLength(1);
     core.doneBy({ self: "komux:s1:2" }, "finished again");
     await hear({ type: "tab.opened", tab: { id: 5, number: 5, name: "widgets again", dir: story, labels: { strand: "sc-1234" } } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you");
+    expect(line(core, "sc-1234")).toBe("sc-1234 -");
   });
 
   test("reconnecting or replaying a snapshot records nothing new", async () => {
@@ -203,26 +259,41 @@ describe("the komux bridge", () => {
     expect(store.all().length).toBe(facts);
   });
 
-  test("a Claude whose turn ends while its own background job runs waits on the job, and is yours once the job is over", async () => {
+  test("old open moves from komux are closed once komux is heard again", async () => {
+    const { core, hear } = harness();
+    core.add(undefined, "sc-1234");
+    core.record("komux", [
+      { type: "player.joined", player: "pane:s1:2", kind: "agent", who: "claude", adapter: "komux" },
+      { type: "move.opened", move: "m-old", strand: strandNamed(core, "sc-1234").id, player: "you", with: "pane:s1:2", what: "ready for a prompt", kind: "ready" },
+    ]);
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): ready for a prompt");
+    await hear({ ...snapshot, jobs: [] });
+    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working");
+  });
+
+  test("a Claude's own background job runs on its strand for it, and goes when the job is over", async () => {
     const { core, hear, store } = harness();
     await hear({ ...snapshot, jobs: [] });
     const build = { id: 9, tabId: 1, name: "gadgets build", state: "running", agent: false, startedBy: 2 };
     await hear({ type: "job.started", job: build });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "none" });
     expect(line(core, "sc-1234")).toBe("sc-1234 machine job:s1:9: running");
+    expect(strandNamed(core, "sc-1234").open[0]!.answers!.id).toBe("pane:s1:2");
     expect(core.snapshot().moves.map((strand) => strand.name)).not.toContain("sc-1234");
     expect(goTarget(strandNamed(core, "sc-1234"), [], { KOMUX_SESSION: "main", KOMUX_SERVER_ID: "s1" })?.player.id).toBe("pane:s1:2");
     const facts = store.all().length;
     await hear({ ...snapshot, agents: [{ paneId: 2, tabId: 1, state: "done", sessionId: "c1" }, ...snapshot.agents.slice(1)], jobs: [build] });
     expect(store.all().length).toBe(facts);
     await hear({ type: "job.finished", job: { ...build, state: "succeeded", code: 0 } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
+    expect(line(core, "sc-1234")).toBe("sc-1234 -");
   });
 
-  test("a Claude whose turn ends with background agents running stays on the move, counting them, until nothing is left", async () => {
+  test("a Claude whose turn ends with background agents running shows them as its activity until nothing is left", async () => {
     const { core, hear, store } = harness();
     await hear({ ...snapshot, jobs: [] });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 3, tasks: 0 } } });
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "none" });
     expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: 3 background agents");
     expect(core.snapshot().moves.map((strand) => strand.name)).not.toContain("sc-1234");
     const facts = store.all().length;
@@ -230,23 +301,20 @@ describe("the komux bridge", () => {
     expect(store.all().length).toBe(facts);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "idle", sessionId: "c1", background: { agents: 1, tasks: 2 } } });
     expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: 1 background agent · 2 background tasks");
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1", background: { agents: 1, tasks: 0 } } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working");
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 1, tasks: 0 } } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: 1 background agent");
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
+    expect(line(core, "sc-1234")).toBe("sc-1234 -");
   });
 
-  test("a live test an agent asked for survives its turn ending with background agents running", async () => {
+  test("a live test an agent asked for survives its turn ending", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });
     core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
     core.wait({ self: "komux:s1:2", strand: "sc-1234", who: "you", kind: "you", what: "try it in the browser" });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: { agents: 1, tasks: 0 } } });
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "none" });
     expect(strandNamed(core, "sc-1234").open.map((move) => move.what).sort()).toEqual(["1 background agent", "try it in the browser"]);
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
-    expect(strandNamed(core, "sc-1234").open.map((move) => move.what).sort()).toEqual(["try it in the browser", "turn ended"]);
+    expect(strandNamed(core, "sc-1234").open.map((move) => move.what)).toEqual(["try it in the browser"]);
   });
 
   test("a Claude with background agents running that asks you something, or needs you, is your move", async () => {
@@ -256,8 +324,6 @@ describe("the komux bridge", () => {
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1", background: busy } });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", asking: true, sessionId: "c1", background: busy } });
     expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): asking you");
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "waiting", sessionId: "c1", background: busy } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): waiting on you");
   });
 
   test("background commands that run as komux jobs show as the jobs, not again in the count", async () => {
@@ -279,7 +345,7 @@ describe("the komux bridge", () => {
     expect(malformed.type === "agent.state" ? malformed.agent.background : "not an agent line").toBeUndefined();
   });
 
-  test("a job that says which strand it's for waits there, not on the strand of the tab whose Claude started it, whichever comes first", async () => {
+  test("a job that says which strand it's for runs there, not on the strand of the tab whose Claude started it, whichever comes first", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });
     core.add(strandNamed(core, "sc-1234").id, "gadgets");
@@ -288,7 +354,6 @@ describe("the komux bridge", () => {
     await hear({ type: "job.started", job: build });
     expect(handle(core, { method: "for", params: { strand: "gadgets", player: "job:s1:9", dir: story } })).toEqual({ ok: true, result: { strand: "sc-1234 › gadgets" } });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
-    expect(line(core, "sc-1234 ")).toBeUndefined();
     expect(shown(core)).toContain("  gadgets machine job:s1:9: running");
     expect(strandNamed(core, "sc-1234 › gadgets").open[0]?.answers?.id).toBe("pane:s1:2");
     const rerun = { ...build, id: 10 };
@@ -298,12 +363,10 @@ describe("the komux bridge", () => {
     expect(shown(core)).toContain("sc-1234 machine job:s1:10: running");
     core.workFor({ strand: "widgets", player: "job:s1:10", dir: story });
     expect(shown(core)).toContain("  widgets machine job:s1:10: running");
-    expect(strandNamed(core, "sc-1234").own.whose).toBeUndefined();
     await hear({ type: "job.finished", job: { ...rerun, state: "succeeded", code: 0 } });
     expect(strandNamed(core, "sc-1234 › widgets").open).toEqual([]);
     await hear({ type: "job.finished", job: { ...build, state: "failed", code: 1 } });
     expect(strandNamed(core, "sc-1234 › gadgets").open).toEqual([]);
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended");
   });
 
   test("ponpoko for reads the strand from its arguments or PONPOKO_STRAND, and names the job it runs in", async () => {
@@ -325,17 +388,16 @@ describe("the komux bridge", () => {
     expect(sent).toHaveLength(1);
   });
 
-  test("a Claude whose turn ends after reporting a wait on someone or on another strand leaves the strand waiting, not yours", async () => {
+  test("a wait an agent asked for stays open through its turn ending, and a strand waiting on another is quiet till it's done", async () => {
     const { core, hear, tick } = harness();
     await hear({ ...snapshot, jobs: [] });
     core.wait({ self: "komux:s1:2", who: "Copilot", kind: "machine", what: "reviewing PR #821" });
     await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 machine machine:copilot: reviewing PR #821");
+    await hear({ type: "agent.turn", paneId: 2, tabId: 1, sessionId: "c1", toast: "none" });
+    expect(line(core, "sc-1234")).toBe("sc-1234 machine service:copilot: reviewing PR #821");
     core.wait({ self: "komux:s1:2", who: "Copilot", kind: "machine", what: "reviewing PR #821", over: true });
     core.add(undefined, "sc-2");
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
     core.blockBy({ self: "komux:s1:2", on: "sc-2" });
-    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "done", sessionId: "c1" } });
     expect(strandNamed(core, "sc-1234").own.why).toBe("waiting on sc-2");
     expect(core.snapshot().moves.map((strand) => strand.name)).not.toContain("sc-1234");
     tick(60_000);
@@ -352,33 +414,19 @@ describe("the komux bridge", () => {
     expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:2: working");
   });
 
-  test("a Claude starting work on a strand clears your turns that are over there, but not a live question", async () => {
+  test("a Claude starting work answers nothing it wasn't handed: GitHub's asks and another Claude's question stay open", async () => {
     const { core, hear } = harness();
-    const two = { type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: story, labels: { strand: "sc-1234" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }, { paneId: 3, tabId: 1, state: "working", asking: true }], jobs: [] };
+    const two = { type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: story, labels: { strand: "sc-1234" } }], agents: [{ paneId: 3, tabId: 1, state: "working", asking: true }], jobs: [] };
     await hear(two);
     core.record("github", [{ type: "move.opened", move: "gh", strand: strandNamed(core, "sc-1234").id, player: "you", what: "assigned to you" }]);
-    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:2): turn ended; you(pane:s1:3): asking you; you(undefined): assigned to you");
-    await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
-    await hear({ type: "tab.opened", tab: { id: 2, number: 2, name: "widgets 2", dir: story, labels: { strand: "sc-1234" } } });
-    await hear({ type: "agent.state", agent: { paneId: 4, tabId: 2, state: "working" } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you pane:s1:4: working; you(pane:s1:3): asking you");
-    await hear({ type: "agent.state", agent: { paneId: 3, tabId: 1, state: "working" } });
-    expect(line(core, "sc-1234")).toBe("sc-1234 agent pane:s1:3: working; pane:s1:4: working");
+    await hear({ type: "agent.state", agent: { paneId: 4, tabId: 1, state: "working" } });
+    expect(line(core, "sc-1234")).toBe("sc-1234 you you(pane:s1:3): asking you; you(undefined): assigned to you");
   });
 
-  test("an agent reporting a wait clears its own finished turns, but not another Claude's live question", async () => {
-    const { core, hear } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: story, labels: { strand: "sc-1234" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }, { paneId: 3, tabId: 1, state: "waiting" }], jobs: [] });
-    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2", "pane:s1:3"], spaces: [] });
-    core.wait({ self: "komux:s1:2", strand: "sc-1234", who: "Copilot", kind: "machine", what: "reviewing PR #9" });
-    expect(line(core, "sc-1234")).toBe("sc-1234 you machine:copilot: reviewing PR #9; you(pane:s1:3): waiting on you");
-    await hear({ type: "agent.gone", paneId: 3, tabId: 1 });
-    expect(strandNamed(core, "sc-1234").own.whose).toBe("machine");
-  });
-
-  test("focusing an agent whose turn ended marks its strand seen", async () => {
-    const { core, hear } = harness();
+  test("focusing an agent that asked you something marks its strand seen", async () => {
+    const { core, hear, replied } = harness();
     await hear(labelledSide);
+    await replied(5, 2);
     expect(strandNamed(core, "claude in ptyparty").unseen).toBe(true);
     await hear({ type: "focus", tabId: 2, paneId: 5 });
     expect(strandNamed(core, "claude in ptyparty").unseen).toBe(false);
@@ -388,7 +436,7 @@ describe("the komux bridge", () => {
     const { core, hear } = harness();
     await hear(snapshot);
     core.point(side, "ptyparty");
-    expect(line(core, "ptyparty")).toBe("ptyparty you");
+    expect(line(core, "ptyparty")).toBe("ptyparty -");
     await hear({ type: "agent.state", agent: { paneId: 5, tabId: 2, state: "working" } });
     expect(line(core, "ptyparty")).toBe("ptyparty agent pane:s1:5: working");
   });
@@ -412,9 +460,9 @@ describe("the komux bridge", () => {
     const { core, hear, bridge } = harness();
     await hear(snapshot);
     const second = harness(1_000_000, undefined, core);
-    await second.hear({ server: "s2", type: "snapshot", tabs: snapshot.tabs, agents: [{ paneId: 3, tabId: 1, state: "done" }], jobs: [] });
+    await second.hear({ server: "s2", type: "snapshot", tabs: snapshot.tabs, agents: [{ paneId: 3, tabId: 1, state: "working" }], jobs: [] });
     await bridge.leave();
-    expect(strandNamed(core, "sc-1234").open.find((move) => move.answers?.id === "pane:s2:3")!.answers!.live).toBe(true);
+    expect(strandNamed(core, "sc-1234").open.find((move) => move.by.id === "pane:s2:3")!.by.live).toBe(true);
   });
 
   test("badges each tab with whose move its strands hold, sending only changes", async () => {
@@ -536,7 +584,8 @@ describe("go in komux", () => {
     const strand = strandNamed(core, "sc-1234");
     expect(pickup(strand)).toEqual({ resume: { session: "c1", dir: story, who: "claude", at: 1_000_000 }, dir: story });
     expect(brief(strand)).toContain('You\'re picking up the strand "sc-1234" in ponpoko: Widget CSV import.');
-    expect(brief(strand)).toContain("- claude: fixing the importer (quoll sc-1234/plan.md)");
+    expect(brief(strand)).toContain("- claude: fixing the importer");
+    expect(brief(strand)).toContain("- quoll sc-1234/plan.md");
     const { sent, control } = recorder();
     await pickUpInKomux(strand, "resume", env, control);
     await pickUpInKomux(strand, "fresh", env, control);

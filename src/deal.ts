@@ -23,7 +23,7 @@ const prompts: Record<Purpose, string> = {
 const purposeKeys: Record<string, Purpose> = { a: "add", n: "note", m: "move", r: "rename", t: "title", w: "wait" };
 
 type Section = { title: string; side: "mine" | "others"; strands: StrandView[]; counted: boolean };
-type FoldKey = "blocked" | "snoozed";
+type FoldKey = "blocked" | "quiet" | "snoozed";
 type Fold = { key: FoldKey; title: string; strands: StrandView[] };
 type Item = { strand: StrandView; fold?: undefined } | { fold: Fold; strand?: undefined };
 
@@ -89,9 +89,11 @@ export class Dealer {
     for (const [title, strands] of [["agents", agents], ["your PRs out for review", outForReview], ["people", people], ["machines", machines]] as const) {
       if (strands.length > 0) this.sections.push({ title, side: "others", strands: [...strands].sort(newest), counted: true });
     }
-    const blocked = awake.filter((strand) => strand.own.whose === undefined).sort(newest);
+    const blocked = awake.filter((strand) => strand.own.whose === undefined && !strand.own.quiet).sort(newest);
+    const quiet = awake.filter((strand) => strand.own.whose === undefined && strand.own.quiet).sort(newest);
     const sleeping = listed.filter(asleep).sort((a, b) => a.snoozedUntil! - b.snoozedUntil!);
     if (blocked.length > 0) this.folds.push({ key: "blocked", title: "waiting on other strands", strands: blocked });
+    if (quiet.length > 0) this.folds.push({ key: "quiet", title: "nothing asked", strands: quiet });
     if (sleeping.length > 0) this.folds.push({ key: "snoozed", title: "snoozed", strands: sleeping });
   }
 
@@ -399,7 +401,7 @@ export class Dealer {
   private foldDetail(fold: Fold, width: number): string[] {
     const stripe = (parts: Part[] = []) => style.raised(cells([[" ▎", style.faint], " ", ...parts], width));
     const one = fold.strands.length === 1;
-    const what = fold.key === "blocked" ? `${one ? "waits" : "wait"} on other strands, or on the strands under ${one ? "it" : "them"}, with nothing of ${one ? "its" : "their"} own to do` : one ? "is snoozed" : "are snoozed";
+    const what = fold.key === "blocked" ? `${one ? "waits" : "wait"} on other strands, or on the strands under ${one ? "it" : "them"}, with nothing of ${one ? "its" : "their"} own to do` : fold.key === "quiet" ? `${one ? "has" : "have"} nothing asked of anyone and no one on ${one ? "it" : "them"}` : one ? "is snoozed" : "are snoozed";
     return [stripe([[`${fold.strands.length} ${one ? "strand" : "strands"} ${what}`, style.text]]), stripe([[fold.strands.slice(0, 6).map((strand) => headline(strand).title).join(" · "), style.faint]])];
   }
 
@@ -427,7 +429,7 @@ export class Dealer {
 
   private async finish(): Promise<"close"> {
     if (this.snapshot) {
-      for (const strand of this.snapshot.moves) if (this.dealt.has(strand.id) && ((this.unseen && strand.unseen) || strand.own.finished)) await this.actions.seen(strand.id).catch(() => undefined);
+      for (const strand of this.snapshot.moves) if (this.dealt.has(strand.id) && this.unseen && strand.unseen) await this.actions.seen(strand.id).catch(() => undefined);
     }
     return "close";
   }

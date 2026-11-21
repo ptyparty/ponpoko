@@ -10,18 +10,21 @@ const tab = z.object({
   args: z.record(z.string(), z.string()).optional(),
 });
 const background = z.object({ agents: z.number().int().min(0).catch(0), tasks: z.number().int().min(0).catch(0) });
-const agent = z.object({ paneId: z.number(), tabId: z.number(), state: z.string(), asking: z.boolean().optional(), name: z.string().optional(), sessionId: z.string().optional(), background: background.optional().catch(undefined) });
+const mark = z.object({ n: z.number() }).passthrough().optional().catch(undefined);
+const agent = z.object({ paneId: z.number(), tabId: z.number(), state: z.string(), asking: z.boolean().optional(), name: z.string().optional(), sessionId: z.string().optional(), background: background.optional().catch(undefined), prompt: mark, turnEnd: mark });
 const job = z.object({ id: z.number(), tabId: z.number(), name: z.string(), state: z.string(), code: z.number().nullable().optional(), agent: z.boolean().optional(), startedBy: z.number().optional() });
 const toast = z.object({ kind: z.string(), id: z.number(), tabId: z.number() });
 const envelope = { session: z.string(), server: z.string().default("unknown"), at: z.number().optional() };
 
 export const komuxLine = z.discriminatedUnion("type", [
-  z.object({ ...envelope, type: z.literal("snapshot"), tabs: z.array(tab), agents: z.array(agent), jobs: z.array(job), toasts: z.array(toast).default([]) }),
+  z.object({ ...envelope, type: z.literal("snapshot"), tabs: z.array(tab), agents: z.array(agent), jobs: z.array(job), toasts: z.array(toast).default([]), features: z.array(z.string()).optional().catch(undefined) }),
   z.object({ ...envelope, type: z.literal("tab.opened"), tab }),
   z.object({ ...envelope, type: z.literal("tab.changed"), tab }),
   z.object({ ...envelope, type: z.literal("tab.closed"), tabId: z.number() }),
   z.object({ ...envelope, type: z.literal("focus"), tabId: z.number(), paneId: z.number() }),
   z.object({ ...envelope, type: z.literal("agent.state"), agent }),
+  z.object({ ...envelope, type: z.literal("agent.prompt"), paneId: z.number(), tabId: z.number(), sessionId: z.string().optional(), by: z.string() }),
+  z.object({ ...envelope, type: z.literal("agent.turn"), paneId: z.number(), tabId: z.number(), sessionId: z.string().optional(), toast: z.string() }),
   z.object({ ...envelope, type: z.literal("agent.gone"), paneId: z.number(), tabId: z.number() }),
   z.object({ ...envelope, type: z.literal("job.started"), job }),
   z.object({ ...envelope, type: z.literal("job.finished"), job }),

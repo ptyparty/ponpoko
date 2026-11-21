@@ -5,8 +5,9 @@ import { TabController } from "./tab.ts";
 import { harness, recordingActions, strandNamed } from "./test-harness.ts";
 
 async function setup() {
-  const { core, hear } = harness();
-  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done" }], jobs: [] });
+  const { core, hear, replied } = harness();
+  await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [], jobs: [] });
+  await replied(2, 1);
   core.add(strandNamed(core, "sc-1").id, "tests");
   const { actions, calls } = recordingActions();
   const tab = new TabController(actions, () => 1_000_000);
@@ -30,8 +31,8 @@ describe("the command tab", () => {
     const lines = plain(tab.view(120, 24));
     expect(lines).toHaveLength(24);
     expect(lines[0]).toMatch(/◆ ponpoko +1 Work 2 +2 Reviews 0 +3 Mentions 0 +\/ search all/);
-    expect(lines[2]).toMatch(/^▎ Smarter widget pricing  sc-100 · epic · 1 story · 1 yours/);
-    expect(lines[3]).toMatch(/^ {4}● Gadget prices +sc-101 +no one on it +now/);
+    expect(lines[2]).toMatch(/^▎ Smarter widget pricing  sc-100 · epic · 1 story/);
+    expect(lines[3]).toMatch(/^ {4}○ Gadget prices +sc-101 +quiet/);
     expect(lines[5]).toMatch(/^ {2}Other work/);
     expect(lines[6]).toMatch(/^ {4}● Widget CSV import +sc-1 +claude replied +now +tab 1 +▸1/);
     expect(lines.join("\n")).not.toContain("tests");
@@ -41,7 +42,7 @@ describe("the command tab", () => {
     expect(tab.current()?.strand?.name).toBe("sc-1");
     expect(plain(tab.view(120, 24)).at(-1)).toMatch(/⏎  go to claude in tab 1 widgets +␣  its strands/);
     await tab.key({ name: " ", text: " " });
-    expect(plain(tab.view(120, 24))[7]).toMatch(/^ {8}● tests +no one on it/);
+    expect(plain(tab.view(120, 24))[7]).toMatch(/^ {8}○ tests +quiet/);
     await tab.key({ name: "l", text: "l" });
     const log = plain(tab.view(120, 20));
     expect(log[0]).toMatch(/◆ log +newest first · \d+/);
@@ -67,8 +68,8 @@ describe("the command tab", () => {
     const tab = new TabController(recordingActions().actions, now);
     tab.setSnapshot(core.snapshot());
     const screen = plain(tab.view(140, 30)).join("\n");
-    expect(screen).toMatch(/● Gadgets: import and export +sc-2 [^\n]*\n {8}▸ then: fees by charge sc-3 → door fees sc-4 → accessorials sc-5 *\n/);
-    expect(screen).toMatch(/Other work *\n {4}● side[^\n]*\n {4}● zebra[^\n]*\n {4}◷ dotfiles +snoozed till/);
+    expect(screen).toMatch(/○ Gadgets: import and export +sc-2 [^\n]*\n {8}▸ then: fees by charge sc-3 → door fees sc-4 → accessorials sc-5 *\n/);
+    expect(screen).toMatch(/Other work *\n {4}○ side[^\n]*\n {4}○ zebra[^\n]*\n {4}◷ dotfiles +snoozed till/);
     await tab.key({ name: "j" });
     await tab.key({ name: "j" });
     expect(tab.current()?.fold).toBe(true);
@@ -81,7 +82,7 @@ describe("the command tab", () => {
     for (const char of "door fee notes") await tab.key({ name: char, text: char });
     await tab.key({ name: "return" });
     expect(tab.current()?.strand?.name).toBe("door fee notes");
-    expect(plain(tab.view(140, 30)).join("\n")).toMatch(/▾ then: [^\n]*\n[^\n]*sc-3[^\n]*\n[^\n]*sc-4[^\n]*\n▎ +● door fee notes/);
+    expect(plain(tab.view(140, 30)).join("\n")).toMatch(/▾ then: [^\n]*\n[^\n]*sc-3[^\n]*\n[^\n]*sc-4[^\n]*\n▎ +○ door fee notes/);
   });
 
   test("the cursor stays where it was when the picked row goes away", async () => {
@@ -131,7 +132,7 @@ describe("the command tab", () => {
     for (const char of "tests") await tab.key({ name: char, text: char });
     await tab.key({ name: "return" });
     expect(tab.current()?.strand?.name).toBe("tests");
-    expect(plain(tab.view(120, 20)).join("\n")).toMatch(/▎ {7}● tests/);
+    expect(plain(tab.view(120, 20)).join("\n")).toMatch(/▎ {7}○ tests/);
     expect(calls).toEqual([]);
   });
 
@@ -227,7 +228,7 @@ describe("the command tab", () => {
     expect(tab.current()?.strand?.id).toBe(sc1);
     core.block(sc1, sc2);
     tab.setSnapshot(core.snapshot());
-    expect(plain(tab.view(100, 20)).join("\n")).toMatch(/● sc-2 +no one on it[^\n]*\n {8}▸ then: Widget CSV import sc-1/);
+    expect(plain(tab.view(100, 20)).join("\n")).toMatch(/○ sc-2 +quiet[^\n]*\n {8}▸ then: Widget CSV import sc-1/);
     await tab.key({ name: "j" });
     await tab.key({ name: "return" });
     await tab.key({ name: "j" });
@@ -283,8 +284,9 @@ describe("the command tab", () => {
   });
 
   test("Enter on a strand no one is on offers to resume its last Claude or start a fresh one", async () => {
-    const { core, hear } = harness();
-    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "done", sessionId: "c2" }], jobs: [] });
+    const { core, hear, replied } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [], jobs: [] });
+    await replied(2, 1, "full", "c2");
     await hear({ type: "agent.gone", paneId: 2, tabId: 1 });
     const { actions, calls } = recordingActions();
     const tab = new TabController(actions, () => 1_000_000);

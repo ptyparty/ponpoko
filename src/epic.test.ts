@@ -34,7 +34,7 @@ describe("an epic's dependencies", () => {
     const { core } = epic();
     const snapshot = core.snapshot();
     const graph = epicGraph(snapshot, findEpic(snapshot, "1")!);
-    expect(Object.fromEntries(graph.nodes.map((node) => [node.name, node.state]))).toEqual({ "sc-2": "done", "sc-3": "review", "sc-4": "later", "sc-5": "mine", "sc-6": "later", "sc-7": "ready", "sc-8": "mine" });
+    expect(Object.fromEntries(graph.nodes.map((node) => [node.name, node.state]))).toEqual({ "sc-2": "done", "sc-3": "review", "sc-4": "later", "sc-5": "mine", "sc-6": "later", "sc-7": "ready", "sc-8": "ready" });
     const layout = layoutGraph(graph);
     expect(layout.placed.map((at) => `${at.node.name} ${at.col},${at.row}`)).toEqual(["sc-2 0,0", "sc-3 1,0", "sc-4 2,0", "sc-5 2,1", "sc-6 3,0"]);
     expect(layout.loose.map((node) => node.name)).toEqual(["sc-7", "sc-8"]);
@@ -50,12 +50,12 @@ describe("an epic's dependencies", () => {
     const view = new EpicController(actions, "sc-1", async (text) => void copied.push(text));
     view.setSnapshot(core.snapshot());
     const screen = plain(view.view(150, 45));
-    expect(screen[0]).toMatch(/^ Gadgets  sc-1 · 7 stories · 1 done · 1 in review · 2 in progress · 1 ready/);
+    expect(screen[0]).toMatch(/^ Gadgets  sc-1 · 7 stories · 1 done · 1 in review · 1 in progress · 2 ready/);
     expect(screen[2]).toContain("✓ done   ⊘ in review or waiting on someone   ● yours   ◐ an agent's   ○ ready to start   · not started   ─▶ unblocks");
     expect(screen.join("\n")).toMatch(/│ ✓ 2 +│─────▶│ ⊘ 3/);
     expect(screen.join("\n")).toMatch(/│ ⊘ 3 +│──┬──▶│ · 4 +│──┬──▶│ · 6/);
     expect(screen.join("\n")).toMatch(/└──▶│ ● 5 +│──┘/);
-    expect(screen.join("\n")).toMatch(/│ ○ 7 +│ +│ ● 8 +│/);
+    expect(screen.join("\n")).toMatch(/│ ○ 7 +│ +│ ○ 8 +│/);
     expect(screen.at(-1)).toContain("⏎  sc-2 is done");
     await view.key({ name: "right" });
     await view.key({ name: "right" });

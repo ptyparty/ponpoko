@@ -46,14 +46,17 @@ describe("importing an epic from Shortcut", () => {
     expect(epic.rolled.whose).toBeUndefined();
   });
 
-  test("a planned strand is nobody's move until someone takes a turn on it or you start it", () => {
+  test("a planned strand is nobody's move, and starting it lets requests make it yours", () => {
     const { core } = harness();
     const id = core.add(undefined, "sc-1");
     core.record("shortcut", [{ type: "strand.planned", strand: id, planned: true }]);
     expect(strandNamed(core, "sc-1").own.whose).toBeUndefined();
     expect(core.snapshot().counts.yours).toBe(0);
     core.start(id);
-    expect(strandNamed(core, "sc-1").own).toMatchObject({ whose: "you", why: "no one on it" });
+    expect(strandNamed(core, "sc-1").own).toMatchObject({ why: "quiet" });
+    expect(strandNamed(core, "sc-1").own.whose).toBeUndefined();
+    core.wait({ strand: "sc-1", who: "you", kind: "you", what: "write the plan" }, "you");
+    expect(strandNamed(core, "sc-1").own).toMatchObject({ whose: "you", why: "write the plan" });
     core.record("shortcut", [{ type: "strand.planned", strand: id, planned: true }]);
     core.wait({ strand: "sc-1", who: "Sam", kind: "person", what: "a question" }, "you");
     expect(strandNamed(core, "sc-1").planned).toBeUndefined();

@@ -42,20 +42,25 @@ describe("the ponpoko MCP", () => {
     expect(titles).toEqual({ "sc-7": "Widget CSV import", titles: "Let agents title strands", status: "Title from status", split: undefined });
   });
 
-  test("agents say what they're doing on which strand, split it, wait on others, and ask what needs the user", async () => {
+  test("agents say what they're doing on which strand, split it, ask others, and ask what needs the user", async () => {
     const { core, call } = await setup();
     await call("status", { text: "warming up" });
     expect(await call("split", { strand: "sc-7 › review findings", names: ["1", "2"] })).toBe("Made sc-7 › review findings › 1; sc-7 › review findings › 2.");
     expect(await call("status", { text: "fixing the report id", strand: "review findings › 1", page: "ponpoko/review-findings.md" })).toBe("Now on sc-7 › review findings › 1.");
-    expect(await call("wait", { who: "Copilot", kind: "machine", what: "reviewing PR #821", strand: "review findings › 2" })).toBe("Waiting on sc-7 › review findings › 2.");
+    expect(await call("ask", { who: "Copilot", kind: "machine", what: "reviewing PR #821", strand: "review findings › 2" })).toBe("Asked on sc-7 › review findings › 2.");
     expect(await call("moves")).toBe("Nothing is waiting on the user.");
     const strand = await call("strand", { strand: "review findings" });
+    expect(strand).toContain("Asked here and under it: 1 for Copilot");
     expect(strand).toContain("- 1: claude working, reported: fixing the report id");
     expect(strand).toContain("- 2: waiting on Copilot, reported: reviewing PR #821");
+    expect(await call("requests", { strand: "review findings" })).toMatch(/^1 unanswered on sc-7 › review findings:\n- sc-7 › review findings › 2: for Copilot: reviewing PR #821, asked by claude \[ask\], now \(r\d+\)$/);
+    expect(await call("requests", { strand: "sc-7 › review findings › 1" })).toBe("Nothing is asked on sc-7 › review findings › 1 or under it.");
     expect(await call("strand")).toContain("sc-7 › review findings › 1");
     expect(await call("changes", { since: "1970-01-01T00:00:00Z" })).toContain("agent: sc-7 › review findings › 2 → Copilot: reviewing PR #821");
-    expect(await call("wait", { who: "Copilot", kind: "machine", what: "review in", over: true, strand: "review findings › 2" })).toContain("Wait over");
-    expect(await call("moves")).toMatch(/^1 strand waiting on the user, oldest first:\n- sc-7 › review findings › 2: no one on it, now$/);
+    expect(await call("ask", { who: "Copilot", kind: "machine", what: "review in", over: true, strand: "review findings › 2" })).toContain("Answered");
+    expect(await call("moves")).toBe("Nothing is waiting on the user.");
+    await call("ask", { who: "you", kind: "you", what: "try the report", strand: "review findings › 2" });
+    expect(await call("moves")).toMatch(/^1 strand waiting on the user, oldest first:\n- sc-7 › review findings › 2: claude · reported: try the report, now \(tab 1 widgets\)$/);
     expect(await call("done", { strand: "review findings › 2" })).toBe("sc-7 › review findings › 2 is done.");
     expect(core.snapshot().strands.map((entry) => entry.name)).toEqual(["sc-7", "review findings", "1"]);
   });
@@ -77,34 +82,34 @@ describe("the ponpoko MCP", () => {
     expect(parseSince("2026-11-06T00:00:00Z", 0)).toBe(Date.parse("2026-11-06T00:00:00Z"));
     expect(parseSince("soon", 0)).toBeUndefined();
   });
-  test("forgives the usual slips: ending a wait with just who or just the strand, and a done on a path that doesn't exist", async () => {
+  test("forgives the usual slips: answering an ask with just who or just the strand, and a done on a path that doesn't exist", async () => {
     const { core, call } = await setup();
     expect(await call("status", { text: "warming up" })).toBe("Now on sc-7.");
     expect(await call("split", { names: ["review merlin", "docs"] })).toBe("Made sc-7 › review merlin; sc-7 › docs.");
-    await call("wait", { who: "Copilot", kind: "machine", what: "reviewing PR #821", strand: "docs" });
-    await call("wait", { who: "Sam", kind: "person", what: "the terms question", strand: "docs" });
-    expect(await call("wait", { who: "copilot", over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    await call("ask", { who: "Copilot", kind: "machine", what: "reviewing PR #821", strand: "docs" });
+    await call("ask", { who: "Sam", kind: "person", what: "the terms question", strand: "docs" });
+    expect(await call("ask", { who: "copilot", over: true, strand: "docs" })).toBe("Answered on sc-7 › docs.");
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.by.who)).toEqual(["Sam"]);
-    expect(await call("wait", { over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    expect(await call("ask", { over: true, strand: "docs" })).toBe("Answered on sc-7 › docs.");
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open).toEqual([]);
-    expect(await call("wait", { over: true, strand: "docs" })).toBe("ponpoko: no such wait: sc-7 › docs has no open wait");
-    await call("wait", { who: "you", kind: "you", what: "try it in the browser", strand: "docs" });
-    await call("wait", { who: "CI", kind: "machine", what: "the build", strand: "docs" });
-    expect(await call("wait", { kind: "machine", over: true, strand: "docs" })).toBe("Wait over on sc-7 › docs.");
+    expect(await call("ask", { over: true, strand: "docs" })).toBe("ponpoko: no such wait: sc-7 › docs has no open wait");
+    await call("ask", { who: "you", kind: "you", what: "try it in the browser", strand: "docs" });
+    await call("ask", { who: "CI", kind: "machine", what: "the build", strand: "docs" });
+    expect(await call("ask", { kind: "machine", over: true, strand: "docs" })).toBe("Answered on sc-7 › docs.");
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.what)).toEqual(["try it in the browser"]);
-    await call("wait", { kind: "you", over: true, strand: "docs" });
+    await call("ask", { kind: "you", over: true, strand: "docs" });
     core.record("github", [
       { type: "player.joined", player: "person:the-team", kind: "person", who: "the team" },
       { type: "move.opened", move: "m-gh", strand: core.snapshot().strands.find((strand) => strand.name === "docs")!.id, player: "person:the-team", what: "0 of 1 reviews" },
     ]);
-    expect(await call("wait", { who: "the team", over: true, strand: "docs" })).toContain("no such wait");
-    await call("wait", { over: true, strand: "docs" });
+    expect(await call("ask", { who: "the team", over: true, strand: "docs" })).toContain("no such wait");
+    await call("ask", { over: true, strand: "docs" });
     expect(core.snapshot().strands.find((strand) => strand.name === "docs")!.open.map((move) => move.what)).toEqual(["0 of 1 reviews"]);
     core.block(core.snapshot().strands.find((strand) => strand.name === "docs")!.id, core.snapshot().strands.find((strand) => strand.name === "review merlin")!.id);
-    await call("wait", { over: true, strand: "docs" });
-    await call("wait", { over: true, strand: "docs" });
+    await call("ask", { over: true, strand: "docs" });
+    await call("ask", { over: true, strand: "docs" });
     expect(Object.keys(core.snapshot().strands.find((strand) => strand.name === "docs")!.blockedOn)).toHaveLength(1);
-    expect(await call("wait", { over: true, strand: "nowhere at all" })).toContain("ponpoko knows of no strand nowhere at all");
+    expect(await call("ask", { over: true, strand: "nowhere at all" })).toContain("ponpoko knows of no strand nowhere at all");
     expect(await call("done", { strand: "sc-7 › review merlins" })).toBe("ponpoko: ponpoko knows of no strand sc-7 › review merlins; the nearest is sc-7 › review merlin");
     expect(await call("done", { strand: "merlin" })).toContain("the nearest is sc-7 › review merlin");
     expect(await call("status", { line: "warming up" })).toContain("text");

@@ -7,6 +7,17 @@ export type Source = string;
 
 const id = z.string().min(1);
 
+export const to = z.union([z.object({ person: id }), z.object({ group: id }), z.object({ service: id }), z.object({ role: z.string().min(1), strand: id })]);
+export type To = z.infer<typeof to>;
+export const replyKinds = ["done", "declined", "withdrawn", "progress", "passed"] as const;
+export type ReplyKind = (typeof replyKinds)[number];
+export const activities = ["working", "background", "job", "idle"] as const;
+export type ActivityKind = (typeof activities)[number];
+const request = z.object({ request: id, strand: id, to, what: z.string(), kind: z.string().optional(), ref: z.string().optional(), from: id.optional() });
+const reply = z.object({ request: id, as: z.enum(replyKinds), to: to.optional(), what: z.string().optional(), by: id.optional() });
+export type RequestSaid = z.infer<typeof request>;
+export type ReplySaid = z.infer<typeof reply>;
+
 export const fact = z.discriminatedUnion("type", [
   z.object({ type: z.literal("strand.made"), strand: id, name: z.string().min(1), parent: id.optional(), kind: z.string().optional() }),
   z.object({ type: z.literal("strand.titled"), strand: id, kind: z.string().optional(), title: z.string() }),
@@ -39,6 +50,12 @@ export const fact = z.discriminatedUnion("type", [
   z.object({ type: z.literal("move.closed"), move: id }),
   z.object({ type: z.literal("link.added"), link: id, strand: id.optional(), move: id.optional(), adapter: z.string().min(1), ref: z.string().min(1), label: z.string().optional() }),
   z.object({ type: z.literal("link.removed"), link: id }),
+  z.object({ type: z.literal("party.known"), party: id, kind: z.enum(["person", "group", "service"]), name: z.string().min(1), handles: z.record(z.string(), z.string()).optional(), members: z.array(id).optional() }),
+  z.object({ type: z.literal("party.merged"), party: id, into: id }),
+  z.object({ type: z.literal("strand.role"), strand: id, role: z.string().min(1), by: id.optional() }),
+  z.object({ type: z.literal("said"), requests: z.array(request).default([]), replies: z.array(reply).default([]) }),
+  z.object({ type: z.literal("handed"), player: id, requests: z.array(id) }),
+  z.object({ type: z.literal("player.activity"), player: id, strand: id.optional(), activity: z.enum(activities), what: z.string().optional(), for: id.optional() }),
 ]);
 
 export type Fact = z.infer<typeof fact>;

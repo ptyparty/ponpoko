@@ -1,6 +1,6 @@
 import { forAdapter, type Knowledge, type Space } from "../core.ts";
-import type { Fact } from "../events.ts";
-import type { Link, Move, Player, Strand } from "../model.ts";
+import type { Fact, ReplySaid, RequestSaid, Whose } from "../events.ts";
+import type { Activity, Link, Move, Player, Request, Strand } from "../model.ts";
 import type { KomuxAgent, KomuxJob, KomuxLine, KomuxTab } from "./stream.ts";
 
 export type KomuxPlace = {
@@ -16,8 +16,21 @@ export type KomuxPlace = {
   asking?: boolean;
 };
 
-export type Known = { strands: Map<string, Strand>; closed: Map<string, Strand>; players: Map<string, Player>; open: Move[]; links: Link[]; on: Map<string, string>; resumed: Map<string, string>; spoke: Set<string>; answered: Set<string> };
-type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob> };
+export type Known = {
+  strands: Map<string, Strand>;
+  closed: Map<string, Strand>;
+  players: Map<string, Player>;
+  open: Move[];
+  links: Link[];
+  on: Map<string, string>;
+  resumed: Map<string, string>;
+  spoke: Set<string>;
+  requests: Request[];
+  roles: Map<string, Record<string, string>>;
+  activities: Map<string, Activity>;
+  whose: Map<string, Whose>;
+};
+type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob>; promptAware: boolean };
 
 export const yourMoves: Record<string, string> = {
   waiting: "waiting on you",
@@ -26,6 +39,7 @@ export const yourMoves: Record<string, string> = {
 };
 export const asking = "asking you";
 export const ready = "ready for a prompt";
+export const readReply = "read reply";
 
 export function komuxTabHandle(server: string, tabId: number): string {
   return `komux:${server}:tab:${tabId}`;
@@ -58,7 +72,10 @@ export function known(knowledge: Knowledge): Known {
     on: new Map(Object.entries(knowledge.on)),
     resumed: new Map(Object.entries(knowledge.resumed ?? {})),
     spoke: new Set(knowledge.spoke),
-    answered: new Set(knowledge.answered ?? []),
+    requests: [...(knowledge.requests ?? [])],
+    roles: new Map(Object.entries(knowledge.roles ?? {})),
+    activities: new Map((knowledge.activities ?? []).map((activity) => [activity.player, activity])),
+    whose: new Map(Object.entries(knowledge.whose ?? {})),
   };
 }
 
@@ -69,12 +86,14 @@ export class Translator {
 
   facts(line: KomuxLine, model: Known): Fact[] {
     const out = new Facts(model, this.newId);
-    if (line.type === "snapshot" || !this.live || this.live.server !== line.server) this.live = { session: line.session, server: line.server, tabs: new Map(), agents: new Map(), jobs: new Map() };
+    if (line.type === "snapshot" || !this.live || this.live.server !== line.server) this.live = { session: line.session, server: line.server, tabs: new Map(), agents: new Map(), jobs: new Map(), promptAware: this.live?.server === line.server && this.live.promptAware };
     const live = this.live;
     switch (line.type) {
       case "snapshot": {
         live.tabs = new Map(line.tabs.map((entry) => [entry.id, entry]));
+        if (line.features?.includes("turns") || line.agents.some((entry) => entry.prompt !== undefined || entry.turnEnd !== undefined)) live.promptAware = true;
         for (const entry of line.tabs) out.labelled(entry, false);
+        out.retireMoves(line.server);
         const agents = new Set(line.agents.map((entry) => agentPlayerId(line.server, entry.paneId)));
         const failing = new Set(line.jobs.filter((entry) => (entry.state === "failed" && !entry.agent) || awaited(entry)).map((entry) => jobPlayerId(line.server, entry.id)));
         for (const player of model.players.values()) {
@@ -84,7 +103,7 @@ export class Translator {
           if (player.kind === "job" && !failing.has(player.id)) out.leave(player.id, "no longer failing", true);
         }
         live.jobs = new Map(line.jobs.map((entry) => [entry.id, entry]));
-        for (const entry of line.agents) this.agentState(live, entry, out);
+        for (const entry of line.agents) this.agentState(live, entry, out, false);
         for (const entry of line.jobs) if (entry.state === "failed" && entry.startedBy === undefined) this.jobFailed(live, entry, out);
         return out.list;
       }
@@ -96,16 +115,28 @@ export class Translator {
       case "tab.closed":
         live.tabs.delete(line.tabId);
         return out.list;
-      case "focus": {
-        for (const move of out.yoursFor(agentPlayerId(line.server, line.paneId))) {
-          const strand = model.strands.get(move.strand);
-          if (strand && strand.seenAt < move.from) out.push({ type: "strand.seen", strand: strand.id });
-        }
+      case "focus":
+        out.seenFrom(agentPlayerId(line.server, line.paneId), "strand.seen");
+        return out.list;
+      case "agent.state":
+        this.agentState(live, line.agent, out, true);
+        return out.list;
+      case "agent.prompt": {
+        live.promptAware = true;
+        const entry = { ...(live.agents.get(line.paneId) ?? { paneId: line.paneId, state: "working" }), tabId: line.tabId, ...(line.sessionId ? { sessionId: line.sessionId } : {}) };
+        live.agents.set(line.paneId, entry);
+        const agent = this.join(live, entry, out, true);
+        if (agent) this.prompted(agent, line.by, out);
         return out.list;
       }
-      case "agent.state":
-        this.agentState(live, line.agent, out);
+      case "agent.turn": {
+        live.promptAware = true;
+        const entry = { ...(live.agents.get(line.paneId) ?? { paneId: line.paneId, state: "done" }), tabId: line.tabId, ...(line.sessionId ? { sessionId: line.sessionId } : {}) };
+        live.agents.set(line.paneId, entry);
+        const agent = this.join(live, entry, out, false);
+        if (agent) this.turnEnded(agent, line.toast === "full", out);
         return out.list;
+      }
       case "agent.gone":
         live.agents.delete(line.paneId);
         out.leave(agentPlayerId(line.server, line.paneId), "pane closed", true);
@@ -119,7 +150,7 @@ export class Translator {
         if (line.job.startedBy !== undefined) out.leave(jobPlayerId(line.server, line.job.id), line.job.state === "failed" ? "failed" : "passed", false);
         else if (line.job.state === "failed") this.jobFailed(live, line.job, out);
         else out.leave(jobPlayerId(line.server, line.job.id), "passed", true);
-        if (waiting) this.agentState(live, waiting, out);
+        if (waiting) this.agentState(live, waiting, out, false);
         return out.list;
       }
       case "job.closed":
@@ -128,14 +159,9 @@ export class Translator {
         return out.list;
       case "toast.shown":
         return out.list;
-      case "toast.dismissed": {
-        const player = line.toast.kind === "job" ? jobPlayerId(line.server, line.toast.id) : agentPlayerId(line.server, line.toast.id);
-        for (const move of out.yoursFor(player)) {
-          const strand = model.strands.get(move.strand);
-          if (strand && strand.dismissedAt < move.from && strand.seenAt < move.from) out.push({ type: "strand.dismissed", strand: strand.id });
-        }
+      case "toast.dismissed":
+        out.seenFrom(line.toast.kind === "job" ? jobPlayerId(line.server, line.toast.id) : agentPlayerId(line.server, line.toast.id), "strand.dismissed");
         return out.list;
-      }
     }
   }
 
@@ -143,7 +169,7 @@ export class Translator {
     const live = this.live;
     if (!live) return undefined;
     const agents = [...live.agents.values()].map((entry) => ({ id: agentPlayerId(live.server, entry.paneId), tabId: entry.tabId }));
-    const jobs = [...live.jobs.values()].filter((entry) => entry.state === "failed" && !entry.agent).map((entry) => ({ id: jobPlayerId(live.server, entry.id), tabId: entry.tabId }));
+    const jobs = [...live.jobs.values()].filter((entry) => (entry.state === "failed" && !entry.agent) || awaited(entry)).map((entry) => ({ id: jobPlayerId(live.server, entry.id), tabId: entry.tabId }));
     const players = [...agents, ...jobs].filter((player) => model.players.has(player.id));
     return {
       scope: `${live.session}/${live.server}`,
@@ -173,21 +199,36 @@ export class Translator {
   resnapshot(): KomuxLine | undefined {
     const live = this.live;
     if (!live) return undefined;
-    return { type: "snapshot", session: live.session, server: live.server, tabs: [...live.tabs.values()], agents: [...live.agents.values()], jobs: [...live.jobs.values()], toasts: [] };
+    return { type: "snapshot", session: live.session, server: live.server, tabs: [...live.tabs.values()], agents: [...live.agents.values()], jobs: [...live.jobs.values()], toasts: [], ...(live.promptAware ? { features: ["turns"] } : {}) };
   }
 
-  private agentState(live: Live, entry: KomuxAgent, out: Facts): void {
+  private agentState(live: Live, entry: KomuxAgent, out: Facts, changed: boolean): void {
+    const before = live.agents.get(entry.paneId);
     live.agents.set(entry.paneId, entry);
+    const id = agentPlayerId(live.server, entry.paneId);
+    const running = [...live.jobs.values()].filter((job) => job.startedBy === entry.paneId && job.state === "running");
+    const asks = entry.asking === true || entry.state === "waiting";
+    const background = asks || entry.state === "working" ? undefined : backgroundLine(entry.background, running.length);
+    const busy = entry.state === "working" || background !== undefined || running.length > 0 || asks;
+    const hadTurn = entry.state === "done" || entry.state === "failed";
+    if (!out.model.players.has(id) && !busy && !hadTurn) return;
+    const agent = this.join(live, entry, out, entry.state === "working" || asks);
+    if (!agent) return;
+    const fallback = changed && !live.promptAware;
+    if (fallback && entry.state === "working" && before?.state !== "working") this.prompted(agent, "you", out);
+    if (fallback && (entry.state === "done" || entry.state === "failed" || entry.state === "idle") && before?.state === "working") this.turnEnded(agent, true, out);
+    out.activity(agent.id, agent.strand, entry.state === "working" && !asks ? "working" : background !== undefined ? "background" : "idle", background);
+    for (const job of running) this.awaitJob(live, job, out.claimed(jobPlayerId(live.server, job.id)) ?? agent.strand, agent.id, out);
+    const asked = out.requestsFrom(agent.id, "asking");
+    if (asks && asked.length === 0) out.ask({ strand: agent.strand, to: { role: "owner", strand: agent.strand }, what: entry.asking ? asking : yourMoves.waiting!, kind: "asking", from: agent.id });
+    if (!asks && asked.length > 0) out.reply(asked, "done");
+  }
+
+  private join(live: Live, entry: KomuxAgent, out: Facts, reopen: boolean): { id: string; strand: string } | undefined {
     const tab = live.tabs.get(entry.tabId);
-    if (!tab) return;
+    if (!tab) return undefined;
     const id = agentPlayerId(live.server, entry.paneId);
     const player = out.model.players.get(id);
-    const mine = out.openBy(id);
-    const yours = out.yoursFor(id).filter((move) => move.source !== "agent");
-    const running = [...live.jobs.values()].filter((job) => job.startedBy === entry.paneId && job.state === "running");
-    const background = entry.asking || (entry.state !== "done" && entry.state !== "idle") ? undefined : backgroundLine(entry.background, running.length);
-    const wanted = entry.asking ? asking : entry.state === "working" ? undefined : (yourMoves[entry.state] ?? (player ? ready : null));
-    if (wanted === null && background === undefined) return;
     const place: KomuxPlace = {
       adapter: "komux",
       handle: komuxHandle(live.server, entry.paneId),
@@ -201,73 +242,35 @@ export class Translator {
     const old = player ? komuxPlace(player) : undefined;
     if (!player || old?.tabId !== place.tabId || old?.dir !== place.dir || old?.sessionId !== place.sessionId) {
       out.push({ type: "player.joined", player: id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}) });
+      out.model.players.set(id, { id, kind: "agent", who: entry.name ?? "claude", adapter: "komux", place, ...(entry.sessionId ? { resume: entry.sessionId } : {}), joined: 0 });
     }
-    const strand = (reopen: boolean) => out.strandFor(id, tab, reopen, entry.sessionId);
-    if (background !== undefined) {
-      for (const move of yours) out.close(move);
-      const on = strand(false);
-      for (const job of running) {
-        const target = out.claimed(jobPlayerId(live.server, job.id)) ?? on;
-        if (target) this.awaitJob(live, job, target, id, out);
-      }
-      if (mine.length === 1 && mine[0]!.what === background) return;
-      for (const move of mine) out.close(move);
-      if (on) out.open(on, id, background, undefined, "background");
-      return;
-    }
-    if (wanted === null) return;
-    if (wanted !== undefined && wanted !== asking && running.length > 0) {
-      for (const move of [...mine, ...yours]) out.close(move);
-      const on = strand(false);
-      for (const job of running) {
-        const target = out.claimed(jobPlayerId(live.server, job.id)) ?? on;
-        if (target) this.awaitJob(live, job, target, id, out);
-      }
-      return;
-    }
-    if (wanted === yourMoves.done) {
-      const on = out.model.on.get(id);
-      if (on && reportedWait(on, out.model)) {
-        for (const move of [...mine, ...yours]) out.close(move);
-        return;
-      }
-    }
-    if (wanted === ready && yours.length > 0) return;
-    const prompted = out.model.answered.has(id) || (entry.sessionId !== undefined && out.model.answered.has(entry.sessionId)) || mine.length > 0;
-    if (wanted === ready && !prompted) {
-      for (const move of mine) out.close(move);
-      return;
-    }
-    if (wanted === undefined) {
-      for (const move of yours) out.push({ type: "move.closed", move: move.id });
-      const waited = mine.filter(isBackground);
-      for (const move of waited) out.close(move);
-      const on = mine.length === waited.length ? strand(true) : undefined;
-      if (on) {
-        for (const move of out.githubYours(on)) out.close(move);
-        out.open(on, id, "working", undefined, "working");
-      }
-      return;
-    }
-    for (const move of mine) out.push({ type: "move.closed", move: move.id });
-    const current = yours.at(-1);
-    if (current) {
-      if (current.what !== wanted) out.push({ type: "move.described", move: current.id, what: wanted, kind: turnKind(wanted) });
-      return;
-    }
-    const on = strand(false);
-    if (on) out.open(on, "you", wanted, id, turnKind(wanted));
+    const strand = out.agentStrand(id, tab, reopen, entry.sessionId, (holder) => holder !== id && [...live.agents.keys()].some((pane) => agentPlayerId(live.server, pane) === holder), `claude ${entry.paneId}`);
+    return strand ? { id, strand } : undefined;
+  }
+
+  private prompted(agent: { id: string; strand: string }, by: string, out: Facts): void {
+    if (by === "task") return;
+    out.reply(out.requestsFrom(agent.id, "reply"), "done");
+    const request = out.ask({ strand: agent.strand, to: { role: "agent", strand: agent.strand }, what: by === "sent" ? "a prompt from ponpoko" : "your prompt", kind: "prompt", ...(by === "you" ? { from: "you" } : {}) });
+    out.push({ type: "handed", player: agent.id, requests: [request] });
+    out.handed(request, agent.id);
+  }
+
+  private turnEnded(agent: { id: string; strand: string }, full: boolean, out: Facts): void {
+    out.reply(out.handedTo(agent.id), "done");
+    if (full && out.requestsFrom(agent.id, "reply").length === 0) out.ask({ strand: agent.strand, to: { role: "owner", strand: agent.strand }, what: readReply, kind: "reply", from: agent.id });
   }
 
   private awaitJob(live: Live, entry: KomuxJob, strand: string, agent: string, out: Facts): void {
     const id = jobPlayerId(live.server, entry.id);
-    if (out.openBy(id).length > 0) return;
+    if (out.model.activities.get(id)?.strand === strand) return;
     const tab = live.tabs.get(entry.tabId);
     if (!out.model.players.has(id)) {
       const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tab?.dir ?? "" };
       out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
+      out.model.players.set(id, { id, kind: "job", who: entry.name, adapter: "komux", place, joined: 0 });
     }
-    out.open(strand, id, "running", agent, "job");
+    out.activity(id, strand, "job", "running", agent);
   }
 
   private jobFailed(live: Live, entry: KomuxJob, out: Facts): void {
@@ -275,27 +278,14 @@ export class Translator {
     const tab = live.tabs.get(entry.tabId);
     if (!tab) return;
     const id = jobPlayerId(live.server, entry.id);
-    if (out.yoursFor(id).length > 0) return;
+    if (out.requestsFrom(id, "job-failed").length > 0 || out.yoursFor(id).length > 0) return;
     const place: KomuxPlace = { adapter: "komux", handle: komuxHandle(live.server, entry.id), session: live.session, server: live.server, tabId: entry.tabId, paneId: entry.id, dir: tab.dir };
     out.push({ type: "player.joined", player: id, kind: "job", who: entry.name, adapter: "komux", place });
+    out.model.players.set(id, { id, kind: "job", who: entry.name, adapter: "komux", place, joined: 0 });
     const why = entry.code === null || entry.code === undefined ? `${entry.name} failed` : `${entry.name} failed (exit ${entry.code})`;
     const on = out.claimed(id) ?? out.strandFor(id, tab, true) ?? out.make(`${entry.name} in ${tab.name}`, "loose");
-    out.open(on, "you", why, id, "job-failed");
+    out.ask({ strand: on, to: { role: "owner", strand: on }, what: why, kind: "job-failed", from: id });
   }
-}
-
-const backgroundMove = /^\d+ background (agents?|tasks?)\b/;
-
-function isBackground(move: Move): boolean {
-  return move.kind === "background" || (move.kind === undefined && backgroundMove.test(move.what));
-}
-
-export function turnKind(what: string): string {
-  if (what === asking) return "asking";
-  if (what === ready) return "ready";
-  if (what === yourMoves.waiting) return "waiting";
-  if (what === yourMoves.failed) return "failed";
-  return "ended";
 }
 
 export function isFinishedTurn(move: { kind?: string; what: string }): boolean {
@@ -307,12 +297,6 @@ export function backgroundLine(background: { agents: number; tasks: number } | u
   const tasks = Math.max((background?.tasks ?? 0) - jobs, 0);
   const parts = [...(agents > 0 ? [`${agents} background ${agents === 1 ? "agent" : "agents"}`] : []), ...(tasks > 0 ? [`${tasks} background ${tasks === 1 ? "task" : "tasks"}`] : [])];
   return parts.length > 0 ? parts.join(" · ") : undefined;
-}
-
-function reportedWait(strand: string, model: Known): boolean {
-  const waitsOnStrand = Object.keys(model.strands.get(strand)?.blockedOn ?? {}).some((on) => model.strands.has(on));
-  const waitsOnSomeone = model.open.some((move) => move.strand === strand && ["person", "machine"].includes(model.players.get(move.player)?.kind ?? ""));
-  return waitsOnStrand || waitsOnSomeone;
 }
 
 class Facts {
@@ -327,24 +311,88 @@ class Facts {
     this.list.push(fact);
   }
 
-  openBy(player: string): Move[] {
-    return this.model.open.filter((move) => move.player === player);
-  }
-
   yoursFor(player: string): Move[] {
     return this.model.open.filter((move) => move.player === "you" && move.with === player);
   }
 
-  open(strand: string, player: string, what: string, answers: string | undefined, kind: string): void {
-    const move = this.newId("m");
-    this.push({ type: "move.opened", move, strand, player, what, ...(answers ? { with: answers } : {}), kind });
-    this.model.open.push({ id: move, strand, player, what, from: 0, source: "komux", ...(answers ? { with: answers } : {}), kind });
-    if (!player.startsWith("job:")) this.model.on.set(answers ?? player, strand);
-    if (answers && player === "you") this.model.answered.add(answers);
+  requestsFrom(player: string, kind?: string): Request[] {
+    return this.model.requests.filter((request) => request.from === player && (kind === undefined || request.kind === kind));
   }
 
-  strandFor(player: string, tab: KomuxTab, reopen: boolean, resume?: string): string | undefined {
-    const on = this.model.on.get(player) ?? (resume ? this.model.resumed.get(resume) : undefined);
+  handedTo(player: string): Request[] {
+    return this.model.requests.filter((request) => request.handedTo === player);
+  }
+
+  ask(asked: Omit<RequestSaid, "request">): string {
+    const request = this.newId("r");
+    this.push({ type: "said", requests: [{ request, ...asked }], replies: [] });
+    this.model.requests.push({ id: request, ...asked, at: 0, source: "komux" });
+    return request;
+  }
+
+  handed(request: string, player: string): void {
+    const found = this.model.requests.find((candidate) => candidate.id === request);
+    if (found) found.handedTo = player;
+  }
+
+  reply(requests: Request[], as: ReplySaid["as"]): void {
+    if (requests.length === 0) return;
+    const ids = new Set(requests.map((request) => request.id));
+    this.push({ type: "said", requests: [], replies: [...ids].map((request) => ({ request, as })) });
+    this.model.requests = this.model.requests.filter((request) => !ids.has(request.id));
+  }
+
+  activity(player: string, strand: string, activity: Activity["activity"] | "idle", what?: string, forPlayer?: string): void {
+    const now = this.model.activities.get(player);
+    if (activity === "idle" ? now === undefined : now?.strand === strand && now.activity === activity && (activity === "working" || now.what === what)) return;
+    this.push({ type: "player.activity", player, ...(activity === "idle" ? {} : { strand }), activity, ...(what && activity !== "working" ? { what } : {}), ...(forPlayer ? { for: forPlayer } : {}) });
+    if (activity === "idle") this.model.activities.delete(player);
+    else this.model.activities.set(player, { player, strand, activity, ...(what ? { what } : {}), ...(forPlayer ? { for: forPlayer } : {}), at: 0 });
+  }
+
+  seenFrom(player: string, type: "strand.seen" | "strand.dismissed"): void {
+    const asked = [...this.requestsFrom(player).map((request) => ({ strand: request.strand, at: request.at })), ...this.yoursFor(player).map((move) => ({ strand: move.strand, at: move.from }))];
+    const done = new Set<string>();
+    for (const { strand: id, at } of asked) {
+      const strand = this.model.strands.get(id);
+      if (!strand || done.has(id) || strand.seenAt >= at || (type === "strand.dismissed" && strand.dismissedAt >= at)) continue;
+      done.add(id);
+      this.push({ type, strand: id });
+    }
+  }
+
+  agentStrand(player: string, tab: KomuxTab, reopen: boolean, resume: string | undefined, occupied: (holder: string) => boolean, ownName: string): string | undefined {
+    const held = this.model.on.get(player);
+    if (held && this.model.strands.has(held) && this.model.roles.get(held)?.agent === player) return held;
+    const resumed = resume ? this.model.resumed.get(resume) : undefined;
+    if (resumed && this.model.strands.has(resumed)) return this.fill(resumed, player);
+    const tabbed = this.labelled(tab, reopen);
+    if (!tabbed) return undefined;
+    const holder = this.model.roles.get(tabbed)?.agent;
+    if (holder === player) return tabbed;
+    if (holder && occupied(holder)) {
+      const mine = [...this.model.strands.values()].find((strand) => strand.parent === tabbed && strand.name === ownName);
+      return this.fill(mine?.id ?? this.make(ownName, undefined, tabbed), player);
+    }
+    return this.fill(tabbed, player);
+  }
+
+  private fill(strand: string, player: string): string {
+    if (this.model.roles.get(strand)?.agent === player) return strand;
+    for (const [held, roles] of this.model.roles) {
+      if (roles.agent !== player || held === strand) continue;
+      this.push({ type: "strand.role", strand: held, role: "agent" });
+      const { agent: _agent, ...rest } = roles;
+      this.model.roles.set(held, rest);
+    }
+    this.push({ type: "strand.role", strand, role: "agent", by: player });
+    this.model.roles.set(strand, { ...this.model.roles.get(strand), agent: player });
+    this.model.on.set(player, strand);
+    return strand;
+  }
+
+  strandFor(player: string, tab: KomuxTab, reopen: boolean): string | undefined {
+    const on = this.model.on.get(player);
     if (on && this.model.strands.has(on)) return on;
     if (on && this.model.closed.has(on) && !reopen) return undefined;
     return this.labelled(tab, reopen);
@@ -386,8 +434,9 @@ class Facts {
       .at(-1)?.strand;
   }
 
-  githubYours(strand: string): Move[] {
-    return this.model.open.filter((move) => move.strand === strand && move.player === "you" && move.source === "github");
+  retireMoves(server: string): void {
+    const ours = (player: string | undefined) => player !== undefined && (player.startsWith(`pane:${server}:`) || player.startsWith(`job:${server}:`));
+    for (const move of this.model.open.filter((candidate) => candidate.source === "komux" && (ours(candidate.player) || ours(candidate.with)))) this.close(move);
   }
 
   close(move: Move): void {
@@ -398,24 +447,25 @@ class Facts {
   leave(player: string, why: string, closedByYou: boolean): void {
     const known = this.model.players.get(player);
     if (!known) return;
-    for (const move of [...this.openBy(player), ...this.yoursFor(player)]) {
-      this.push({ type: "move.closed", move: move.id });
-      this.model.open = this.model.open.filter((candidate) => candidate.id !== move.id);
-    }
+    for (const move of [...this.model.open.filter((candidate) => candidate.player === player), ...this.yoursFor(player)]) this.close(move);
+    this.reply(this.requestsFrom(player).filter((request) => request.source === "komux"), "done");
+    if (closedByYou) this.reply(this.handedTo(player).filter((request) => request.from === "you"), "withdrawn");
     this.push({ type: "player.gone", player, why });
     this.model.players.delete(player);
+    this.model.activities.delete(player);
     const strand = this.model.strands.get(this.model.on.get(player) ?? "");
     const silent = known.kind === "job" || !this.model.spoke.has(strand?.id ?? "");
-    if (strand?.kind === "loose" && closedByYou && silent && !this.model.open.some((move) => move.strand === strand.id)) {
+    const busy = this.model.open.some((move) => move.strand === strand?.id) || this.model.requests.some((request) => request.strand === strand?.id);
+    if (strand?.kind === "loose" && closedByYou && silent && !busy) {
       this.push({ type: "strand.forgotten", strand: strand.id });
       this.model.strands.delete(strand.id);
     }
   }
 
-  make(name: string, kind: string | undefined): string {
+  make(name: string, kind: string | undefined, parent?: string): string {
     const strand = this.newId("s");
-    this.push({ type: "strand.made", strand, name, ...(kind ? { kind } : {}) });
-    this.model.strands.set(strand, { id: strand, name, ...(kind ? { kind } : {}), made: 0, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
+    this.push({ type: "strand.made", strand, name, ...(kind ? { kind } : {}), ...(parent ? { parent } : {}) });
+    this.model.strands.set(strand, { id: strand, name, ...(kind ? { kind } : {}), ...(parent ? { parent } : {}), made: 0, seenAt: 0, dismissedAt: 0, blockedOn: {}, notes: [] });
     return strand;
   }
 }

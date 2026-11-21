@@ -226,7 +226,7 @@ export class TabController {
     if (mode.kind === "pickup") {
       this.mode = { kind: "list" };
       const how = pickupChoice(mode.options, key.name);
-      if (how && strand && (await this.run(() => this.actions.pickUp(strand, how), how === "resume" ? "Resuming its last Claude" : "Starting a fresh Claude on it"))) await this.caughtUpOnFinish(strand);
+      if (how && strand) await this.run(() => this.actions.pickUp(strand, how), how === "resume" ? "Resuming its last Claude" : "Starting a fresh Claude on it");
       return undefined;
     }
     if (mode.kind === "assign") {
@@ -291,7 +291,7 @@ export class TabController {
         if (!strand) this.message = "Nothing to go to here";
         else if (isPooled(strand)) this.mode = { kind: "assign", strand };
         else if (options) this.mode = { kind: "pickup", options };
-        else if (await this.run(() => this.actions.go(strand, this.strands()))) await this.caughtUpOnFinish(strand);
+        else await this.run(() => this.actions.go(strand, this.strands()));
         return undefined;
       }
       case "f":
@@ -600,10 +600,6 @@ export class TabController {
     return target.id === moving.id || aboveOf(this.strands(), target).some((above) => above.id === moving.id);
   }
 
-  private async caughtUpOnFinish(strand: StrandView): Promise<void> {
-    if (strand.own.finished) await this.actions.seen(strand.id).catch(() => undefined);
-  }
-
   private async snoozeUntil(strand: StrandView | undefined, text: string): Promise<undefined> {
     const until = parseWhen(text, this.now());
     if (until === undefined) {
@@ -704,6 +700,6 @@ export function enterDoes(strand: StrandView, strands: StrandView[]): string {
   if (options) return `start a Claude on ${strand.name}`;
   const place = goPlace(strand, aboveOf(strands, strand));
   if (isWaitingOn(strand, strand.own.waitsOn)) return place ? `open a tab at ${place.dir}; it's ${strand.own.why}` : `nothing here; it's ${strand.own.why}`;
-  if (strand.own.whose === undefined) return place ? `open a tab at ${place.dir}; its work is in the strands under it` : "nothing here; its work is in the strands under it";
+  if (strand.own.whose === undefined && !strand.own.quiet) return place ? `open a tab at ${place.dir}; its work is in the strands under it` : "nothing here; its work is in the strands under it";
   return place ? `open a tab at ${place.dir}` : "nothing: no one is on it, and ponpoko doesn't know where it lives (p points a directory at it)";
 }

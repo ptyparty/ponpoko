@@ -135,13 +135,13 @@ function lastDir(strand: StrandView): string | undefined {
     const dir = komuxPlace(move.answers ?? move.by)?.dir;
     if (dir) return dir;
   }
-  return undefined;
+  return strand.agent ? komuxPlace(strand.agent)?.dir : undefined;
 }
 
 export type Pickup = { resume?: { session: string; dir: string; who: string; at: number }; dir?: string };
 
 export function pickup(strand: StrandView, env: Record<string, string | undefined> = process.env): Pickup | undefined {
-  if (goTarget(strand, [], env) || strand.own.whose === undefined) return undefined;
+  if (goTarget(strand, [], env) || (strand.own.whose === undefined && !strand.own.quiet)) return undefined;
   return startsAt(strand, env);
 }
 
@@ -150,9 +150,11 @@ export function startsAt(strand: StrandView, env: Record<string, string | undefi
     const player = move.answers ?? move.by;
     return player.kind === "agent" && player.resume && komuxPlace(player)?.dir;
   });
-  const agent = last ? (last.answers ?? last.by) : undefined;
+  const holder = strand.agent?.resume && komuxPlace(strand.agent)?.dir ? strand.agent : undefined;
+  const agent = holder ?? (last ? (last.answers ?? last.by) : undefined);
   const place = agent ? komuxPlace(agent) : undefined;
-  const resume = last && agent && place ? { session: agent.resume!, dir: place.dir, who: agent.who, at: last.until ?? last.from } : undefined;
+  const at = holder ? (holder.gone ?? holder.joined) : last ? (last.until ?? last.from) : 0;
+  const resume = agent && place ? { session: agent.resume!, dir: place.dir, who: agent.who, at } : undefined;
   const dir = tabOf(strand)?.dir ?? strand.links.find((link) => link.adapter === "dir")?.ref ?? storyProject(strand, env)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand) ?? projectOf(strand, env)?.dir;
   if (!resume && !dir) return undefined;
   return { ...(resume ? { resume } : {}), ...(dir ? { dir } : {}) };

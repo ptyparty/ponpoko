@@ -4,7 +4,6 @@ import { ask, watch } from "../client.ts";
 import { ensurePrivateDir, runtimeDir } from "../paths.ts";
 import type { Knowledge, Presence } from "../core.ts";
 import type { Fact } from "../events.ts";
-import { pickWhose, whoseOf } from "../model.ts";
 import { fetchInbox, type Inbox } from "../github.ts";
 import { hasOpenPr, inboxFacts, isReviewId, prLinkIds, source as githubSource, unwatchedPrs } from "../inbox.ts";
 import { savePool, type Pool } from "../unreviewed.ts";
@@ -34,7 +33,7 @@ export class Bridge {
   private readonly badgesSent = new Map<number, string>();
   private behind = false;
   private cached: Knowledge | undefined;
-  private last: Knowledge = { strands: [], closed: [], players: [], open: [], links: [], on: {}, resumed: {}, spoke: [], answered: [] };
+  private last: Knowledge = { strands: [], closed: [], players: [], open: [], links: [], on: {}, resumed: {}, spoke: [] };
   private readonly titled = new Set<string>();
   private readonly titling = new Set<string>();
   private readonly titleFailed = new Map<string, number>();
@@ -343,9 +342,8 @@ export async function runBridge(env = process.env): Promise<number> {
 }
 
 function whoseNow(model: Known, strand: Knowledge["strands"][number]): "you" | "agent" | "waiting" | undefined {
-  const whose = pickWhose(model.open.filter((move) => move.strand === strand.id).map((move) => (move.player === "you" ? "you" : whoseOf(model.players.get(move.player)?.kind ?? "machine"))));
-  if (whose) return whose === "person" || whose === "machine" ? "waiting" : whose;
-  return [...model.strands.values()].some((child) => child.parent === strand.id) ? undefined : "you";
+  const whose = model.whose.get(strand.id);
+  return whose === "person" || whose === "machine" ? "waiting" : whose;
 }
 
 function touchesReview(facts: Fact[], knowledge: Knowledge): boolean {
@@ -357,6 +355,8 @@ function touchesReview(facts: Fact[], knowledge: Knowledge): boolean {
   return facts.some((fact) => {
     if (fact.type === "move.opened") return underReview(fact.strand);
     if (fact.type === "move.described") return underReview(knowledge.open.find((move) => move.id === fact.move)?.strand);
+    if (fact.type === "said") return fact.requests.some((asked) => underReview(asked.strand)) || fact.replies.some((said) => underReview(knowledge.requests?.find((request) => request.id === said.request)?.strand));
+    if (fact.type === "player.activity") return underReview(fact.strand);
     return false;
   });
 }
