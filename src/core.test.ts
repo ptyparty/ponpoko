@@ -430,6 +430,8 @@ describe("requests and roles", () => {
     core.record("github", [{ type: "said", requests: [], replies: [{ request: "r1", as: "progress", by: "person:sam" }] }]);
     expect(strandNamed(core, "widgets#9").own).toMatchObject({ whose: "person" });
     expect(strandNamed(core, "widgets#9").open[0]!.by.who).toBe("person:sam");
+    core.record("github", [{ type: "said", requests: [], replies: [{ request: "r1", as: "passed" }] }]);
+    expect(strandNamed(core, "widgets#9").own.whose).toBe("person");
     core.record("github", [{ type: "said", requests: [], replies: [{ request: "r1", as: "passed", to: { person: "you" } }] }]);
     expect(strandNamed(core, "widgets#9").own.whose).toBe("you");
     core.record("github", [{ type: "said", requests: [], replies: [{ request: "r1", as: "done" }] }]);

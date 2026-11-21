@@ -228,7 +228,8 @@ export class Ponpoko {
     };
     const itemView = (item: Item): MoveView => (item.request ? requestView(item.request, item) : item.move ? moveView(item.move) : activityView(item.activity!));
     const allMoves = [...this.model.moves.values()];
-    const allRequests = [...this.model.requests.values()];
+    const requestsBy = new Map<string, Request[]>();
+    for (const request of this.model.requests.values()) requestsBy.set(request.strand, [...(requestsBy.get(request.strand) ?? []), request]);
     const view = (strand: Strand, depth: number): StrandView => {
       const { moves: _own, items: _ownItems, ...ownStanding } = own(this.model, strand);
       const { moves: _rolled, items: _rolledItems, ...rolledStanding } = rolled(this.model, strand);
@@ -245,7 +246,7 @@ export class Ponpoko {
         own: ownStanding,
         rolled: rolledStanding,
         open: itemsOn(this.model, strand.id).map(itemView),
-        recent: [...allMoves.filter((move) => move.strand === strand.id).map(moveView), ...allRequests.filter((request) => request.strand === strand.id).map((request) => requestView(request)), ...reportViews(strand.id)].sort((a, b) => a.from - b.from).slice(-recentMoves),
+        recent: [...allMoves.filter((move) => move.strand === strand.id).map(moveView), ...(requestsBy.get(strand.id) ?? []).map((request) => requestView(request)), ...reportViews(strand.id)].sort((a, b) => a.from - b.from).slice(-recentMoves),
         links: strandLinks,
         unseen: ownStanding.whose === "you" && isUnseen(this.model, strand),
         spaces: spaces.filter((space) => space.strand === strand.id).map(({ label, short, handle }) => ({ label, short, ...(handle ? { handle } : {}) })),
@@ -367,7 +368,7 @@ export class Ponpoko {
       if (kind !== "you" && kind !== "person" && kind !== "machine") return false;
       const mine = move.with === agent?.id;
       if (move.player === you && !mine) return false;
-      if (named !== undefined) return named === "you" ? move.player === you : [`person:${named}`, `machine:${named}`].includes(move.player);
+      if (named !== undefined) return named === "you" ? move.player === you : (report.kind === "person" || report.kind === "machine" ? [`${report.kind}:${named}`] : [`person:${named}`, `machine:${named}`]).includes(move.player);
       return mine && (report.kind === undefined || report.kind === kind);
     });
     if (requests.length === 0 && legacy.length === 0) throw new Error(`no such wait: ${path(this.model, strand).join(" › ")} has no open wait${report.who ? ` on ${report.who}` : report.kind ? ` of kind ${report.kind}` : ""}`);

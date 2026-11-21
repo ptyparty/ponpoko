@@ -449,7 +449,7 @@ class Facts {
     if (!known) return;
     for (const move of [...this.model.open.filter((candidate) => candidate.player === player), ...this.yoursFor(player)]) this.close(move);
     this.reply(this.requestsFrom(player).filter((request) => request.source === "komux"), "done");
-    if (closedByYou) this.reply(this.handedTo(player).filter((request) => request.from === "you"), "withdrawn");
+    this.reply(this.handedTo(player).filter((request) => request.kind === "prompt"), "withdrawn");
     this.push({ type: "player.gone", player, why });
     this.model.players.delete(player);
     this.model.activities.delete(player);

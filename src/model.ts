@@ -262,8 +262,9 @@ function applyFact(model: Model, event: Recorded): void {
         const request = model.requests.get(said.request);
         if (!request || request.closed) continue;
         if (said.as === "progress") request.progress = { ...(said.by ? { by: said.by } : {}), at: event.at };
-        else if (said.as === "passed" && said.to) Object.assign(request, { to: said.to, at: event.at, progress: undefined, handedTo: undefined });
-        else request.closed = { as: said.as, at: event.at, ...(said.what ? { what: said.what } : {}) };
+        else if (said.as === "passed") {
+          if (said.to) Object.assign(request, { to: said.to, at: event.at, progress: undefined, handedTo: undefined });
+        } else request.closed = { as: said.as, at: event.at, ...(said.what ? { what: said.what } : {}) };
         wake(model, [request.strand]);
       }
       return;
