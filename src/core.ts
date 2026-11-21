@@ -290,8 +290,9 @@ export class Ponpoko {
     const agent = this.agentOf(report.self);
     if (!agent) throw new Error("ponpoko doesn't see this agent in komux yet; try again once your turn is under way");
     const facts: Fact[] = [];
-    const mine = this.strandOf(agent.id);
-    const target = report.strand ? this.resolve(report.strand, facts, mine) : mine;
+    const mine = this.homeOf(agent.id);
+    const current = this.strandOf(agent.id);
+    const target = report.strand ? this.resolve(report.strand, facts, current) : current;
     if (!target) throw new Error("name the strand you're working on, such as \"ponpoko review findings › 4\"");
     const loose = mine ? this.model.strands.get(mine) : undefined;
     const merging = loose?.kind === "loose" && loose.id !== target;
@@ -513,7 +514,11 @@ export class Ponpoko {
   closeMove(move: string): void {
     const request = this.model.requests.get(move);
     if (request) {
-      if (!request.closed) this.record("you", [said([], [{ request: move, as: "done" }])]);
+      const facts: Fact[] = request.closed ? [] : [said([], [{ request: move, as: "done" }])];
+      const job = request.from ? this.model.players.get(request.from) : undefined;
+      if (job?.kind === "job" && job.gone === undefined) facts.push({ type: "player.gone", player: job.id, why: "you went to it" });
+      if (job?.kind === "job" && this.model.strands.get(request.strand)?.kind === "loose") facts.push({ type: "strand.forgotten", strand: request.strand });
+      this.record("you", facts);
       return;
     }
     const found = this.model.moves.get(move);
@@ -655,6 +660,13 @@ export class Ponpoko {
   }
 
   private strandOf(player: string): string | undefined {
+    const home = this.homeOf(player);
+    const working = this.model.activities.get(player)?.strand;
+    const live = working !== undefined && this.model.strands.has(working) && isLive(this.model, this.model.strands.get(working)!);
+    return live && (home === undefined || this.isUnder(working, home, [])) ? working : home;
+  }
+
+  private homeOf(player: string): string | undefined {
     const role = agentStrandOf(this.model, player);
     if (role) return role;
     const moves = [...this.model.moves.values()].filter((move) => (move.with ?? move.player) === player && this.model.strands.has(move.strand) && isLive(this.model, this.model.strands.get(move.strand)!)).sort((a, b) => a.from - b.from);

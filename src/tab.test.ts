@@ -32,7 +32,7 @@ describe("the command tab", () => {
     expect(lines).toHaveLength(24);
     expect(lines[0]).toMatch(/◆ ponpoko +1 Work 2 +2 Reviews 0 +3 Mentions 0 +\/ search all/);
     expect(lines[2]).toMatch(/^▎ Smarter widget pricing  sc-100 · epic · 1 story/);
-    expect(lines[3]).toMatch(/^ {4}○ Gadget prices +sc-101 +quiet/);
+    expect(lines[3]).toMatch(/^ {4}○ Gadget prices +sc-101 +not started/);
     expect(lines[5]).toMatch(/^ {2}Other work/);
     expect(lines[6]).toMatch(/^ {4}● Widget CSV import +sc-1 +claude replied +now +tab 1 +▸1/);
     expect(lines.join("\n")).not.toContain("tests");
@@ -42,7 +42,7 @@ describe("the command tab", () => {
     expect(tab.current()?.strand?.name).toBe("sc-1");
     expect(plain(tab.view(120, 24)).at(-1)).toMatch(/⏎  go to claude in tab 1 widgets +␣  its strands/);
     await tab.key({ name: " ", text: " " });
-    expect(plain(tab.view(120, 24))[7]).toMatch(/^ {8}○ tests +quiet/);
+    expect(plain(tab.view(120, 24))[7]).toMatch(/^ {8}○ tests +not started/);
     await tab.key({ name: "l", text: "l" });
     const log = plain(tab.view(120, 20));
     expect(log[0]).toMatch(/◆ log +newest first · \d+/);
@@ -228,7 +228,7 @@ describe("the command tab", () => {
     expect(tab.current()?.strand?.id).toBe(sc1);
     core.block(sc1, sc2);
     tab.setSnapshot(core.snapshot());
-    expect(plain(tab.view(100, 20)).join("\n")).toMatch(/○ sc-2 +quiet[^\n]*\n {8}▸ then: Widget CSV import sc-1/);
+    expect(plain(tab.view(100, 20)).join("\n")).toMatch(/○ sc-2 +not started[^\n]*\n {8}▸ then: Widget CSV import sc-1/);
     await tab.key({ name: "j" });
     await tab.key({ name: "return" });
     await tab.key({ name: "j" });

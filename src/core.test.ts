@@ -400,6 +400,17 @@ describe("requests and roles", () => {
     expect([...core.model.roles.values()].filter((roles) => roles.agent === "a1")).toHaveLength(1);
   });
 
+  test("an agent working under its own strand finishes only that one when it names none", () => {
+    const { core } = setup();
+    core.status({ self: "tool:1", strand: "› sc-1", text: "starting" });
+    core.status({ self: "tool:1", strand: "review findings › 4", text: "fixing it" });
+    core.status({ self: "tool:1", text: "still fixing it" });
+    expect(strandNamed(core, "sc-1 › review findings › 4").own.why).toBe("still fixing it");
+    core.doneBy({ self: "tool:1" }, "fixed");
+    expect(core.snapshot().strands.map((strand) => strand.name)).toEqual(["sc-1", "review findings"]);
+    expect(core.snapshot().counts.agents).toBe(0);
+  });
+
   test("a role with nobody in it comes from the strand above, and one set lower down wins", () => {
     const { core } = setup();
     const story = core.add(undefined, "sc-1");

@@ -59,6 +59,8 @@ export function standingOf(strand: StrandView, now: number): Standing {
     default:
       if (strand.planned) return isWaitingOn(strand, own.waitsOn) || strand.heldBy ? { glyph: "·", paint: style.faint, text: `planned · ${own.why}`, age: "" } : { glyph: "○", paint: style.accent, text: own.why, age: "" };
       if (isWaitingOn(strand, own.waitsOn)) return { glyph: "⊘", paint: style.wait, text: own.why, age: since };
+      if (own.unstarted) return { glyph: "○", paint: style.accent, text: own.why, age: "" };
+      if (own.quiet) return { glyph: "◌", paint: style.muted, text: own.why, age: "" };
       return { glyph: "○", paint: style.muted, text: own.why, age: "" };
   }
 }
@@ -86,11 +88,18 @@ export function isTour(strand: StrandView): boolean {
   return strand.links.some((link) => link.adapter === "remax") && strand.open.some((move) => move.player === "you" && !move.answers);
 }
 
-export type MoveKind = "replied" | "review" | "pickup";
+export type MoveKind = "claimed" | "asking" | "replied" | "review" | "pickup";
 
 export function moveKind(strand: StrandView): MoveKind {
+  if (strand.requests.some((request) => request.toKind === "you" && request.claimedBy !== undefined)) return "claimed";
   if (strand.kind === "review" || strand.kind === "mention" || isTour(strand) || ownPrs(strand).some((pr) => pr.state === "yours")) return "review";
-  return strand.open.some((move) => move.player === "you" && move.answers?.kind === "agent" && move.what !== ready) ? "replied" : "pickup";
+  const fromAgent = strand.open.filter((move) => move.player === "you" && move.answers?.kind === "agent" && move.what !== ready);
+  if (fromAgent.some((move) => move.kind === "asking" || move.what === asking || move.what === yourMoves.waiting)) return "asking";
+  return fromAgent.length > 0 ? "replied" : "pickup";
+}
+
+export function waitingOn(strand: StrandView): string | undefined {
+  return strand.open.find((move) => move.player !== "you" && move.by.kind !== "agent")?.by.who;
 }
 
 function replied(who: string, what: string): string {

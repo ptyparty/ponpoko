@@ -32,6 +32,11 @@ export class Store {
     return this.db.query<Row, [number]>("select id, at, source, body from events where at > ? order by id").all(at).flatMap((row) => this.decode(row));
   }
 
+  settle(): void {
+    this.db.run("pragma wal_checkpoint(truncate)");
+    this.db.run("pragma journal_mode = delete");
+  }
+
   inOne(work: () => void): void {
     this.db.transaction(work)();
   }
@@ -99,6 +104,8 @@ export function moveToRequests(dir: string): boolean {
       to.appendRow(row);
     }
   });
+  from.settle();
+  to.settle();
   from.close();
   to.close();
   files(path, kept);

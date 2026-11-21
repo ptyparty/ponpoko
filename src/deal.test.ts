@@ -75,7 +75,7 @@ describe("the deck", () => {
     expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
   });
 
-  test("groups your moves by what you'll do, newest first in each: read what Claude said, review, pick up", async () => {
+  test("groups your moves by what is asked, newest first in each: what Claude asks, what it replied, review, pick up", async () => {
     const { core, hear, replied, tick, now } = harness();
     const tabs = ["a", "b", "c", "d"].map((name, index) => ({ id: index + 1, number: index + 1, name, dir: `/w/${name}`, labels: { strand: `claude in ${name}` } }));
     await hear({ type: "snapshot", tabs, agents: [], jobs: [] });
@@ -95,8 +95,9 @@ describe("the deck", () => {
     dealer.setSnapshot(core.snapshot());
     const deck = plain(dealer.view(100));
     expect(deck.match(/(^ [a-zC].*$)|\d ● [^·]+?(?= {2})/gm)?.map((text) => text.trimEnd())).toEqual([
-      " Claude replied: go read it",
+      " Claude asks you",
       "1 ● claude in c",
+      " Claude replied: go read it",
       "2 ● claude in b",
       "3 ● claude in a",
       "4 ● claude in d",
@@ -123,7 +124,7 @@ describe("the deck", () => {
     const dealer = new Dealer(actions, false, now);
     dealer.setSnapshot(core.snapshot());
     const deck = plain(dealer.view());
-    expect(deck).toMatch(/Claude replied: go read it *\n.*1 ● claude in widgets[^\n]*\n\n agents 1 *\n.*2 ◐ claude in side +claude · working[^\n]*\n\n machines 1 *\n.*3 ⊘ sc-7 +Copilot · PR review[^\n]*\n\n ▸ 1 snoozed/);
+    expect(deck).toMatch(/Claude replied: go read it *\n.*1 ● claude in widgets[^\n]*\n\n agents 1 *\n.*2 ◐ claude in side +claude · working[^\n]*\n\n waiting on Copilot 1 *\n.*3 ⊘ sc-7 +Copilot · PR review[^\n]*\n\n ▸ 1 snoozed/);
     await dealer.key({ name: "3" });
     await dealer.key({ name: "s" });
     expect(dealer.card()?.name).toBe("sc-7");
@@ -145,7 +146,7 @@ describe("the deck", () => {
     expect(lines[0]).toMatch(/^ Claude replied: go read it +│  agents 1 *$/);
     expect(lines[1]).toMatch(/^▎ 1 ● claude in \w+ .*│   3 ◐ claude in side/);
     expect(lines[2]).toMatch(/^  2 ● claude in \w+ .*│ *$/);
-    expect(lines[3]).toMatch(/^ +│  machines 1/);
+    expect(lines[3]).toMatch(/^ +│  waiting on Copilot 1/);
     expect(lines[4]).toMatch(/^ +│   4 ⊘ sc-7 /);
     await dealer.key({ name: "j" });
     await dealer.key({ name: "j" });
@@ -168,6 +169,23 @@ describe("the deck", () => {
     await dealer.key({ name: "j" });
     expect(dealer.card()?.name).toBe("sc-1");
     expect(plain(dealer.view())).not.toContain(" agents ");
+  });
+
+  test("a request you took on shows as in progress, and what waits on others is grouped by whom", async () => {
+    const { core, now } = harness();
+    const review = core.add(undefined, "widgets#9");
+    core.record("github", [
+      { type: "party.known", party: "group:team", kind: "group", name: "the team" },
+      { type: "said", requests: [{ request: "r1", strand: review, to: { group: "group:team" }, what: "review" }], replies: [{ request: "r1", as: "progress", by: "you" }] },
+    ]);
+    core.wait({ strand: "› sc-1", who: "Sam", kind: "person", what: "the terms question" }, "you");
+    core.wait({ strand: "› sc-2", who: "CI", kind: "machine", what: "the build" }, "you");
+    core.wait({ strand: "› sc-3", who: "Sam", kind: "person", what: "the fees question" }, "you");
+    const dealer = new Dealer(recordingActions().actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    const deck = plain(dealer.view(100, 40));
+    expect(deck).toMatch(/ in progress: you took it on *\n.*● widgets#9/);
+    expect(deck).toMatch(/ waiting on CI 1 *\n.*⊘ sc-2[^\n]*\n\n waiting on Sam 2 *\n/);
   });
 
   test("scrolls the list to keep the picked card in view", async () => {
@@ -330,7 +348,7 @@ describe("the deck", () => {
     expect(deck).toMatch(/ review *\n.*● PR 30 +· widgets#30 +approved by sam · merge it/);
     expect(deck).toMatch(/ agents 1 *\n.*◐ Widget CSV import +· sc-1 +claude · on its build/);
     expect(deck).toMatch(/ your PRs out for review 1 *\n.*⊘ PR 20 +· widgets#20 +the team · 0 of 1 reviews/);
-    expect(deck).toMatch(/ people 1 *\n.*⊘ sc-4 +Sam · the terms question/);
+    expect(deck).toMatch(/ waiting on Sam 1 *\n.*⊘ sc-4 +Sam · the terms question/);
   });
 
   test("an empty hand says so", () => {

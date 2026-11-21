@@ -6,7 +6,7 @@ import { isWaitingOn, onOwnJob, whyOf } from "./render.ts";
 import { cells, keyLine, style, visible, type Key, type Part } from "./screen.ts";
 import { isStory, storyNumber } from "./shortcut.ts";
 
-export type StoryState = "done" | "review" | "mine" | "agent" | "ready" | "later";
+export type StoryState = "done" | "review" | "mine" | "agent" | "quiet" | "ready" | "later";
 export type StoryNode = { id: string; name: string; title: string; state: StoryState; strand?: StrandView; ended?: Ended; on: string[]; unblocks: string[] };
 export type EpicGraph = { epic: StrandView; nodes: StoryNode[] };
 
@@ -15,10 +15,11 @@ const looks: Record<StoryState, { glyph: string; paint: (text: string) => string
   review: { glyph: "⊘", paint: style.wait, label: "in review or waiting on someone" },
   mine: { glyph: "●", paint: style.you, label: "yours" },
   agent: { glyph: "◐", paint: style.agent, label: "an agent's" },
+  quiet: { glyph: "◌", paint: style.muted, label: "nothing asked" },
   ready: { glyph: "○", paint: style.accent, label: "ready to start" },
   later: { glyph: "·", paint: style.faint, label: "not started" },
 };
-const order: StoryState[] = ["done", "review", "mine", "agent", "ready", "later"];
+const order: StoryState[] = ["done", "review", "mine", "agent", "quiet", "ready", "later"];
 
 export function findEpic(snapshot: Snapshot, wanted: string): StrandView | undefined {
   const text = wanted.trim().toLowerCase();
@@ -51,7 +52,7 @@ export function epicGraph(snapshot: Snapshot, epic: StrandView): EpicGraph {
       case "machine":
         return "review";
       default:
-        return blocked ? "later" : "ready";
+        return blocked ? "later" : strand.own.quiet && !strand.own.unstarted ? "quiet" : "ready";
     }
   };
   const nodes: StoryNode[] = [
@@ -343,6 +344,7 @@ const mermaidStyles: Record<StoryState, string> = {
   review: "fill:#2a2238,stroke:#c89dff,color:#e8ebf2",
   mine: "fill:#33291a,stroke:#ffc45e,color:#e8ebf2",
   agent: "fill:#1c2438,stroke:#8fb0ff,color:#e8ebf2",
+  quiet: "fill:#181b24,stroke:#565e72,color:#e8ebf2",
   ready: "fill:#181b24,stroke:#8fb0ff,color:#e8ebf2",
   later: "fill:#181b24,stroke:#565e72,color:#9298ab,stroke-dasharray:4 3",
 };

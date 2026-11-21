@@ -30,7 +30,7 @@ export type Known = {
   activities: Map<string, Activity>;
   whose: Map<string, Whose>;
 };
-type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob>; promptAware: boolean };
+type Live = { session: string; server: string; tabs: Map<number, KomuxTab>; agents: Map<number, KomuxAgent>; jobs: Map<number, KomuxJob>; promptAware: boolean; workingOn: Map<string, string> };
 
 export const yourMoves: Record<string, string> = {
   waiting: "waiting on you",
@@ -86,7 +86,7 @@ export class Translator {
 
   facts(line: KomuxLine, model: Known): Fact[] {
     const out = new Facts(model, this.newId);
-    if (line.type === "snapshot" || !this.live || this.live.server !== line.server) this.live = { session: line.session, server: line.server, tabs: new Map(), agents: new Map(), jobs: new Map(), promptAware: this.live?.server === line.server && this.live.promptAware };
+    if (line.type === "snapshot" || !this.live || this.live.server !== line.server) this.live = { session: line.session, server: line.server, tabs: new Map(), agents: new Map(), jobs: new Map(), promptAware: this.live?.server === line.server && this.live.promptAware, workingOn: this.live?.server === line.server ? this.live.workingOn : new Map() };
     const live = this.live;
     switch (line.type) {
       case "snapshot": {
@@ -103,6 +103,7 @@ export class Translator {
           if (player.kind === "job" && !failing.has(player.id)) out.leave(player.id, "no longer failing", true);
         }
         live.jobs = new Map(line.jobs.map((entry) => [entry.id, entry]));
+        live.agents = new Map(line.agents.map((entry) => [entry.paneId, entry]));
         for (const entry of line.agents) this.agentState(live, entry, out, false);
         for (const entry of line.jobs) if (entry.state === "failed" && entry.startedBy === undefined) this.jobFailed(live, entry, out);
         return out.list;
@@ -217,7 +218,11 @@ export class Translator {
     const fallback = changed && !live.promptAware;
     if (fallback && entry.state === "working" && before?.state !== "working") this.prompted(agent, "you", out);
     if (fallback && (entry.state === "done" || entry.state === "failed" || entry.state === "idle") && before?.state === "working") this.turnEnded(agent, true, out);
-    out.activity(agent.id, agent.strand, entry.state === "working" && !asks ? "working" : background !== undefined ? "background" : "idle", background);
+    const now = out.model.activities.get(agent.id)?.strand;
+    if (now && out.under(now, agent.strand)) live.workingOn.set(agent.id, now);
+    const remembered = live.workingOn.get(agent.id);
+    const on = remembered && out.model.strands.has(remembered) && out.under(remembered, agent.strand) ? remembered : agent.strand;
+    out.activity(agent.id, on, entry.state === "working" && !asks ? "working" : background !== undefined ? "background" : "idle", background);
     for (const job of running) this.awaitJob(live, job, out.claimed(jobPlayerId(live.server, job.id)) ?? agent.strand, agent.id, out);
     const asked = out.requestsFrom(agent.id, "asking");
     if (asks && asked.length === 0) out.ask({ strand: agent.strand, to: { role: "owner", strand: agent.strand }, what: entry.asking ? asking : yourMoves.waiting!, kind: "asking", from: agent.id });
@@ -372,9 +377,17 @@ class Facts {
     if (holder === player) return tabbed;
     if (holder && occupied(holder)) {
       const mine = [...this.model.strands.values()].find((strand) => strand.parent === tabbed && strand.name === ownName);
-      return this.fill(mine?.id ?? this.make(ownName, undefined, tabbed), player);
+      return this.fill(mine?.id ?? this.make(ownName, "loose", tabbed), player);
     }
     return this.fill(tabbed, player);
+  }
+
+  under(strand: string, above: string): boolean {
+    for (let at: string | undefined = strand, hops = 0; at !== undefined && hops < 100; hops++) {
+      if (at === above) return true;
+      at = this.model.strands.get(at)?.parent;
+    }
+    return false;
   }
 
   private fill(strand: string, player: string): string {

@@ -401,7 +401,7 @@ const rank: Record<Whose, number> = { you: 0, agent: 1, person: 2, machine: 2 };
 
 export type Addressee = { id: string; kind: PlayerKind | "group"; who: string };
 export type Item = { id: string; whose: Whose; since: number; why: string; addressee: Addressee; from?: string; request?: Request; move?: Move; activity?: Activity };
-export type Standing = { whose?: Whose; since: number; why: string; moves: Move[]; items: Item[]; waitsOn?: string; tally?: string; quiet?: true };
+export type Standing = { whose?: Whose; since: number; why: string; moves: Move[]; items: Item[]; waitsOn?: string; tally?: string; quiet?: true; unstarted?: true };
 
 export function pickWhose(whoses: Whose[]): Whose | undefined {
   return [...whoses].sort((a, b) => rank[a] - rank[b])[0];
@@ -549,7 +549,8 @@ export function own(model: Model, strand: Strand): Standing {
     else if (holding) standing = { ...quiet, since: holding.since, why: `waiting on ${holding.blocker.name}`, waitsOn: holding.blocker.id };
     else if (strand.heldBy) standing = { ...quiet, since: Math.max(...Object.values(strand.heldBy)), why: `waiting on ${Object.keys(strand.heldBy).join(", ")} (not ready yet)` };
     else if (live.length > 0) standing = { ...quiet, since: strand.made, why: tallyOf(model, live) ?? "" };
-    else if (strand.planned) standing = { ...quiet, since: strand.made, why: "ready to start" };
+    else if (strand.planned) standing = { ...quiet, since: strand.made, why: "ready to start", unstarted: true };
+    else if (!index.last.has(strand.id) && !model.reports.has(strand.id)) standing = { ...quiet, since: strand.made, why: "not started", quiet: true, unstarted: true };
     else standing = { ...quiet, since: Math.max(strand.made, index.last.get(strand.id) ?? 0), why: "quiet", quiet: true };
   }
   index.own.set(strand.id, standing);
@@ -647,7 +648,7 @@ export function counts(model: Model, now: number): Counts {
   const items = live.flatMap((strand) => itemsOn(model, strand.id));
   return {
     yours: yours.length,
-    agents: items.filter((item) => item.whose === "agent").length,
+    agents: new Set(items.filter((item) => item.whose === "agent").map((item) => item.addressee.id)).size,
     snoozed: live.filter((strand) => own(model, strand).whose === "you" && snoozed(strand, now)).length,
     waiting: items.filter((item) => item.whose === "person" || item.whose === "machine").length,
     oldest: yours[0] ? own(model, yours[0]).since : undefined,

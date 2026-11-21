@@ -4,7 +4,7 @@ import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
 import { isPooled, mentionLink, mentionsId, ownPrs, reviewsId } from "./inbox.ts";
 import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
-import { blockersOf, fit, headline, wrap, moveKind, onOwnJob, snoozedLabel, standingOf, whyOf, type MoveKind } from "./render.ts";
+import { blockersOf, fit, headline, wrap, moveKind, onOwnJob, snoozedLabel, standingOf, waitingOn, whyOf, type MoveKind } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { parseWhen } from "./when.ts";
 
@@ -28,6 +28,8 @@ type Fold = { key: FoldKey; title: string; strands: StrandView[] };
 type Item = { strand: StrandView; fold?: undefined } | { fold: Fold; strand?: undefined };
 
 const groups: { kind: MoveKind; title: string }[] = [
+  { kind: "claimed", title: "in progress: you took it on" },
+  { kind: "asking", title: "Claude asks you" },
   { kind: "replied", title: "Claude replied: go read it" },
   { kind: "review", title: "review" },
   { kind: "pickup", title: "pick up" },
@@ -84,9 +86,13 @@ export class Dealer {
     const agents = awake.filter((strand) => strand.own.whose === "agent" || onOwnJob(strand));
     const waiting = awake.filter((strand) => (strand.own.whose === "person" || strand.own.whose === "machine") && !agents.includes(strand));
     const outForReview = waiting.filter((strand) => ownPrs(strand).some((pr) => pr.state === "waiting"));
-    const people = waiting.filter((strand) => !outForReview.includes(strand) && strand.open.some((move) => move.player !== "you" && move.by.kind === "person"));
-    const machines = waiting.filter((strand) => !outForReview.includes(strand) && !people.includes(strand));
-    for (const [title, strands] of [["agents", agents], ["your PRs out for review", outForReview], ["people", people], ["machines", machines]] as const) {
+    const byWhom = new Map<string, StrandView[]>();
+    for (const strand of waiting.filter((candidate) => !outForReview.includes(candidate))) {
+      const who = waitingOn(strand) ?? "others";
+      byWhom.set(who, [...(byWhom.get(who) ?? []), strand]);
+    }
+    const others = [...byWhom].sort(([a], [b]) => a.localeCompare(b)).map(([who, strands]) => [`waiting on ${who}`, strands] as const);
+    for (const [title, strands] of [["agents", agents], ["your PRs out for review", outForReview], ...others] as const) {
       if (strands.length > 0) this.sections.push({ title, side: "others", strands: [...strands].sort(newest), counted: true });
     }
     const blocked = awake.filter((strand) => strand.own.whose === undefined && !strand.own.quiet).sort(newest);

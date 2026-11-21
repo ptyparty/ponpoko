@@ -30,6 +30,14 @@ function epic() {
 }
 
 describe("an epic's dependencies", () => {
+  test("a story someone has worked on with nothing asked now is quiet, apart from one nobody has started", () => {
+    const { core } = epic();
+    core.wait({ strand: "sc-1 › sc-7", who: "you", kind: "you", what: "look" }, "you");
+    core.wait({ strand: "sc-1 › sc-7", over: true }, "you");
+    const graph = epicGraph(core.snapshot(), findEpic(core.snapshot(), "1")!);
+    expect(Object.fromEntries(graph.nodes.map((node) => [node.name, node.state]))).toMatchObject({ "sc-7": "quiet", "sc-8": "ready" });
+  });
+
   test("lays stories out left to right by what blocks what, forks and joins, with unlinked stories in a row of their own", () => {
     const { core } = epic();
     const snapshot = core.snapshot();
@@ -51,7 +59,7 @@ describe("an epic's dependencies", () => {
     view.setSnapshot(core.snapshot());
     const screen = plain(view.view(150, 45));
     expect(screen[0]).toMatch(/^ Gadgets  sc-1 · 7 stories · 1 done · 1 in review · 1 in progress · 2 ready/);
-    expect(screen[2]).toContain("✓ done   ⊘ in review or waiting on someone   ● yours   ◐ an agent's   ○ ready to start   · not started   ─▶ unblocks");
+    expect(screen[2]).toContain("✓ done   ⊘ in review or waiting on someone   ● yours   ◐ an agent's   ◌ nothing asked   ○ ready to start   · not started   ─▶ unblocks");
     expect(screen.join("\n")).toMatch(/│ ✓ 2 +│─────▶│ ⊘ 3/);
     expect(screen.join("\n")).toMatch(/│ ⊘ 3 +│──┬──▶│ · 4 +│──┬──▶│ · 6/);
     expect(screen.join("\n")).toMatch(/└──▶│ ● 5 +│──┘/);

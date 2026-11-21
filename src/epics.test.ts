@@ -53,7 +53,7 @@ describe("importing an epic from Shortcut", () => {
     expect(strandNamed(core, "sc-1").own.whose).toBeUndefined();
     expect(core.snapshot().counts.yours).toBe(0);
     core.start(id);
-    expect(strandNamed(core, "sc-1").own).toMatchObject({ why: "quiet" });
+    expect(strandNamed(core, "sc-1").own).toMatchObject({ why: "not started", unstarted: true });
     expect(strandNamed(core, "sc-1").own.whose).toBeUndefined();
     core.wait({ strand: "sc-1", who: "you", kind: "you", what: "write the plan" }, "you");
     expect(strandNamed(core, "sc-1").own).toMatchObject({ whose: "you", why: "write the plan" });

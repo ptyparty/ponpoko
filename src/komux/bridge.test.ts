@@ -179,6 +179,28 @@ describe("the komux bridge", () => {
     expect(line(core, "sketch")).toBe("sketch -");
   });
 
+  test("komux's turns keep a Claude on the strand under its own that it said it's on, and count it once", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2"], spaces: [] });
+    core.status({ self: "komux:s1:2", strand: "importer", text: "fixing the importer" });
+    await hear({ type: "agent.prompt", paneId: 2, tabId: 1, sessionId: "c1", by: "you" });
+    expect(core.snapshot().counts.agents).toBe(1);
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1", asking: true } });
+    await hear({ type: "agent.state", agent: { paneId: 2, tabId: 1, state: "working", sessionId: "c1" } });
+    expect(line(core, "  importer")).toBe("  importer agent pane:s1:2: working");
+  });
+
+  test("a second Claude in a tab can move from the strand made for it to the one it names", async () => {
+    const { core, hear } = harness();
+    await hear({ ...snapshot, jobs: [] });
+    await hear({ type: "agent.state", agent: { paneId: 3, tabId: 1, state: "working", sessionId: "c3" } });
+    core.present({ adapter: "komux", scope: "main/s1", players: ["pane:s1:2", "pane:s1:3"], spaces: [] });
+    core.add(undefined, "sc-1250");
+    expect(core.status({ self: "komux:s1:3", strand: "sc-1250", text: "on the fees story" })).toBe("sc-1250");
+    expect(core.snapshot().strands.map((strand) => strand.name)).not.toContain("claude 3");
+  });
+
   test("a second Claude in the same tab is the agent on a strand of its own under the tab's", async () => {
     const { core, hear } = harness();
     await hear({ ...snapshot, jobs: [] });

@@ -196,7 +196,7 @@ describe("the GitHub inbox as strands", () => {
     sync({ reviews: [pr()] });
     core.add(reviewsId, "talk to bob");
     sync({ reviews: [] });
-    expect(shown()).toBe(["reviews - 1 quiet", "  talk to bob - quiet"].join("\n"));
+    expect(shown()).toBe(["reviews - 1 quiet", "  talk to bob - not started"].join("\n"));
   });
 
   test("a forgotten review comes back under reviews on the next poll", () => {

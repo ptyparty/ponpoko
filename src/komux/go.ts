@@ -153,7 +153,8 @@ export function startsAt(strand: StrandView, env: Record<string, string | undefi
   const holder = strand.agent?.resume && komuxPlace(strand.agent)?.dir ? strand.agent : undefined;
   const agent = holder ?? (last ? (last.answers ?? last.by) : undefined);
   const place = agent ? komuxPlace(agent) : undefined;
-  const at = holder ? (holder.gone ?? holder.joined) : last ? (last.until ?? last.from) : 0;
+  const worked = [...strand.recent].reverse().find((move) => (move.answers ?? move.by).id === agent?.id);
+  const at = worked ? (worked.until ?? worked.from) : holder ? (holder.gone ?? holder.joined) : 0;
   const resume = agent && place ? { session: agent.resume!, dir: place.dir, who: agent.who, at } : undefined;
   const dir = tabOf(strand)?.dir ?? strand.links.find((link) => link.adapter === "dir")?.ref ?? storyProject(strand, env)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand) ?? projectOf(strand, env)?.dir;
   if (!resume && !dir) return undefined;
