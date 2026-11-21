@@ -132,6 +132,20 @@ describe("the deck", () => {
     expect(calls).toEqual([["go", strandNamed(core, "sc-7").id]]);
   });
 
+  test("keeps a strand under agents while its Claude works, even when it also asks you something", async () => {
+    const { core, hear, now } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/stories/sc-1", labels: { strand: "sc-1" } }], agents: [{ paneId: 2, tabId: 1, state: "working" }], jobs: [] });
+    core.wait({ strand: "sc-1", who: "you", kind: "you", what: "try it in the browser" }, "you");
+    const dealer = new Dealer(recordingActions().actions, false, now);
+    dealer.setSnapshot(core.snapshot());
+    const deck = plain(dealer.view(90, 40));
+    expect(deck).toMatch(/1 ● Widget CSV import +· sc-1 +try it in the browser/);
+    expect(deck).toMatch(/ agents 1 *\n.*2 ◐ Widget CSV import +· sc-1 +claude · working/);
+    await dealer.key({ name: "2" });
+    dealer.setSnapshot(core.snapshot());
+    expect(plain(dealer.view(90, 40))).toMatch(/▎ 2 ◐ Widget CSV import/);
+  });
+
   test("puts yours on the left and everyone else's on the right when the popup is wide, and moves between them", async () => {
     const { core, hear, replied, tick, now } = harness();
     await hear({ type: "snapshot", tabs: [{ id: 1, number: 1, name: "widgets", dir: "/w/widgets", labels: { strand: "claude in widgets" } }, { id: 2, number: 2, name: "side", dir: "/w/side", labels: { strand: "claude in side" } }, { id: 3, number: 3, name: "docs", dir: "/w/docs", labels: { strand: "claude in docs" } }], agents: [], jobs: [] });

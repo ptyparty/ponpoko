@@ -58,6 +58,7 @@ export class Dealer {
   setSnapshot(snapshot: Snapshot | undefined): void {
     const before = this.item();
     const beforeKey = before?.strand?.id ?? before?.fold?.key;
+    const beforeMine = this.selected < this.mine().length;
     this.snapshot = snapshot;
     this.sections = [];
     this.folds = [];
@@ -75,7 +76,9 @@ export class Dealer {
       if (!this.unseen) this.dealOthers(snapshot, newest);
     }
     const items = this.items();
-    const again = items.findIndex((item) => (item.strand?.id ?? item.fold?.key) === beforeKey);
+    const matches = (item: Item) => (item.strand?.id ?? item.fold?.key) === beforeKey;
+    const sameSide = beforeMine ? this.mine().findIndex(matches) : this.theirs().findIndex(matches);
+    const again = sameSide >= 0 ? sameSide + (beforeMine ? 0 : this.mine().length) : items.findIndex(matches);
     this.selected = again >= 0 ? again : Math.min(this.selected, Math.max(0, items.length - 1));
   }
 
@@ -83,7 +86,7 @@ export class Dealer {
     const listed = snapshot.strands.filter((strand) => !isPooled(strand) && !strand.planned && strand.id !== reviewsId && strand.id !== mentionsId);
     const asleep = (strand: StrandView) => (strand.snoozedUntil ?? 0) > snapshot.now;
     const awake = listed.filter((strand) => !asleep(strand) && strand.own.whose !== "you");
-    const agents = awake.filter((strand) => strand.own.whose === "agent" || onOwnJob(strand));
+    const agents = [...awake.filter((strand) => strand.own.whose === "agent" || onOwnJob(strand)), ...listed.filter((strand) => !asleep(strand) && strand.own.whose === "you").flatMap((strand) => agentSide(strand) ?? [])];
     const waiting = awake.filter((strand) => (strand.own.whose === "person" || strand.own.whose === "machine") && !agents.includes(strand));
     const outForReview = waiting.filter((strand) => ownPrs(strand).some((pr) => pr.state === "waiting"));
     const byWhom = new Map<string, StrandView[]>();
@@ -450,6 +453,11 @@ export class Dealer {
       return false;
     }
   }
+}
+
+function agentSide(strand: StrandView): StrandView | undefined {
+  const latest = strand.open.filter((move) => move.player !== "you" && move.by.kind === "agent").sort((a, b) => b.from - a.from)[0];
+  return latest && { ...strand, own: { ...strand.own, whose: "agent", since: latest.from, why: latest.what } };
 }
 
 function tabFrom(env: Record<string, string | undefined>): TabRef | undefined {

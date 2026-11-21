@@ -606,7 +606,7 @@ export class Ponpoko {
     const parents = new Set(finished.flatMap((id) => this.model.strands.get(id)?.parent ?? []).filter((id) => !finishing.has(id)));
     for (const id of parents) {
       const parent = this.model.strands.get(id);
-      if (!parent || parent.done !== undefined || parent.kind === "inbox" || settled(id) || !children(this.model, id).every((child) => child.done !== undefined)) continue;
+      if (!parent || parent.done !== undefined || parent.kind === "inbox" || settled(id) || activitiesOn(this.model, id).length > 0 || !children(this.model, id).every((child) => child.done !== undefined)) continue;
       asks.push({ request: this.newId("r"), strand: id, to: { role: "owner", strand: id }, what: "parts done: close it?", kind: "close" });
     }
     for (const other of this.model.strands.values()) {

@@ -170,6 +170,14 @@ describe("strands", () => {
     expect(strandNamed(core, "sc-1 › a").unseen).toBe(false);
   });
 
+  test("doesn't ask you to close a parent while someone is at work on it", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1 › a");
+    core.status({ self: "tool:1", strand: "sc-1", text: "planning what's next" });
+    core.done(strandNamed(core, "sc-1 › a").id);
+    expect([...core.model.requests.values()].filter((request) => request.kind === "close")).toEqual([]);
+  });
+
   test("a parent sums up what's asked under it, and asks you to close it once every part is done", () => {
     const { core, tick } = setup();
     core.add(undefined, "sc-1 › a › pr");
