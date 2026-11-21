@@ -71,6 +71,10 @@ describe("the deck", () => {
     expect(plain(dealer.view(160, 80))).toMatch(/1 ● sc-1 +parts done: close it?/);
     await dealer.key({ name: "1" });
     expect(dealer.card()?.name).toBe("sc-1");
+    expect(plain(dealer.view(160, 80))).toContain("c  keep open");
+    await dealer.key({ name: "c" });
+    expect(calls).toEqual([["keepOpen", strandNamed(core, "sc-1").id]]);
+    calls.length = 0;
     await dealer.key({ name: "return" });
     expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
   });

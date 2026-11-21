@@ -240,6 +240,9 @@ export class Dealer {
       case "d":
         if (card) await this.act(() => this.actions.done(card.id), `${card.name} is done`);
         return undefined;
+      case "c":
+        if (card && asksToClose(card)) await this.act(() => this.actions.keepOpen(card.id), `${card.name} stays open`);
+        return undefined;
       case "o": {
         const link = card ? openableLink(card) : undefined;
         if (!link) this.message = "Nothing on this strand links anywhere";
@@ -404,7 +407,7 @@ export class Dealer {
     if (this.mode in prompts) return ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`);
     const side: [string, string][] = this.wide ? [["tab", "side"]] : [];
     if (!card || fold) return keyLine([["j k", "pick"], ...side, ["␣", "open"], ["esc", "close"]], width);
-    return keyLine([["j k", "pick"], ...side, ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ...(openableLink(card) ? [["o", "open"] as [string, string]] : []), ...(draftsOf(card).length > 0 ? [["R", "mark ready"] as [string, string]] : []), ["d", "done"], ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["t", "title"], ["w", "wait on"], ["esc", "close"]], width);
+    return keyLine([["j k", "pick"], ...side, ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ...(openableLink(card) ? [["o", "open"] as [string, string]] : []), ...(draftsOf(card).length > 0 ? [["R", "mark ready"] as [string, string]] : []), ["d", "done"], ...(asksToClose(card) ? [["c", "keep open"] as [string, string]] : []), ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["t", "title"], ["w", "wait on"], ["esc", "close"]], width);
   }
 
   private foldDetail(fold: Fold, width: number): string[] {
@@ -453,6 +456,10 @@ export class Dealer {
       return false;
     }
   }
+}
+
+function asksToClose(strand: StrandView): boolean {
+  return strand.requests.some((request) => request.kind === "close" && request.toKind === "you");
 }
 
 function agentSide(strand: StrandView): StrandView | undefined {

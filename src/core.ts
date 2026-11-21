@@ -517,6 +517,12 @@ export class Ponpoko {
     this.record("you", facts);
   }
 
+  keepOpen(strand: string): void {
+    this.mustHave(strand);
+    const declined = openRequests(this.model, strand).filter((request) => request.kind === "close").map((request): ReplySaid => ({ request: request.id, as: "declined" }));
+    if (declined.length > 0) this.record("you", [said([], declined)]);
+  }
+
   closeMove(move: string): void {
     const request = this.model.requests.get(move);
     if (request) {

@@ -178,6 +178,17 @@ describe("strands", () => {
     expect([...core.model.requests.values()].filter((request) => request.kind === "close")).toEqual([]);
   });
 
+  test("keeping a parent open declines its close ask and leaves it open", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1 › a");
+    core.done(strandNamed(core, "sc-1 › a").id);
+    expect(strandNamed(core, "sc-1").own.why).toBe("parts done: close it?");
+    core.keepOpen(strandNamed(core, "sc-1").id);
+    expect(strandNamed(core, "sc-1").own.whose).toBeUndefined();
+    expect(strandNamed(core, "sc-1").done).toBeUndefined();
+    expect(core.snapshot().moves).toEqual([]);
+  });
+
   test("a parent sums up what's asked under it, and asks you to close it once every part is done", () => {
     const { core, tick } = setup();
     core.add(undefined, "sc-1 › a › pr");
