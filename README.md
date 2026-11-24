@@ -60,6 +60,12 @@ Enter on a strand no one is on offers to resume the last Claude that worked on i
 
 Going to a strand prefers its own tab and place over its parent's. A strand ponpoko has no tab or directory for opens the komux project named like it, such as `~/work/stories/sc-52596` for `sc-52596`, even when no tab for it is open yet; failing that it goes to the place of the nearest strand above it that has one, so a story under an epic opens the story's directory, not the epic's. ponpoko finds the projects from `projects.roots` in komux's config, or from `PONPOKO_PROJECT_ROOTS` (globs separated by `:`) when that's set.
 
+A story with no place of its own (no tab, directory or project, and no Claude of its own except in a directory that belongs to a strand above it) never borrows its epic's place. Going to it, or to a strand under it, says it has no story directory. If `stories.newCommand` in `~/.config/ponpoko/config.json` names a command, `{story}` replaced by the story's name, Enter offers to run it and `y` does, then opens the komux project named for the story:
+
+```json
+{ "stories": { "newCommand": ["make-story-dir", "{story}"] } }
+```
+
 A build an agent runs from one strand's tab for another strand can say which it's for: `ponpoko for "sc-52734 › consolidation toggle" -- scripts/build`, or `PONPOKO_STRAND` in its environment with `ponpoko for -- scripts/build`. Run as a komux job, it tells ponpoko that job belongs to that strand, so the strand waits on the build ("claude · on its build" in the deck) instead of showing as your move, and the agent stays on its own strand. If ponpoko is down or doesn't know the strand, `ponpoko for` says so and runs the command anyway.
 
 When the tab a strand lives in already has a Claude in it, such as a story's Claude when you pick one of the story's smaller strands, Enter goes to that Claude instead of offering a new one. `f` starts a fresh Claude on a strand whenever you want one anyway, in the deck or the command tab.

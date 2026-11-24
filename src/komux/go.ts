@@ -1,9 +1,9 @@
 import { aboveOf, underOf, type MoveView, type PlayerView, type StrandView } from "../core.ts";
-import { prRef } from "../github.ts";
+import { prRef, storyCommand } from "../github.ts";
 import { isBookkeeping, mentionLink, prAdapter } from "../inbox.ts";
 import { sendKomux } from "./stream.ts";
 import { isStory } from "../shortcut.ts";
-import { knownProjects, loadProjects, projectNamed, type Project } from "./projects.ts";
+import { forgetProjects, knownProjects, loadProjects, projectNamed, type Project } from "./projects.ts";
 import { komuxPlace, komuxTabHandle, readKomuxTabHandle, readKomuxTabRef, type KomuxTabRef } from "./translate.ts";
 
 export type Control = (request: unknown) => Promise<{ ok: boolean; error?: string; result?: unknown }>;
@@ -36,6 +36,8 @@ export async function goInKomux(strand: StrandView, strands: StrandView[], env =
     if (!opened.ok) throw new Error(opened.error ?? "komux refused");
     return landed("opened", opened.result);
   }
+  const unhoused = unhousedStory(strand, strands, env);
+  if (unhoused) throw new Error(noStoryDir(unhoused));
   const where = goPlace(strand, aboveOf(strands, strand), env);
   if (!where) throw new Error("ponpoko doesn't know where this strand lives");
   const opened = await send({ method: "project.open", params: { target: where.dir, ...layoutAt(where.tab, where.dir) } });
@@ -59,11 +61,14 @@ export function reviewLayout(env: Record<string, string | undefined> = process.e
 }
 
 export function goTarget(strand: StrandView, strands: StrandView[] = [], env: Record<string, string | undefined> = process.env): { player: PlayerView; move: MoveView } | undefined {
+  const home = homeDir(strand, env);
+  const unhoused = unhousedStory(strand, strands, env);
   for (const move of strand.open) {
     const player = move.answers ?? move.by;
-    if (player.live && komuxPlace(player)) return { player, move };
+    const place = komuxPlace(player);
+    if (player.live && place && ((home ? within(place.dir, home) : !unhoused) || player.id === strand.agent?.id || move.id.startsWith("activity:"))) return { player, move };
   }
-  if (strands.length === 0 || openTab(strand, env)) return undefined;
+  if (strands.length === 0 || unhoused || openTab(strand, env)) return undefined;
   const options = pickup(strand, env);
   const dir = options?.resume?.dir ?? options?.dir ?? goPlace(strand, aboveOf(strands, strand), env)?.dir;
   return dir ? claudeIn([strand, ...aboveOf(strands, strand), ...strands], dir, env) : undefined;
@@ -102,9 +107,12 @@ export function tabStrands(strands: StrandView[], server: string, tabId: number)
 }
 
 export function goPlace(strand: StrandView, above: StrandView[], env: Record<string, string | undefined> = process.env): { dir: string; tab?: KomuxTabRef } | undefined {
+  if (unhousedStory(strand, [strand, ...above], env)) return undefined;
+  const home = homeDir(strand, env);
   for (const at of [strand, ...above]) {
     const tab = tabOf(at);
-    const dir = tab?.dir ?? at.links.find((link) => link.adapter === "dir")?.ref ?? storyProject(at, env)?.dir ?? lastDir(at);
+    const last = lastDir(at);
+    const dir = ownDir(at) ?? storyProject(at, env)?.dir ?? (last && (!home || within(last, home)) ? last : undefined);
     if (dir) return { dir, ...(tab ? { tab } : {}) };
   }
   if (strand.dir) return { dir: strand.dir };
@@ -118,6 +126,64 @@ export function projectOf(strand: { name: string }, env: Record<string, string |
 
 function storyProject(strand: { name: string; kind?: string }, env: Record<string, string | undefined>): Project | undefined {
   return isStory(strand) ? projectOf(strand, env) : undefined;
+}
+
+export function homeDir(strand: StrandView, env: Record<string, string | undefined> = process.env): string | undefined {
+  const own = ownDir(strand);
+  if (own) return own;
+  const nearest = nearestStory(strand);
+  const story = nearest ? projectOf(nearest, env) : undefined;
+  if (!story) return undefined;
+  return strand.dir && within(strand.dir, story.dir) ? strand.dir : story.dir;
+}
+
+export function unhousedStory(strand: StrandView, strands: StrandView[], env: Record<string, string | undefined> = process.env): string | undefined {
+  for (const at of [strand, ...aboveOf(strands, strand)]) {
+    if (ownDir(at) || openTab(at, env)) return undefined;
+    if (!isStory(at)) continue;
+    if (at.kind === "epic" || projectOf(at, env)) return undefined;
+    const worked = workedIn(at);
+    const borrowed = aboveOf(strands, at).some((above) => {
+      const dir = ownDir(above) ?? projectOf(above, env)?.dir ?? workedIn(above);
+      return dir !== undefined && worked !== undefined && within(worked, dir);
+    });
+    return worked === undefined || borrowed ? at.name : undefined;
+  }
+  return undefined;
+}
+
+function ownDir(strand: StrandView): string | undefined {
+  return tabOf(strand)?.dir ?? strand.links.find((link) => link.adapter === "dir")?.ref;
+}
+
+function workedIn(strand: StrandView): string | undefined {
+  if (strand.agent) return komuxPlace(strand.agent)?.dir;
+  for (const move of [...strand.recent].reverse()) if (move.by.kind === "agent") return komuxPlace(move.by)?.dir;
+  return undefined;
+}
+
+export function noStoryDir(story: string): string {
+  return `${story} has no story directory yet`;
+}
+
+export function noStoryDirHint(story: string): string {
+  return canMakeStoryDir(story) ? `${noStoryDir(story)}; make one` : noStoryDir(story);
+}
+
+export function makeStoryDirAsk(story: string): string {
+  return `${noStoryDir(story)} · y make it and open it   any other key no`;
+}
+
+export function cantMakeStoryDir(story: string): string {
+  return `${noStoryDir(story)}; set stories.newCommand in ponpoko's config to make one from here`;
+}
+
+function nearestStory(strand: StrandView): { name: string; kind?: string } | undefined {
+  return [strand, ...strand.above].find((at) => isStory(at));
+}
+
+function within(dir: string, home: string): boolean {
+  return dir === home || dir.startsWith(`${home.replace(/\/+$/, "")}/`);
 }
 
 export function tabOf(strand: StrandView): KomuxTabRef | undefined {
@@ -146,9 +212,11 @@ export function pickup(strand: StrandView, env: Record<string, string | undefine
 }
 
 export function startsAt(strand: StrandView, env: Record<string, string | undefined> = process.env): Pickup | undefined {
+  const home = homeDir(strand, env);
   const last = [...strand.recent].reverse().find((move) => {
     const player = move.answers ?? move.by;
-    return player.kind === "agent" && player.resume && komuxPlace(player)?.dir;
+    const dir = komuxPlace(player)?.dir;
+    return player.kind === "agent" && player.resume && dir && (!home || within(dir, home));
   });
   const holder = strand.agent?.resume && komuxPlace(strand.agent)?.dir ? strand.agent : undefined;
   const agent = holder ?? (last ? (last.answers ?? last.by) : undefined);
@@ -156,14 +224,39 @@ export function startsAt(strand: StrandView, env: Record<string, string | undefi
   const worked = [...strand.recent].reverse().find((move) => (move.answers ?? move.by).id === agent?.id);
   const at = worked ? (worked.until ?? worked.from) : holder ? (holder.gone ?? holder.joined) : 0;
   const resume = agent && place ? { session: agent.resume!, dir: place.dir, who: agent.who, at } : undefined;
-  const dir = tabOf(strand)?.dir ?? strand.links.find((link) => link.adapter === "dir")?.ref ?? storyProject(strand, env)?.dir ?? strand.dir ?? resume?.dir ?? lastDir(strand) ?? projectOf(strand, env)?.dir;
+  const dir = home ?? strand.dir ?? resume?.dir ?? lastDir(strand) ?? projectOf(strand, env)?.dir;
   if (!resume && !dir) return undefined;
   return { ...(resume ? { resume } : {}), ...(dir ? { dir } : {}) };
 }
 
-export function pickupOffer(strand: StrandView, strands: StrandView[], env: Record<string, string | undefined> = process.env): Pickup | undefined {
+export function needsStoryDir(strand: StrandView, strands: StrandView[], env: Record<string, string | undefined> = process.env): string | undefined {
   if (mentionLink(strand) || (reviewOf(strand) && !tabOf(strand))) return undefined;
+  return goTarget(strand, strands, env) || openTab(strand, env) ? undefined : unhousedStory(strand, strands, env);
+}
+
+export function pickupOffer(strand: StrandView, strands: StrandView[], env: Record<string, string | undefined> = process.env): Pickup | undefined {
+  if (mentionLink(strand) || (reviewOf(strand) && !tabOf(strand)) || unhousedStory(strand, strands, env)) return undefined;
   return goTarget(strand, strands, env) || openTab(strand, env) ? undefined : pickup(strand, env);
+}
+
+export async function makeStoryDir(story: string, command: string[] | undefined = storyCommand(story), env = process.env, control?: Control): Promise<string> {
+  const socket = env.KOMUX_SOCKET;
+  if (!socket) throw new Error("making a story directory works from inside komux");
+  if (!command) throw new Error("set stories.newCommand in ponpoko's config to make story directories");
+  const send = control ?? ((request: unknown) => sendKomux(socket, request));
+  const made = Bun.spawn(command, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [code, out, err] = await Promise.all([made.exited, new Response(made.stdout).text(), new Response(made.stderr).text()]);
+  if (code !== 0) throw new Error(`${command[0]}: ${err.trim() || out.trim() || `exit ${code}`}`);
+  forgetProjects();
+  const project = projectNamed(story, await loadProjects(env));
+  if (!project) throw new Error(`${command.join(" ")} ran, but komux has no project named ${story}; check projects.roots in komux's config`);
+  const opened = await send({ method: "project.open", params: { target: project.dir } });
+  if (!opened.ok) throw new Error(opened.error ?? "komux refused");
+  return project.dir;
+}
+
+export function canMakeStoryDir(story: string): boolean {
+  return storyCommand(story) !== undefined;
 }
 
 export function claudeCommand(env: Record<string, string | undefined> = process.env): string[] {

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Actions } from "./actions.ts";
 import { Dealer } from "./deal.ts";
 import { inboxFacts } from "./inbox.ts";
@@ -91,7 +94,21 @@ describe("the deck", () => {
     expect(calls).toEqual([["keepOpen", strandNamed(core, "sc-1").id]]);
     calls.length = 0;
     await dealer.key({ name: "return" });
-    expect(calls).toEqual([["go", strandNamed(core, "sc-1").id]]);
+    expect(plain(dealer.view(160, 80))).toContain("sc-1 has no story directory yet; set stories.newCommand in ponpoko's config to make one from here");
+    const config = join(mkdtempSync(join(tmpdir(), "ponpoko-config-")), "config.json");
+    writeFileSync(config, JSON.stringify({ stories: { newCommand: ["make-story", "{story}"] } }));
+    process.env.PONPOKO_CONFIG = config;
+    try {
+      await dealer.key({ name: "return" });
+      expect(plain(dealer.view(160, 80))).toContain("sc-1 has no story directory yet · y make it and open it");
+      await dealer.key({ name: "n" });
+      expect(calls).toEqual([]);
+      await dealer.key({ name: "return" });
+      expect(await dealer.key({ name: "y" })).toBe("close");
+      expect(calls).toEqual([["makeStory", "sc-1"]]);
+    } finally {
+      process.env.PONPOKO_CONFIG = "/nonexistent/ponpoko-test-config.json";
+    }
   });
 
   test("groups your moves by what is asked, newest first in each: what Claude asks, what it replied, review, pick up", async () => {
@@ -145,10 +162,11 @@ describe("the deck", () => {
     const deck = plain(dealer.view());
     expect(deck).toMatch(/Claude replied: go read it *\n.*1 ● claude in widgets[^\n]*\n\n agents 1 *\n.*2 ◐ claude in side +claude · working[^\n]*\n\n waiting on Copilot 1 *\n.*3 ⊘ sc-7 +Copilot · PR review[^\n]*\n\n ▸ 1 snoozed/);
     await dealer.key({ name: "3" });
-    await dealer.key({ name: "s" });
-    expect(dealer.card()?.name).toBe("sc-7");
+    expect(plain(dealer.view())).toContain("⏎  sc-7 has no story directory yet\n");
+    await dealer.key({ name: "2" });
+    expect(dealer.card()?.name).toBe("claude in side");
     expect(await dealer.key({ name: "return" })).toBe("close");
-    expect(calls).toEqual([["go", strandNamed(core, "sc-7").id]]);
+    expect(calls).toEqual([["go", strandNamed(core, "claude in side").id]]);
   });
 
   test("keeps a strand under agents while its Claude works, even when it also asks you something", async () => {

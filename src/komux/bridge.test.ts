@@ -9,7 +9,7 @@ import { forRequest, readFor, runFor } from "./for.ts";
 import { loadProjects, readRoots } from "./projects.ts";
 import { Bridge } from "./bridge.ts";
 import { komuxLine } from "./stream.ts";
-import { brief, goInKomux, goTarget, pickup, pickupOffer, pickUpInKomux } from "./go.ts";
+import { brief, goInKomux, goTarget, needsStoryDir, pickup, pickupOffer, pickUpInKomux } from "./go.ts";
 
 const story = "/home/me/work/stories/sc-1234/widgets";
 const side = "/home/me/work/ptyparty";
@@ -677,22 +677,56 @@ describe("go in komux", () => {
     const strands = core.snapshot().strands;
     const story = strandNamed(core, "sc-900 › sc-901");
     const step = strandNamed(core, "sc-900 › sc-901 › implement");
-    expect(goTarget(story, strands, projects)?.player.id).toBe("pane:s1:9");
+    expect(goTarget(story, strands, projects)).toBeUndefined();
+    expect(needsStoryDir(story, strands, projects)).toBe("sc-901");
     await loadProjects(projects);
     expect(goTarget(story, strands, projects)).toBeUndefined();
+    expect(needsStoryDir(story, strands, projects)).toBeUndefined();
     const { sent, control } = recorder();
     await goInKomux(story, strands, projects, control);
     await goInKomux(step, strands, projects, control);
     await goInKomux(strandNamed(core, "sc-900 › sc-901 › merlin"), strands, projects, control);
     await goInKomux(strandNamed(core, "gadgets"), strands, projects, control);
-    await goInKomux(story, strands, { ...projects, PONPOKO_PROJECT_ROOTS: "" }, control);
+    await expect(goInKomux(story, strands, { ...projects, PONPOKO_PROJECT_ROOTS: "" }, control)).rejects.toThrow("sc-901 has no story directory yet");
     expect(sent).toEqual([
       { method: "project.open", params: { target: join(work, "stories/sc-901") } },
       { method: "project.open", params: { target: join(work, "stories/sc-901") } },
       { method: "project.open", params: { target: join(work, "stories/sc-901") } },
       { method: "project.open", params: { target: join(work, "repos/gadgets") } },
-      { method: "tab.focus", params: { tabId: 4 } },
     ]);
+  });
+
+  test("a story with its own project goes there, not to a Claude elsewhere that asked something of it, nor to the epic's directory", async () => {
+    const work = mkdtempSync(join(tmpdir(), "ponpoko-projects-"));
+    for (const dir of ["stories/sc-900", "stories/sc-901", "tools"]) mkdirSync(join(work, dir), { recursive: true });
+    const projects = { ...env, PONPOKO_PROJECT_ROOTS: `${work}/stories/*` };
+    const { core, hear } = harness();
+    await hear({ type: "snapshot", tabs: [{ id: 4, number: 4, name: "epic", dir: join(work, "stories/sc-900"), labels: { strand: "sc-900" } }, { id: 6, number: 6, name: "tools", dir: join(work, "tools"), labels: { strand: "tools" } }], agents: [{ paneId: 9, tabId: 4, state: "waiting", sessionId: "e1" }, { paneId: 7, tabId: 6, state: "waiting", sessionId: "t1" }], jobs: [] });
+    core.point(join(work, "stories/sc-900"), "sc-900");
+    core.add(strandNamed(core, "sc-900").id, "sc-901 › merlin#1");
+    core.wait({ self: "komux:s1:7", strand: "sc-900 › sc-901", who: "you", kind: "you", what: "in progress in Shortcut" });
+    core.wait({ self: "komux:s1:9", strand: "sc-900 › sc-901 › merlin#1", who: "the team", kind: "person", what: "review" });
+    core.wait({ self: "komux:s1:9", strand: "sc-900 › sc-902", who: "you", kind: "you", what: "look at the plan" });
+    const strands = core.snapshot().strands;
+    const story = strandNamed(core, "sc-900 › sc-901");
+    const pr = strandNamed(core, "sc-900 › sc-901 › merlin#1");
+    await loadProjects(projects);
+    expect(goTarget(story, strands, projects)).toBeUndefined();
+    expect(goTarget(pr, strands, projects)).toBeUndefined();
+    expect(pickupOffer(pr, strands, projects)?.dir).toBe(join(work, "stories/sc-901"));
+    const { sent, control } = recorder();
+    await goInKomux(story, strands, projects, control);
+    await goInKomux(pr, strands, projects, control);
+    expect(sent).toEqual([
+      { method: "project.open", params: { target: join(work, "stories/sc-901") } },
+      { method: "project.open", params: { target: join(work, "stories/sc-901") } },
+    ]);
+    const homeless = strandNamed(core, "sc-900 › sc-902");
+    expect(goTarget(homeless, strands, projects)).toBeUndefined();
+    expect(pickupOffer(homeless, strands, projects)).toBeUndefined();
+    expect(needsStoryDir(homeless, strands, projects)).toBe("sc-902");
+    expect(needsStoryDir(story, strands, projects)).toBeUndefined();
+    await expect(goInKomux(homeless, strands, projects, control)).rejects.toThrow("sc-902 has no story directory yet");
   });
 
   test("reads komux's project roots from its config without running it", () => {

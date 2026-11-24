@@ -7,6 +7,7 @@ import type { EpicLookup, TitleLookup } from "./shortcut.ts";
 import { Store } from "./store.ts";
 
 process.env.PONPOKO_PROJECT_ROOTS ??= "";
+process.env.PONPOKO_CONFIG = "/nonexistent/ponpoko-test-config.json";
 
 export function harness(start = 1_000_000, store = new Store(":memory:"), shared?: Ponpoko, lookupTitle: TitleLookup = async () => ({ kind: "story", title: "Widget CSV import" }), strandsExist = true, lookupEpic: EpicLookup = async () => []) {
   let now = start;
@@ -84,6 +85,7 @@ export function recordingActions() {
     done: record("done"),
     keepOpen: record("keepOpen"),
     reply: record("reply"),
+    makeStory: record("makeStory"),
     open: async (link: { ref: string }) => void calls.push(["open", link.ref]),
     ready: async (strand: { id: string }, url: string) => (calls.push(["ready", strand.id, url]), `Marked ${url} ready for review`),
   } as Actions;

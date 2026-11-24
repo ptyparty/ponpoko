@@ -18,6 +18,10 @@ export function knownProjects(env: Record<string, string | undefined> = process.
   return cached?.projects ?? [];
 }
 
+export function forgetProjects(): void {
+  cache.clear();
+}
+
 export function loadProjects(env: Record<string, string | undefined> = process.env, now = Date.now()): Promise<Project[]> {
   const key = sourceOf(env);
   const cached = cache.get(key);

@@ -216,7 +216,7 @@ export function configFile(env: Record<string, string | undefined> = process.env
   return env.PONPOKO_CONFIG || join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), "ponpoko", "config.json");
 }
 
-export type Config = { github?: { reviewQuery?: unknown; unreviewed?: unknown }; shortcut?: { readyStates?: unknown } };
+export type Config = { github?: { reviewQuery?: unknown; unreviewed?: unknown }; shortcut?: { readyStates?: unknown }; stories?: { newCommand?: unknown } };
 
 export function readConfig(file = configFile()): Config {
   if (!existsSync(file)) return {};
@@ -234,6 +234,12 @@ export function unreviewedThresholds(file = configFile()): Thresholds {
     return typeof value === "number" && Number.isFinite(value) ? value : defaultThresholds[key];
   };
   return { yellow: pick("yellow"), orange: pick("orange"), red: pick("red") };
+}
+
+export function storyCommand(story: string, file = configFile()): string[] | undefined {
+  const given = readConfig(file).stories?.newCommand;
+  if (!Array.isArray(given) || given.length === 0 || !given.every((word) => typeof word === "string")) return undefined;
+  return given.map((word: string) => word.replaceAll("{story}", story));
 }
 
 export function reviewQuery(file = configFile()): string | undefined {

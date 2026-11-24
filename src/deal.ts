@@ -2,13 +2,14 @@ import { draftsOf, openableLink, pickup, pickupChoice, pickupLine, readyChoice, 
 import { state } from "./client.ts";
 import { aboveOf, underOf, type Snapshot, type StrandView } from "./core.ts";
 import { isPooled, mentionLink, mentionsId, ownPrs, reviewsId } from "./inbox.ts";
-import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, tabStrands } from "./komux/go.ts";
+import { canMakeStoryDir, cantMakeStoryDir, goPlace, goTarget, makeStoryDirAsk, needsStoryDir, noStoryDirHint, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, tabStrands } from "./komux/go.ts";
 import { komuxTabHandle } from "./komux/translate.ts";
 import { blockersOf, fit, headline, wrap, moveKind, onOwnJob, snoozedLabel, standingOf, waitingOn, whyOf, type MoveKind } from "./render.ts";
 import { cells, keyLine, openScreen, style, visible, type Key, type Part } from "./screen.ts";
 import { parseWhen } from "./when.ts";
+import { loadProjects } from "./komux/projects.ts";
 
-type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | "ready" | Purpose;
+type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | "ready" | "make" | Purpose;
 type Purpose = "add" | "note" | "move" | "rename" | "title" | "wait" | "reply";
 export type TabRef = { server: string; tabId: number };
 
@@ -47,6 +48,7 @@ export class Dealer {
   private sideAt = { mine: 0, others: 0 };
   private typed = "";
   private replyingTo: StrandView | undefined;
+  private making: { strand: StrandView; story: string } | undefined;
   mode: Mode = "card";
   message: string | undefined;
 
@@ -165,6 +167,16 @@ export class Dealer {
       if (pr && card) await this.act(() => this.actions.ready(card, pr.url), (said) => String(said));
       return undefined;
     }
+    if (this.mode === "make") {
+      this.mode = "card";
+      const making = this.making;
+      this.making = undefined;
+      if (key.name === "y" && making && (await this.act(() => this.actions.makeStory(making.story), `Made ${making.story}'s story directory`))) {
+        this.dealt.add(making.strand.id);
+        return this.finish();
+      }
+      return undefined;
+    }
     if (this.mode === "forget") {
       this.mode = "card";
       if (key.name === "y" && card) await this.act(() => this.actions.forget(card.id), `Forgot ${card.name}`);
@@ -185,6 +197,13 @@ export class Dealer {
           return undefined;
         }
         if (!card) return this.finish();
+        await loadProjects().catch(() => undefined);
+        const story = needsStoryDir(card, this.strands());
+        if (story && canMakeStoryDir(story)) {
+          this.mode = "make";
+          this.making = { strand: card, story };
+        } else if (story) this.message = cantMakeStoryDir(story);
+        if (story) return undefined;
         if (pickupOffer(card, this.strands())) {
           this.mode = "pickup";
           return undefined;
@@ -407,6 +426,8 @@ export class Dealer {
     const place = goPlace(card, aboveOf(this.strands(), card));
     const open = target ? undefined : openTab(card);
     const github = mentionLink(card) ? "open the mention on GitHub" : !target && !open && reviewOf(card) && !tabOf(card) ? `open ${card.name} in ${reviewLayout()}` : undefined;
+    const story = github ? undefined : needsStoryDir(card, this.strands());
+    if (story) return noStoryDirHint(story);
     return github ? github : target ? `go to ${target.who} in ${target.space ?? "its tab"}` : open ? `go to ${open.label}` : options?.resume ? `no one is on it; resume ${options.resume.who} or start a fresh Claude` : options?.dir ? `no one is on it; start a Claude at ${options.dir}` : place ? `open a tab at ${place.dir}` : "nowhere ponpoko knows of";
   }
 
@@ -417,6 +438,7 @@ export class Dealer {
     if (this.mode === "ready" && card) return ask(readyLine(draftsOf(card)));
     if (this.mode === "time") return ask(timeLine(this.typed, this.now()));
     if (this.mode === "forget" && card) return ask(`forget ${card.name}?  y yes   any other key no`);
+    if (this.mode === "make" && this.making) return ask(makeStoryDirAsk(this.making.story));
     if (this.mode === "pickup" && options && this.snapshot) return ask(pickupLine(options, this.snapshot.now));
     if (this.mode in prompts) return ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`);
     const side: [string, string][] = this.wide ? [["tab", "side"]] : [];

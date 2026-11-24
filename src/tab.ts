@@ -1,7 +1,7 @@
 import { draftsOf, openableLink, pickupChoice, pickupLine, readyChoice, readyLine, serviceActions, snoozeChoices, snoozeLine, timeLine, type Actions } from "./actions.ts";
 import { prName } from "./github.ts";
 import { isPooled, mentionLink, ownPrs, prAdapter, type OwnPrView } from "./inbox.ts";
-import { goPlace, goTarget, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, type Pickup } from "./komux/go.ts";
+import { canMakeStoryDir, cantMakeStoryDir, goPlace, goTarget, makeStoryDirAsk, needsStoryDir, noStoryDirHint, openTab, pickupOffer, reviewLayout, reviewOf, startsAt, tabOf, type Pickup } from "./komux/go.ts";
 import { state, watch } from "./client.ts";
 import { aboveOf, type Snapshot, type StrandView } from "./core.ts";
 import { areaCount, areaNames, areaOf, areaRows, areas, chainsOf, isPublic, isStory, searchRows, type Area, type MapRow } from "./map.ts";
@@ -10,9 +10,10 @@ import { cells, keyLine, openScreen, style, visible, type Key, type Part } from 
 import { LogView } from "./log.ts";
 import { EpicController } from "./epic.ts";
 import { parseWhen } from "./when.ts";
+import { loadProjects } from "./komux/projects.ts";
 
 type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait" | "reply";
-type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "ready"; strand: StrandView; drafts: OwnPrView[] } | { kind: "epic"; view: EpicController } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
+type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "make"; strand: StrandView; story: string } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "ready"; strand: StrandView; drafts: OwnPrView[] } | { kind: "epic"; view: EpicController } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
 
 const help = [
   " Keys",
@@ -22,6 +23,7 @@ const help = [
   "   /         search names and titles across all three, then ⏎ goes to the strand's row",
   "   ⏎         go to the strand: its agent's tab, a Claude already in the tab it lives in, or a tab opened at its directory",
   "             a review opens its pull request in the pr-review layout, asking first whether to assign yourself, and a mention opens on GitHub",
+  "             a story with no story directory, or a strand under one, offers to make the directory with stories.newCommand from the config (y) and open it",
   "   ␣         open or fold a story's own strands, a chain of stories queued behind it, or the reviews on public repos",
   "   f         start a fresh Claude on the strand, even when one is already in its tab",
   "   a         add a strand under this one",
@@ -238,6 +240,11 @@ export class TabController {
       else if (key.name === "o") await this.run(() => this.actions.go(pooled, this.strands()));
       return undefined;
     }
+    if (mode.kind === "make") {
+      this.mode = { kind: "list" };
+      if (key.name === "y") await this.run(() => this.actions.makeStory(mode.story), `Made ${mode.story}'s story directory`);
+      return undefined;
+    }
     if (mode.kind === "forget") {
       this.mode = { kind: "list" };
       if (key.name === "y" && strand) await this.run(() => this.actions.forget(strand.id), `Forgot ${strand.name}`);
@@ -289,9 +296,13 @@ export class TabController {
           await this.run(() => this.actions.open({ id: pr.url, adapter: prAdapter, ref: pr.url, at: 0 }), `Opened ${pr.url}`);
           return undefined;
         }
+        await loadProjects().catch(() => undefined);
         const options = strand ? pickupOffer(strand, this.strands()) : undefined;
+        const story = strand ? needsStoryDir(strand, this.strands()) : undefined;
         if (!strand) this.message = "Nothing to go to here";
         else if (isPooled(strand)) this.mode = { kind: "assign", strand };
+        else if (story && canMakeStoryDir(story)) this.mode = { kind: "make", strand, story };
+        else if (story) this.message = cantMakeStoryDir(story);
         else if (options) this.mode = { kind: "pickup", options };
         else await this.run(() => this.actions.go(strand, this.strands()));
         return undefined;
@@ -483,6 +494,7 @@ export class TabController {
     if (mode.kind === "waiting") return [style.you(` ${mode.strand.name} ${this.waitsWhat(mode.strand)}`), keyLine([["j k", "pick the strand it waits on"], ["⏎", "wait on it"], ["/", "type a path"], ["c", "stop waiting"], ["esc", "cancel"]], width)];
     if (mode.kind === "assign") return [style.you(` ${mode.strand.name} has no reviewer yet`), keyLine([["y ⏎", "assign yourself and open it"], ["o", "open it without assigning"], ["esc", "cancel"]], width)];
     if (mode.kind === "forget") return ask(`forget ${this.current()?.strand?.name}?  y yes   any other key no`);
+    if (mode.kind === "make") return ask(makeStoryDirAsk(mode.story));
     if (mode.kind === "text" && mode.purpose === "snooze") return ask(timeLine(mode.text, this.now()));
     if (mode.kind === "text") return ask(`${mode.purpose === "add" && mode.top ? "new strand at the top" : prompts[mode.purpose]}: ${mode.text}▏`);
     if (mode.kind === "search") return [keyLine([["⏎", "go to its row"], ["↑ ↓", "pick"], ["esc", "back"]], width)];
@@ -704,6 +716,8 @@ export function enterDoes(strand: StrandView, strands: StrandView[]): string {
   const open = openTab(strand);
   if (open) return `go to ${open.label}`;
   if (reviewOf(strand) && !tabOf(strand)) return `open ${strand.name} in ${reviewLayout()}`;
+  const story = needsStoryDir(strand, strands);
+  if (story) return noStoryDirHint(story);
   const options = pickupOffer(strand, strands);
   if (options?.resume) return `resume ${options.resume.who} on ${strand.name}, or start a fresh Claude`;
   if (options) return `start a Claude on ${strand.name}`;

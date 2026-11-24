@@ -2,7 +2,7 @@ import { ask } from "./client.ts";
 import type { Request } from "./server.ts";
 import { epicStories, type EpicLookup } from "./shortcut.ts";
 import type { StrandView } from "./core.ts";
-import { goInKomux, goTarget, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
+import { goInKomux, goTarget, makeStoryDir, pickup, pickUpInKomux, type Pickup } from "./komux/go.ts";
 import { age } from "./render.ts";
 import { dormant, type Link } from "./model.ts";
 import { assignMe, markReady, prName, prRef, samePr, type Gh } from "./github.ts";
@@ -30,6 +30,7 @@ export type Actions = {
   done: (strand: string) => Promise<unknown>;
   keepOpen: (strand: string) => Promise<unknown>;
   reply: (strand: string, what: string) => Promise<unknown>;
+  makeStory: (story: string) => Promise<unknown>;
   open: (link: Link) => Promise<unknown>;
   ready: (strand: StrandView, url: string) => Promise<string>;
 };
@@ -102,6 +103,7 @@ export const serviceActions: Actions = {
   title: (strand, title) => ask({ method: "title", params: { strand, title } }),
   done: (strand) => ask({ method: "done", params: { strand } }),
   keepOpen: (strand) => ask({ method: "keep-open", params: { strand } }),
+  makeStory: (story) => makeStoryDir(story),
   reply: (strand, what) => ask({ method: "reply", params: { strand, ...(what ? { what: what.slice(0, 2000) } : {}) } }),
   ready: (strand, url) => readyDrafts(strand, undefined, url),
   open: async (link) => {
