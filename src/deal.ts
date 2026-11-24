@@ -9,7 +9,7 @@ import { cells, keyLine, openScreen, style, visible, type Key, type Part } from 
 import { parseWhen } from "./when.ts";
 
 type Mode = "card" | "pickup" | "snooze" | "time" | "forget" | "ready" | Purpose;
-type Purpose = "add" | "note" | "move" | "rename" | "title" | "wait";
+type Purpose = "add" | "note" | "move" | "rename" | "title" | "wait" | "reply";
 export type TabRef = { server: string; tabId: number };
 
 const prompts: Record<Purpose, string> = {
@@ -19,6 +19,7 @@ const prompts: Record<Purpose, string> = {
   rename: "rename to",
   title: "title (empty to clear)",
   wait: "waits on (empty to stop waiting)",
+  reply: "reply (empty to just mark it answered)",
 };
 const purposeKeys: Record<string, Purpose> = { a: "add", n: "note", m: "move", r: "rename", t: "title", w: "wait" };
 
@@ -45,6 +46,7 @@ export class Dealer {
   private wide = false;
   private sideAt = { mine: 0, others: 0 };
   private typed = "";
+  private replyingTo: StrandView | undefined;
   mode: Mode = "card";
   message: string | undefined;
 
@@ -223,6 +225,14 @@ export class Dealer {
       case "z":
         if (card) this.mode = "snooze";
         return undefined;
+      case "e":
+        if (card && !card.answerable) this.message = `Nothing on ${card.name} asks you for a reply`;
+        else if (card) {
+          this.mode = "reply";
+          this.typed = "";
+          this.replyingTo = card;
+        }
+        return undefined;
       case "a":
       case "n":
       case "m":
@@ -293,8 +303,12 @@ export class Dealer {
     else if (key.name === "return") {
       this.mode = "card";
       const text = this.typed.trim();
-      if (!card || (text === "" && purpose !== "move" && purpose !== "wait" && purpose !== "title")) return undefined;
+      if (!card || (text === "" && purpose !== "move" && purpose !== "wait" && purpose !== "title" && purpose !== "reply")) return undefined;
       if (purpose === "add") await this.act(() => this.actions.add(card.id, text), `Added ${text} under ${card.name}`);
+      else if (purpose === "reply") {
+        const to = this.replyingTo ?? card;
+        await this.act(() => this.actions.reply(to.id, text), `Answered ${to.name}`);
+      }
       else if (purpose === "note") await this.act(() => this.actions.note(card.id, text), "Note added");
       else if (purpose === "move") await this.act(() => this.actions.reparent(card.id, text), text === "" ? `${card.name} is at the top` : `${card.name} is under ${text}`);
       else if (purpose === "wait") await this.act(() => (text === "" ? this.actions.unblock(card.id) : this.actions.block(card.id, text)), text === "" ? `${card.name} no longer waits on other strands` : `${card.name} waits on ${text}`);
@@ -407,7 +421,7 @@ export class Dealer {
     if (this.mode in prompts) return ask(`${prompts[this.mode as Purpose]}: ${this.typed}▏   ⏎ save   esc cancel`);
     const side: [string, string][] = this.wide ? [["tab", "side"]] : [];
     if (!card || fold) return keyLine([["j k", "pick"], ...side, ["␣", "open"], ["esc", "close"]], width);
-    return keyLine([["j k", "pick"], ...side, ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ...(openableLink(card) ? [["o", "open"] as [string, string]] : []), ...(draftsOf(card).length > 0 ? [["R", "mark ready"] as [string, string]] : []), ["d", "done"], ...(asksToClose(card) ? [["c", "keep open"] as [string, string]] : []), ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["t", "title"], ["w", "wait on"], ["esc", "close"]], width);
+    return keyLine([["j k", "pick"], ...side, ...(startsAt(card) ? [["f", "fresh"] as [string, string]] : []), ...(openableLink(card) ? [["o", "open"] as [string, string]] : []), ...(draftsOf(card).length > 0 ? [["R", "mark ready"] as [string, string]] : []), ...(card.answerable ? [["e", "reply"] as [string, string]] : []), ["d", "done"], ...(asksToClose(card) ? [["c", "keep open"] as [string, string]] : []), ["z", "snooze"], ["x", "forget"], ["a", "add"], ["n", "note"], ["m", "move"], ["r", "rename"], ["t", "title"], ["w", "wait on"], ["esc", "close"]], width);
   }
 
   private foldDetail(fold: Fold, width: number): string[] {

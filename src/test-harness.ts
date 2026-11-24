@@ -83,6 +83,7 @@ export function recordingActions() {
     title: record("title"),
     done: record("done"),
     keepOpen: record("keepOpen"),
+    reply: record("reply"),
     open: async (link: { ref: string }) => void calls.push(["open", link.ref]),
     ready: async (strand: { id: string }, url: string) => (calls.push(["ready", strand.id, url]), `Marked ${url} ready for review`),
   } as Actions;

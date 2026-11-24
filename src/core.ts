@@ -59,6 +59,7 @@ export type StrandView = Strand & {
   agent?: PlayerView;
   requests: RequestView[];
   childPrLinks: Link[];
+  answerable: boolean;
 };
 export type Ended = Pick<Strand, "id" | "name" | "title" | "parent" | "kind" | "blockedOn" | "done">;
 export type Snapshot = { now: number; counts: Counts; strands: StrandView[]; moves: StrandView[]; unseen: string[]; heard: Recorded[]; labels: Record<string, string>; ended?: Ended[] };
@@ -257,6 +258,7 @@ export class Ponpoko {
         spaces: spaces.filter((space) => space.strand === strand.id).map(({ label, short, handle }) => ({ label, short, ...(handle ? { handle } : {}) })),
         ...(dirs[0] ? { dir: dirs[0] } : {}),
         ...(this.model.roles.get(strand.id)?.agent && this.model.players.has(this.model.roles.get(strand.id)!.agent!) ? { agent: playerView(this.model.roles.get(strand.id)!.agent!) } : {}),
+        answerable: answerable(this.model, strand.id).length > 0,
         childPrLinks: children(this.model, strand.id).filter((child) => child.done === undefined && child.kind === "pr").flatMap((child) => (linksBy.get(child.id) ?? []).filter((link) => link.adapter === "github-pr-state")),
         requests: openRequests(this.model, strand.id).map((request): RequestView => {
           const to = addresseeOf(this.model, request);
@@ -514,6 +516,17 @@ export class Ponpoko {
     this.mustHave(strand);
     const facts: Fact[] = [];
     this.finish(strand, why, facts);
+    this.record("you", facts);
+  }
+
+  reply(strand: string, what?: string): void {
+    const found = this.mustHave(strand);
+    const open = answerable(this.model, strand);
+    if (open.length === 0) throw new Error(`nothing on ${found.name} asks you for a reply`);
+    const facts: Fact[] = [];
+    const replies = open.flatMap((item): ReplySaid[] => (item.request ? [{ request: item.request.id, as: "done", ...(what ? { what } : {}) }] : []));
+    if (replies.length > 0) facts.push(said([], replies));
+    for (const item of open) if (item.move) facts.push({ type: "move.closed", move: item.move.id });
     this.record("you", facts);
   }
 
@@ -863,6 +876,12 @@ export function readTourRef(ref: string): Tour | undefined {
   } catch {
     return undefined;
   }
+}
+
+function answerable(model: Model, strand: string): { request?: Request; move?: Move }[] {
+  const requests = openRequests(model, strand).filter((request) => request.source !== "github" && request.kind !== "close" && !("group" in request.to) && addresseeOf(model, request).kind === "you");
+  const moves = openMoves(model, strand).filter((move) => move.player === you && move.source !== "github");
+  return [...requests.map((request) => ({ request })), ...moves.map((move) => ({ move }))];
 }
 
 function said(requests: RequestSaid[], replies: ReplySaid[] = []): Fact {

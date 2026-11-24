@@ -189,6 +189,28 @@ describe("strands", () => {
     expect(core.snapshot().moves).toEqual([]);
   });
 
+  test("replying answers what's asked of you on a strand and leaves others' requests open", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1");
+    core.wait({ self: "tool:1", strand: "sc-1", who: "the team", kind: "person", what: "review" });
+    core.wait({ self: "tool:1", strand: "sc-1", who: "you", kind: "you", what: "try it live" });
+    expect(strandNamed(core, "sc-1").own.whose).toBe("you");
+    core.reply(strandNamed(core, "sc-1").id, "looks good");
+    expect(strandNamed(core, "sc-1").own.whose).toBe("person");
+    const answered = [...core.model.requests.values()].find((request) => request.what === "try it live");
+    expect(answered?.closed).toMatchObject({ as: "done", what: "looks good" });
+    expect(() => core.reply(strandNamed(core, "sc-1").id)).toThrow("nothing on sc-1 asks you for a reply");
+  });
+
+  test("a reply leaves the question whether to close a parent to keep-open and done", () => {
+    const { core } = setup();
+    core.add(undefined, "sc-1 › a");
+    core.done(strandNamed(core, "sc-1 › a").id);
+    expect(strandNamed(core, "sc-1").own.why).toBe("parts done: close it?");
+    expect(strandNamed(core, "sc-1").answerable).toBe(false);
+    expect(() => core.reply(strandNamed(core, "sc-1").id)).toThrow("nothing on sc-1 asks you for a reply");
+  });
+
   test("a parent sums up what's asked under it, and asks you to close it once every part is done", () => {
     const { core, tick } = setup();
     core.add(undefined, "sc-1 › a › pr");

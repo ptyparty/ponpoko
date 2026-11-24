@@ -43,6 +43,7 @@ export const request = z.discriminatedUnion("method", [
   z.object({ method: z.literal("rename"), params: z.object({ strand: z.string(), name: z.string().min(1).max(200) }) }),
   z.object({ method: z.literal("title"), params: z.object({ strand: z.string(), title: z.string().max(200) }) }),
   z.object({ method: z.literal("done"), params: z.object({ strand: z.string() }) }),
+  z.object({ method: z.literal("reply"), params: z.object({ strand: z.string(), what: z.string().max(2000).optional() }) }),
   z.object({ method: z.literal("keep-open"), params: z.object({ strand: z.string() }) }),
   z.object({ method: z.literal("close-move"), params: z.object({ move: z.string() }) }),
   z.object({ method: z.literal("seen"), params: z.object({ strand: z.string() }) }),
@@ -220,6 +221,9 @@ export function handle(core: Ponpoko, request: Request): Response {
         return { ok: true };
       case "done":
         core.done(request.params.strand);
+        return { ok: true };
+      case "reply":
+        core.reply(request.params.strand, request.params.what);
         return { ok: true };
       case "keep-open":
         core.keepOpen(request.params.strand);

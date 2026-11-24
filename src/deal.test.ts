@@ -39,6 +39,21 @@ describe("the deck", () => {
     expect(tall.at(-2)).toContain("⏎  go to");
   });
 
+  test("replies to the picked card, with or without words", async () => {
+    const { core, dealer, calls } = await setup();
+    await dealer.key({ name: "j" });
+    expect(plain(dealer.view())).toContain("e  reply");
+    await dealer.key({ name: "e" });
+    for (const text of "read it") await dealer.key({ name: text, text });
+    await dealer.key({ name: "return" });
+    await dealer.key({ name: "e" });
+    await dealer.key({ name: "return" });
+    expect(calls).toEqual([
+      ["reply", strandNamed(core, "sc-1").id, "read it"],
+      ["reply", strandNamed(core, "sc-1").id, ""],
+    ]);
+  });
+
   test("every live strand shows somewhere, a parent with nothing of its own as waiting on the strand under it", async () => {
     const { core, tick, now } = harness();
     core.add(undefined, "sc-1 › sc-2 › gadgets PR › ask Sam");

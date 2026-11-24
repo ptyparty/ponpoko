@@ -29,6 +29,7 @@ export type Actions = {
   title: (strand: string, title: string) => Promise<unknown>;
   done: (strand: string) => Promise<unknown>;
   keepOpen: (strand: string) => Promise<unknown>;
+  reply: (strand: string, what: string) => Promise<unknown>;
   open: (link: Link) => Promise<unknown>;
   ready: (strand: StrandView, url: string) => Promise<string>;
 };
@@ -101,6 +102,7 @@ export const serviceActions: Actions = {
   title: (strand, title) => ask({ method: "title", params: { strand, title } }),
   done: (strand) => ask({ method: "done", params: { strand } }),
   keepOpen: (strand) => ask({ method: "keep-open", params: { strand } }),
+  reply: (strand, what) => ask({ method: "reply", params: { strand, ...(what ? { what: what.slice(0, 2000) } : {}) } }),
   ready: (strand, url) => readyDrafts(strand, undefined, url),
   open: async (link) => {
     if (link.adapter === "remax") return showTour(link, process.env.KOMUX_TAB_DIR);

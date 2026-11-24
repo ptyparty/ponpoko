@@ -11,7 +11,7 @@ import { LogView } from "./log.ts";
 import { EpicController } from "./epic.ts";
 import { parseWhen } from "./when.ts";
 
-type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait";
+type Purpose = "note" | "point" | "add" | "move" | "snooze" | "wait" | "reply";
 type Mode = { kind: "list" } | { kind: "pickup"; options: Pickup } | { kind: "moving"; strand: StrandView } | { kind: "waiting"; strand: StrandView } | { kind: "snooze" } | { kind: "forget" } | { kind: "assign"; strand: StrandView } | { kind: "help" } | { kind: "log" } | { kind: "search"; text: string } | { kind: "ready"; strand: StrandView; drafts: OwnPrView[] } | { kind: "epic"; view: EpicController } | { kind: "text"; purpose: Purpose; text: string; top?: boolean; strand?: StrandView };
 
 const help = [
@@ -28,6 +28,7 @@ const help = [
   "   A         add a strand at the top",
   "   m         move the strand: pick its new parent with j k ↑ ↓ and ⏎, t for the top, or / to type a path such as ptyparty › ponpoko; a rogue's loose strand merges into it",
   "   w         make the strand wait on another strand: pick it with j k ↑ ↓ and ⏎ (⏎ again stops waiting on it), / to type a path, or c to stop waiting on every strand; when that strand is done, this one is yours again",
+  "   e         reply to what's asked of you on the strand, which answers it and takes it off your moves; ⏎ with nothing typed just marks it answered",
   "   d         mark the strand done",
   "   o         open the strand's pull request on GitHub, or else what its latest move links to, such as a notebook page (📓) in quoll",
   "   R         mark the strand's draft pull request ready for review",
@@ -54,6 +55,7 @@ const prompts: Record<Purpose, string> = {
   move: "move under (empty for the top)",
   snooze: "snooze until",
   wait: "waits on",
+  reply: "reply (empty to just mark it answered)",
 };
 
 const cardWidth = 50;
@@ -337,6 +339,11 @@ export class TabController {
         if (strand) this.mode = { kind: "text", purpose: "note", text: "" };
         else this.message = "Pick a strand first";
         return undefined;
+      case "e":
+        if (!strand) this.message = "Pick a strand first";
+        else if (!strand.answerable) this.message = `Nothing on ${strand.name} asks you for a reply`;
+        else this.mode = { kind: "text", purpose: "reply", text: "", strand };
+        return undefined;
       case "d":
         if (strand) await this.run(() => this.actions.done(strand.id), `${strand.name} is done`);
         return undefined;
@@ -490,6 +497,7 @@ export class TabController {
       ...(strand?.planned ? [["s", "start"] as [string, string]] : []),
       ...(row.pr || (strand && openableLink(strand)) ? [["o", row.pr || strand?.kind === "review" ? "on GitHub" : "open"] as [string, string]] : []),
       ...(strand && draftsOf(strand).length > 0 ? [["R", "mark ready"] as [string, string]] : []),
+      ...(strand?.answerable ? [["e", "reply"] as [string, string]] : []),
       ...(strand && !row.fold ? [["d", "done"], ["z", "snooze"], ["a", "add"], ["m", "move"], ["w", "wait on"]] as [string, string][] : []),
       ["/", "search"],
       ["?", "more"],
@@ -506,9 +514,10 @@ export class TabController {
       const text = mode.text.trim();
       if (mode.purpose === "snooze") return this.snoozeUntil(strand, text);
       this.mode = { kind: "list" };
-      if (text === "" && mode.purpose !== "move") return undefined;
+      if (text === "" && mode.purpose !== "move" && mode.purpose !== "reply") return undefined;
       if (mode.purpose === "add") await this.run(() => this.actions.add(mode.top ? undefined : strand?.id, text), `Added ${text}`);
       else if (!strand) return undefined;
+      else if (mode.purpose === "reply") await this.run(() => this.actions.reply(strand.id, text), `Answered ${strand.name}`);
       else if (mode.purpose === "note") await this.run(() => this.actions.note(strand.id, text), "Note added");
       else if (mode.purpose === "move") await this.run(() => this.actions.reparent(strand.id, text), text === "" ? `${strand.name} is at the top` : `${strand.name} is under ${text}`);
       else if (mode.purpose === "wait") await this.run(() => this.actions.block(strand.id, text), `${strand.name} waits on ${text}`);

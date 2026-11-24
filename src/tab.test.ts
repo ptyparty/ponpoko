@@ -255,7 +255,7 @@ describe("the command tab", () => {
     expect(footer()).toMatch(/^⏎  nothing here; its work is in the strands under it +d  done/);
     await tab.key({ name: "j" });
     await tab.key({ name: "j" });
-    expect(footer()).toBe("⏎  go to claude in tab 1 widgets    ␣  its strands    d  done    z  snooze    a  add    m  move    w  wait on    /  search    ?  more");
+    expect(footer()).toBe("⏎  go to claude in tab 1 widgets    ␣  its strands    e  reply    d  done    z  snooze    a  add    m  move    w  wait on    /  search    ?  more");
     await tab.key({ name: " ", text: " " });
     await tab.key({ name: "j" });
     expect(footer()).toMatch(/^⏎  open a tab at \/w\/stories\/sc-1 +d  done/);
